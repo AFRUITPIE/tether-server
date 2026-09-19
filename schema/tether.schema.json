@@ -608,6 +608,11 @@
             "items": {
               "$ref": "#/$defs/Turn"
             }
+          },
+          "historySeq": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
         "required": [
@@ -684,6 +689,11 @@
           },
           "summary": {
             "$ref": "#/$defs/ThreadSummary"
+          },
+          "historySeq": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
         "required": [

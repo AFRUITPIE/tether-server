@@ -2443,17 +2443,20 @@ public struct ThreadResumeResult: Codable, Sendable, Hashable {
     public var thread: ThreadInfo
     public var items: [Item]?
     public var turns: [Turn]?
+    public var historySeq: Int?
 
-    public init(thread: ThreadInfo, items: [Item]? = nil, turns: [Turn]? = nil) {
+    public init(thread: ThreadInfo, items: [Item]? = nil, turns: [Turn]? = nil, historySeq: Int? = nil) {
         self.thread = thread
         self.items = items
         self.turns = turns
+        self.historySeq = historySeq
     }
 
     private enum CodingKeys: String, CodingKey {
         case thread = "thread"
         case items = "items"
         case turns = "turns"
+        case historySeq = "historySeq"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -2461,6 +2464,7 @@ public struct ThreadResumeResult: Codable, Sendable, Hashable {
         self.thread = try c.decode(ThreadInfo.self, forKey: .thread)
         self.items = try c.decodeIfPresent([Item].self, forKey: .items)
         self.turns = try c.decodeIfPresent([Turn].self, forKey: .turns)
+        self.historySeq = try c.decodeIfPresent(Int.self, forKey: .historySeq)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -2468,6 +2472,7 @@ public struct ThreadResumeResult: Codable, Sendable, Hashable {
         try c.encode(thread, forKey: .thread)
         try c.encodeIfPresent(items, forKey: .items)
         try c.encodeIfPresent(turns, forKey: .turns)
+        try c.encodeIfPresent(historySeq, forKey: .historySeq)
     }
 }
 
@@ -2561,17 +2566,20 @@ public struct ThreadReadResult: Codable, Sendable, Hashable {
     public var items: [Item]
     public var turns: [Turn]
     public var summary: ThreadSummary?
+    public var historySeq: Int?
 
-    public init(items: [Item], turns: [Turn], summary: ThreadSummary? = nil) {
+    public init(items: [Item], turns: [Turn], summary: ThreadSummary? = nil, historySeq: Int? = nil) {
         self.items = items
         self.turns = turns
         self.summary = summary
+        self.historySeq = historySeq
     }
 
     private enum CodingKeys: String, CodingKey {
         case items = "items"
         case turns = "turns"
         case summary = "summary"
+        case historySeq = "historySeq"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -2579,6 +2587,7 @@ public struct ThreadReadResult: Codable, Sendable, Hashable {
         self.items = try c.decode([Item].self, forKey: .items)
         self.turns = try c.decode([Turn].self, forKey: .turns)
         self.summary = try c.decodeIfPresent(ThreadSummary.self, forKey: .summary)
+        self.historySeq = try c.decodeIfPresent(Int.self, forKey: .historySeq)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -2586,6 +2595,7 @@ public struct ThreadReadResult: Codable, Sendable, Hashable {
         try c.encode(items, forKey: .items)
         try c.encode(turns, forKey: .turns)
         try c.encodeIfPresent(summary, forKey: .summary)
+        try c.encodeIfPresent(historySeq, forKey: .historySeq)
     }
 }
 

@@ -150,7 +150,13 @@ export const Methods = {
       afterSeq: z.number().int().optional(),
       includeHistory: z.boolean().optional(),
     }),
-    result: z.object({ thread: ThreadInfo, items: z.array(Item).optional(), turns: z.array(Turn).optional() }),
+    result: z.object({
+      thread: ThreadInfo,
+      items: z.array(Item).optional(),
+      turns: z.array(Turn).optional(),
+      /** Seq the history snapshot corresponds to; events after it are streamed. */
+      historySeq: z.number().int().optional(),
+    }),
   },
 
   'thread/fork': {
@@ -160,7 +166,13 @@ export const Methods = {
 
   'thread/read': {
     params: z.object({ threadId: z.string(), cwd: z.string().optional(), includeSubagents: z.boolean().optional() }),
-    result: z.object({ items: z.array(Item), turns: z.array(Turn), summary: ThreadSummary.optional() }),
+    result: z.object({
+      items: z.array(Item),
+      turns: z.array(Turn),
+      summary: ThreadSummary.optional(),
+      /** Present when the thread is loaded: the snapshot includes all events up to this seq. */
+      historySeq: z.number().int().optional(),
+    }),
   },
 
   'thread/subscribe': {

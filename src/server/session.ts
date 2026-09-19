@@ -157,9 +157,14 @@ export class ClientSession implements Subscriber {
 
     'thread/resume': async (p) => {
       const t = await this.mgr.resume(p, this.env);
-      const history = p.includeHistory ? await this.mgr.read(t.id, t.cwd) : undefined;
+      if (p.includeHistory) {
+        const h = await this.mgr.read(t.id, t.cwd);
+        const historySeq = h.historySeq ?? t.threadInfo().lastSeq;
+        this.subscribe(t, historySeq);
+        return { thread: t.threadInfo(), items: h.items, turns: h.turns, historySeq };
+      }
       this.subscribe(t, p.afterSeq ?? t.threadInfo().lastSeq);
-      return { thread: t.threadInfo(), ...(history ? { items: history.items, turns: history.turns } : {}) };
+      return { thread: t.threadInfo() };
     },
 
     'thread/fork': async (p) => ({ threadId: await this.mgr.fork(p.threadId, p.atMessageId, p.title) }),

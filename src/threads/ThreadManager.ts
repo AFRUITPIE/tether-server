@@ -255,18 +255,23 @@ export class ThreadManager {
   }
 
   /** Transcript → items. A live thread answers from its own itemizer so in-flight state is included. */
-  async read(threadId: string, cwd?: string): Promise<{ items: Item[]; turns: Turn[]; summary?: ThreadSummary }> {
+  async read(
+    threadId: string,
+    cwd?: string,
+  ): Promise<{ items: Item[]; turns: Turn[]; summary?: ThreadSummary; historySeq?: number }> {
     const info = await getSessionInfo(threadId, cwd ? { dir: cwd } : undefined);
     const live = this.loaded(threadId);
     const summary = info ? this.summary(info) : undefined;
     const stored = await this.readStored(threadId, cwd);
     if (!live) return { ...stored, ...(summary ? { summary } : {}) };
     // Live itemizer only knows events since load; stored history covers everything before.
+    // Snapshot and seq are taken synchronously together so replay after historySeq never duplicates.
     const liveSnap = live.history();
+    const historySeq = live.threadInfo().lastSeq;
     const seen = new Set(stored.items.map((i) => i.id));
     const items = [...stored.items, ...liveSnap.items.filter((i) => !seen.has(i.id))];
     const turns = [...stored.turns.filter((t) => !liveSnap.turns.some((l) => l.id === t.id)), ...liveSnap.turns];
-    return { items, turns, ...(summary ? { summary } : {}) };
+    return { items, turns, historySeq, ...(summary ? { summary } : {}) };
   }
 
   private async readStored(threadId: string, cwd?: string) {
