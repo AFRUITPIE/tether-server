@@ -57,6 +57,12 @@ export const Methods = {
     }),
   },
 
+  /** Ask the daemon to exit (used for upgrades). Accepted only when no thread is running or waiting on input; otherwise it exits once they settle. */
+  'host/requestShutdown': {
+    params: z.object({ reason: z.string().optional() }),
+    result: z.object({ accepted: z.boolean() }),
+  },
+
   'account/read': {
     params: z.object({ cwd: z.string().optional() }),
     result: z.object({ account: AccountInfo }),

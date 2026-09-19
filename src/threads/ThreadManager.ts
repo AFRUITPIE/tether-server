@@ -31,6 +31,9 @@ export class ThreadManager {
   private catalogs = new Map<string, Catalog>();
   private sweeper: ReturnType<typeof setInterval>;
   readonly startedAt = Date.now();
+  /** Set by the daemon; invoked once a requested shutdown can proceed without killing work. */
+  onDrainRequest?: () => void;
+  private draining = false;
 
   constructor(
     readonly claude: ClaudeBinary,
@@ -136,9 +139,25 @@ export class ThreadManager {
     this.log(`thread ${t.id} exited`);
   }
 
+  get busy(): boolean {
+    for (const t of this.threads.values())
+      if (!t.isExited && (t.status === 'running' || t.status === 'requiresAction' || t.status === 'starting' || t.hasPendingRequests))
+        return true;
+    return false;
+  }
+
+  /** Graceful shutdown for upgrades: never kills a running or waiting turn. */
+  requestShutdown(): boolean {
+    this.draining = true;
+    if (this.busy) return false;
+    setTimeout(() => this.onDrainRequest?.(), 50);
+    return true;
+  }
+
   /** Unload idle threads nobody is watching. Running or waiting threads are never evicted. */
   private sweep() {
     const now = Date.now();
+    if (this.draining && !this.busy) this.onDrainRequest?.();
     for (const t of this.threads.values()) {
       if (t.status === 'idle' && !t.hasPendingRequests && t.subscriberCount === 0 && now - t.lastActivityAt > IDLE_EVICT_MS) {
         this.log(`evicting idle thread ${t.id}`);

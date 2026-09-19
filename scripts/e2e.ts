@@ -73,6 +73,25 @@ ok(list.threads.some((t) => t.threadId === thread.threadId), 'thread/list includ
 const fork = await c.call('thread/fork', { threadId: thread.threadId });
 ok(fork.threadId && fork.threadId !== thread.threadId, `thread/fork → ${fork.threadId}`);
 
+// AskUserQuestion + plan approval
+let asked = false, planned = false;
+const prevHandler = c.onServerRequest;
+c.onServerRequest = (method, params) => {
+  if (method === 'question/request') { asked = true; return { decision: 'answer', answers: Object.fromEntries(params.questions.map((q: any) => [q.question, 'blue'])) }; }
+  if (method === 'plan/approve') { planned = true; return { decision: 'approve', permissionMode: 'acceptEdits' }; }
+  return prevHandler(method, params);
+};
+const q = await c.call('thread/start', { cwd, model: 'haiku', permissionMode: 'plan' });
+const done4 = c.waitFor((m, p) => m === 'turn/completed' && p.threadId === q.thread.threadId, 240_000);
+await c.call('turn/start', { threadId: q.thread.threadId, input: [{ type: 'text', text: 'First use the AskUserQuestion tool to ask which color I prefer (options: red, blue). Then present a one-step plan to write that color into color.txt and exit plan mode. After approval, write the file.' }] });
+await done4;
+ok(asked, 'question/request answered');
+ok(planned, 'plan/approve answered');
+ok(existsSync(join(cwd, 'color.txt')) && /blue/i.test(readFileSync(join(cwd, 'color.txt'), 'utf8')), 'color.txt contains the answer');
+const loaded = await c.call('thread/loaded', {});
+ok(loaded.threads.find((t) => t.threadId === q.thread.threadId)?.permissionMode === 'acceptEdits', 'permission mode switched to acceptEdits after plan approval');
+c.onServerRequest = prevHandler;
+
 // Resume in a fresh server process (simulates reconnect without daemon)
 c.close();
 const c2 = TetherClient.spawn(server);

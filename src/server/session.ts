@@ -94,6 +94,12 @@ export class ClientSession implements Subscriber {
       claude: this.mgr.claude,
     }),
 
+    'host/requestShutdown': (p) => {
+      this.log(`shutdown requested: ${p.reason ?? 'no reason'}`);
+      if (this.mode !== 'daemon') return { accepted: false };
+      return { accepted: this.mgr.requestShutdown() };
+    },
+
     'account/read': async (p) => {
       const { q } = await this.mgr.catalog(p.cwd, this.env);
       return { account: await q.accountInfo() };

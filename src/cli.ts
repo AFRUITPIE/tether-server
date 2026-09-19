@@ -4,6 +4,7 @@ import { Connection } from './rpc/connection.ts';
 import { ClientSession } from './server/session.ts';
 import { ThreadManager } from './threads/ThreadManager.ts';
 import { TETHER_VERSION } from './threads/LiveThread.ts';
+import { readDaemonMeta, runConnect, runDaemon, SOCKET_PATH } from './daemon/daemon.ts';
 
 const [cmd = 'help', ...args] = process.argv.slice(2);
 const log = (m: string) => process.stderr.write(`[tether ${new Date().toISOString()}] ${m}\n`);
@@ -29,6 +30,17 @@ switch (cmd) {
     }
     await serveStdio();
     break;
+  case 'daemon':
+    await runDaemon();
+    break;
+  case 'connect':
+    await runConnect();
+    break;
+  case 'status': {
+    const meta = readDaemonMeta();
+    console.log(meta ? JSON.stringify({ ...meta, socket: SOCKET_PATH }) : 'daemon not running');
+    break;
+  }
   case 'version':
   case '--version':
     console.log(TETHER_VERSION);
@@ -36,6 +48,9 @@ switch (cmd) {
   default:
     console.log(`tether ${TETHER_VERSION}
 usage:
-  tether serve --stdio     JSON-RPC over stdio (single client, in-process threads)
+  tether connect           bridge stdio to the per-host daemon (starting it if needed) — what clients run
+  tether daemon            run the daemon in the foreground
+  tether status            show the running daemon
+  tether serve --stdio     JSON-RPC over stdio (single client, in-process threads; for tests)
   tether version`);
 }
