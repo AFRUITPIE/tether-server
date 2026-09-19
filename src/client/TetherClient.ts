@@ -8,6 +8,8 @@ type ServerRequestHandler = (method: string, params: any) => Promise<unknown> | 
 export class TetherClient {
   readonly conn: Connection;
   private listeners = new Set<(method: string, params: any) => void>();
+  /** Every inbound notification / server request, for fixtures. */
+  readonly transcript: { kind: 'notification' | 'request'; method: string; params: unknown }[] = [];
   onServerRequest: ServerRequestHandler = () => {
     throw new Error('no server request handler');
   };
@@ -15,8 +17,12 @@ export class TetherClient {
   constructor(readonly proc: ChildProcess) {
     this.conn = new Connection(proc.stdout!, proc.stdin!, 'client');
     this.conn.start({
-      onRequest: (method, params) => Promise.resolve(this.onServerRequest(method, params)),
+      onRequest: (method, params) => {
+        this.transcript.push({ kind: 'request', method, params });
+        return Promise.resolve(this.onServerRequest(method, params));
+      },
       onNotification: (method, params) => {
+        this.transcript.push({ kind: 'notification', method, params });
         for (const l of this.listeners) l(method, params);
       },
       onClose: () => {},

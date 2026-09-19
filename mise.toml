@@ -18,3 +18,10 @@ run = "bun run scripts/gen-schema.ts && bun run scripts/gen-swift.ts"
 
 [tasks.compile]
 run = "bun run scripts/compile.ts"
+
+[tasks.e2e]
+description = "End-to-end tests against the real `claude` on PATH (costs a few cents on haiku)"
+run = ["bun run scripts/e2e.ts", "bun run scripts/e2e-daemon.ts"]
+
+[tasks.swift-test]
+run = "swift test"

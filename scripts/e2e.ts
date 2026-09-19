@@ -93,6 +93,10 @@ ok(loaded.threads.find((t) => t.threadId === q.thread.threadId)?.permissionMode 
 c.onServerRequest = prevHandler;
 
 // Resume in a fresh server process (simulates reconnect without daemon)
+if (process.env.TETHER_RECORD) {
+  await Bun.write(process.env.TETHER_RECORD, c.transcript.map((t) => JSON.stringify(t)).join('\n') + '\n');
+  console.log(`recorded ${c.transcript.length} wire messages to ${process.env.TETHER_RECORD}`);
+}
 c.close();
 const c2 = TetherClient.spawn(server);
 await c2.initialize();
