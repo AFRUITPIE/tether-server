@@ -1,0 +1,20 @@
+[tools]
+bun = "1.3.14"
+
+[tasks.install]
+run = "bun install"
+
+[tasks.test]
+run = "bun test"
+
+[tasks.typecheck]
+run = "bunx tsc --noEmit"
+
+[tasks.dev]
+run = "bun run src/cli.ts serve --stdio"
+
+[tasks.gen]
+run = "bun run scripts/gen-schema.ts && bun run scripts/gen-swift.ts"
+
+[tasks.compile]
+run = "bun run scripts/compile.ts"
