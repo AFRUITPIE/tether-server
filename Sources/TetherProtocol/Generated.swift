@@ -2534,17 +2534,23 @@ public struct ThreadReadParams: Codable, Sendable, Hashable {
     public var threadId: String
     public var cwd: String?
     public var includeSubagents: Bool?
+    public var limit: Int?
+    public var before: String?
 
-    public init(threadId: String, cwd: String? = nil, includeSubagents: Bool? = nil) {
+    public init(threadId: String, cwd: String? = nil, includeSubagents: Bool? = nil, limit: Int? = nil, before: String? = nil) {
         self.threadId = threadId
         self.cwd = cwd
         self.includeSubagents = includeSubagents
+        self.limit = limit
+        self.before = before
     }
 
     private enum CodingKeys: String, CodingKey {
         case threadId = "threadId"
         case cwd = "cwd"
         case includeSubagents = "includeSubagents"
+        case limit = "limit"
+        case before = "before"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -2552,6 +2558,8 @@ public struct ThreadReadParams: Codable, Sendable, Hashable {
         self.threadId = try c.decode(String.self, forKey: .threadId)
         self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
         self.includeSubagents = try c.decodeIfPresent(Bool.self, forKey: .includeSubagents)
+        self.limit = try c.decodeIfPresent(Int.self, forKey: .limit)
+        self.before = try c.decodeIfPresent(String.self, forKey: .before)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -2559,6 +2567,8 @@ public struct ThreadReadParams: Codable, Sendable, Hashable {
         try c.encode(threadId, forKey: .threadId)
         try c.encodeIfPresent(cwd, forKey: .cwd)
         try c.encodeIfPresent(includeSubagents, forKey: .includeSubagents)
+        try c.encodeIfPresent(limit, forKey: .limit)
+        try c.encodeIfPresent(before, forKey: .before)
     }
 }
 
@@ -2567,12 +2577,14 @@ public struct ThreadReadResult: Codable, Sendable, Hashable {
     public var turns: [Turn]
     public var summary: ThreadSummary?
     public var historySeq: Int?
+    public var hasMore: Bool?
 
-    public init(items: [Item], turns: [Turn], summary: ThreadSummary? = nil, historySeq: Int? = nil) {
+    public init(items: [Item], turns: [Turn], summary: ThreadSummary? = nil, historySeq: Int? = nil, hasMore: Bool? = nil) {
         self.items = items
         self.turns = turns
         self.summary = summary
         self.historySeq = historySeq
+        self.hasMore = hasMore
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2580,6 +2592,7 @@ public struct ThreadReadResult: Codable, Sendable, Hashable {
         case turns = "turns"
         case summary = "summary"
         case historySeq = "historySeq"
+        case hasMore = "hasMore"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -2588,6 +2601,7 @@ public struct ThreadReadResult: Codable, Sendable, Hashable {
         self.turns = try c.decode([Turn].self, forKey: .turns)
         self.summary = try c.decodeIfPresent(ThreadSummary.self, forKey: .summary)
         self.historySeq = try c.decodeIfPresent(Int.self, forKey: .historySeq)
+        self.hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -2596,6 +2610,7 @@ public struct ThreadReadResult: Codable, Sendable, Hashable {
         try c.encode(turns, forKey: .turns)
         try c.encodeIfPresent(summary, forKey: .summary)
         try c.encodeIfPresent(historySeq, forKey: .historySeq)
+        try c.encodeIfPresent(hasMore, forKey: .hasMore)
     }
 }
 

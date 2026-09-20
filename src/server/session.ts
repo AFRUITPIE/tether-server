@@ -178,7 +178,7 @@ export class ClientSession implements Subscriber {
 
     'thread/fork': async (p) => ({ threadId: await this.mgr.fork(p.threadId, p.atMessageId, p.title) }),
 
-    'thread/read': async (p) => this.mgr.read(p.threadId, p.cwd),
+    'thread/read': async (p) => this.mgr.read(p.threadId, p.cwd, { limit: p.limit, before: p.before }),
 
     'thread/subscribe': async (p) => {
       // A thread this daemon did not start can still be watched: follow its transcript instead of

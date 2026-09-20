@@ -298,7 +298,8 @@ export class ThreadManager {
   async read(
     threadId: string,
     cwd?: string,
-  ): Promise<{ items: Item[]; turns: Turn[]; summary?: ThreadSummary; historySeq?: number }> {
+    page?: { limit?: number; before?: string },
+  ): Promise<{ items: Item[]; turns: Turn[]; summary?: ThreadSummary; historySeq?: number; hasMore?: boolean }> {
     const info = await getSessionInfo(threadId, cwd ? { dir: cwd } : undefined);
     const live = this.loaded(threadId);
     const summary = info ? this.summary(info) : undefined;
@@ -311,10 +312,15 @@ export class ThreadManager {
       const follower = this.following(threadId) ?? (await this.follow(threadId, cwd));
       if (follower) {
         const snap = follower.history();
-        return { items: snap.items, turns: snap.turns, historySeq: snap.seq, ...(summary ? { summary } : {}) };
+        return {
+          ...pageOf(snap.items, page),
+          turns: snap.turns,
+          historySeq: snap.seq,
+          ...(summary ? { summary } : {}),
+        };
       }
       const storedOnly = await this.readStored(threadId, cwd);
-      return { ...storedOnly, ...(summary ? { summary } : {}) };
+      return { ...pageOf(storedOnly.items, page), turns: storedOnly.turns, ...(summary ? { summary } : {}) };
     }
     const stored = await this.readStored(threadId, cwd);
     // Live itemizer only knows events since load; stored history covers everything before.
@@ -324,7 +330,7 @@ export class ThreadManager {
     const seen = new Set(stored.items.map((i) => i.id));
     const items = [...stored.items, ...liveSnap.items.filter((i) => !seen.has(i.id))];
     const turns = [...stored.turns.filter((t) => !liveSnap.turns.some((l) => l.id === t.id)), ...liveSnap.turns];
-    return { items, turns, historySeq, ...(summary ? { summary } : {}) };
+    return { ...pageOf(items, page), turns, historySeq, ...(summary ? { summary } : {}) };
   }
 
   private async readStored(threadId: string, cwd?: string) {
@@ -352,4 +358,22 @@ export class ThreadManager {
     this.close(threadId);
     await deleteSession(threadId);
   }
+}
+
+/**
+ * The window of a transcript a client asked for, taken from the end.
+ *
+ * Paging happens over items rather than over the messages on disk: one message can produce
+ * several items and several can merge into one, and itemizing a slice in isolation would lose
+ * the turn each item belongs to. The whole transcript is itemized either way — it is already in
+ * memory for a followed or loaded thread — so this only decides how much of it to send.
+ */
+function pageOf(items: Item[], page?: { limit?: number; before?: string }): { items: Item[]; hasMore: boolean } {
+  let end = items.length;
+  if (page?.before) {
+    const i = items.findIndex((x) => x.id === page.before);
+    if (i >= 0) end = i;
+  }
+  const start = page?.limit ? Math.max(0, end - page.limit) : 0;
+  return { items: items.slice(start, end), hasMore: start > 0 };
 }

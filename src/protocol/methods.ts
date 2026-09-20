@@ -165,13 +165,27 @@ export const Methods = {
   },
 
   'thread/read': {
-    params: z.object({ threadId: z.string(), cwd: z.string().optional(), includeSubagents: z.boolean().optional() }),
+    params: z.object({
+      threadId: z.string(),
+      cwd: z.string().optional(),
+      includeSubagents: z.boolean().optional(),
+      /**
+       * Return only the most recent `limit` items. Omit for the whole transcript. A session run
+       * for days is tens of megabytes and tens of thousands of items; a client that only needs
+       * the end of it should not be handed all of that.
+       */
+      limit: z.number().int().positive().optional(),
+      /** Page backwards: the items immediately preceding this one. Use with `limit`. */
+      before: z.string().optional(),
+    }),
     result: z.object({
       items: z.array(Item),
       turns: z.array(Turn),
       summary: ThreadSummary.optional(),
       /** Present when the thread is loaded: the snapshot includes all events up to this seq. */
       historySeq: z.number().int().optional(),
+      /** Whether older items exist before the first one returned. */
+      hasMore: z.boolean().optional(),
     }),
   },
 
