@@ -16,6 +16,10 @@ run = "bun run src/cli.ts serve --stdio"
 [tasks.gen]
 run = "bun run scripts/gen-schema.ts && bun run scripts/gen-swift.ts"
 
+[tasks.release]
+description = "Compile the binaries and publish them as a GitHub release for the current version"
+run = "bun run scripts/release.ts"
+
 [tasks.compile]
 run = "bun run scripts/compile.ts"
 

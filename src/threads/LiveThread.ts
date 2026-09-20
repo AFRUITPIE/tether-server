@@ -23,8 +23,13 @@ import type { ServerRequestName, ServerRequestParams, ServerRequestResult } from
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { Itemizer, type Emission } from './itemizer.ts';
 import { PushQueue } from './pushQueue.ts';
+import pkg from '../../package.json' with { type: 'json' };
 
-export const TETHER_VERSION = '0.1.0';
+export const TETHER_VERSION: string = pkg.version;
+/** The Agent SDK this build wraps. Reported, not encoded in TETHER_VERSION: the daemon replaces
+ *  itself only when the running version differs, so that string has to move when Tether changes
+ *  even if the SDK hasn't. */
+export const AGENT_SDK_VERSION: string = pkg.dependencies['@anthropic-ai/claude-agent-sdk'];
 
 /** A connected client that has subscribed to a thread. */
 export interface Subscriber {
