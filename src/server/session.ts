@@ -2,7 +2,8 @@ import { hostname, arch, platform, homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { Methods, PROTOCOL_VERSION, type MethodName, type Params, type Result } from '../protocol/index.ts';
 import { Connection, ErrorCodes, RpcError } from '../rpc/connection.ts';
-import type { LiveThread, Subscriber } from '../threads/LiveThread.ts';
+import type { WatchableThread } from '../threads/FollowedThread.ts';
+import type { Subscriber } from '../threads/LiveThread.ts';
 import { TETHER_VERSION } from '../threads/LiveThread.ts';
 import type { ThreadManager } from '../threads/ThreadManager.ts';
 import * as fsApi from './fsApi.ts';
@@ -16,7 +17,7 @@ export class ClientSession implements Subscriber {
   private env: Record<string, string> = {};
   private optOut = new Set<string>();
   private experimental = false;
-  private subscriptions = new Map<string, LiveThread>();
+  private subscriptions = new Map<string, WatchableThread>();
 
   constructor(
     private conn: Connection,
@@ -32,7 +33,10 @@ export class ClientSession implements Subscriber {
         if (method === 'initialized') return;
       },
       onClose: () => {
-        for (const t of this.subscriptions.values()) t.unsubscribe(this);
+        for (const t of this.subscriptions.values()) {
+          t.unsubscribe(this);
+          this.dropFollowerIfUnwatched(t);
+        }
         this.subscriptions.clear();
         this.log(`client ${this.id} disconnected`);
       },
@@ -50,7 +54,12 @@ export class ClientSession implements Subscriber {
     this.conn.cancelRequest(id);
   }
 
-  private subscribe(t: LiveThread, afterSeq?: number) {
+  /** A follower exists only for the clients watching it; the last one out closes the watcher. */
+  private dropFollowerIfUnwatched(t: WatchableThread) {
+    if (t.subscriberCount === 0 && this.mgr.following(t.id)) this.mgr.unfollow(t.id);
+  }
+
+  private subscribe(t: WatchableThread, afterSeq?: number) {
     const prev = this.subscriptions.get(t.id);
     if (prev && prev !== t) prev.unsubscribe(this);
     this.subscriptions.set(t.id, t);
@@ -171,15 +180,20 @@ export class ClientSession implements Subscriber {
 
     'thread/read': async (p) => this.mgr.read(p.threadId, p.cwd),
 
-    'thread/subscribe': (p) => {
-      const t = this.mgr.get(p.threadId);
+    'thread/subscribe': async (p) => {
+      // A thread this daemon did not start can still be watched: follow its transcript instead of
+      // refusing, so a session running in another client streams here too.
+      const t = this.mgr.loaded(p.threadId) ?? (await this.mgr.follow(p.threadId));
+      if (!t) throw new RpcError(ErrorCodes.threadNotLoaded, `thread ${p.threadId} is not loaded`);
       const r = this.subscribe(t, p.afterSeq);
       return { thread: t.threadInfo(), ...r };
     },
 
     'thread/unsubscribe': (p) => {
-      this.subscriptions.get(p.threadId)?.unsubscribe(this);
+      const t = this.subscriptions.get(p.threadId);
+      t?.unsubscribe(this);
       this.subscriptions.delete(p.threadId);
+      if (t) this.dropFollowerIfUnwatched(t);
       return {};
     },
 

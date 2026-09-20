@@ -17,6 +17,7 @@ import type { ClaudeBinary } from '../claude.ts';
 import type { Item, Params, ThreadSummary, Turn } from '../protocol/index.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { Itemizer } from './itemizer.ts';
+import { FollowedThread } from './FollowedThread.ts';
 import { LiveThread, TETHER_VERSION } from './LiveThread.ts';
 import { PushQueue } from './pushQueue.ts';
 
@@ -56,6 +57,41 @@ export class ThreadManager {
     return t && !t.isExited ? t : undefined;
   }
 
+  // ---------- followed threads ----------
+
+  /** Sessions another client owns, read from their transcripts on disk. */
+  private followed = new Map<string, FollowedThread>();
+
+  following(threadId: string): FollowedThread | undefined {
+    return this.followed.get(threadId);
+  }
+
+  /**
+   * Follow a session this daemon did not start, so a client can watch it as it is written.
+   * A thread loaded here needs no follower — it already emits its own events.
+   */
+  async follow(threadId: string, cwd?: string): Promise<FollowedThread | undefined> {
+    if (this.loaded(threadId)) return undefined;
+    const existing = this.followed.get(threadId);
+    if (existing) return existing;
+    const info = await getSessionInfo(threadId, cwd ? { dir: cwd } : undefined);
+    const dir = cwd ?? info?.cwd;
+    if (!dir) return undefined;
+    const follower = new FollowedThread(threadId, dir);
+    this.followed.set(threadId, follower);
+    await follower.start();
+    this.log(`following ${threadId} in ${dir}`);
+    return follower;
+  }
+
+  /** Drops a follower once nothing is watching it, or once the thread is loaded here instead. */
+  unfollow(threadId: string) {
+    const f = this.followed.get(threadId);
+    if (!f) return;
+    f.close();
+    this.followed.delete(threadId);
+  }
+
   async start(p: Params<'thread/start'>, env: Record<string, string>): Promise<LiveThread> {
     const threadId = randomUUID();
     const t = new LiveThread({
@@ -80,6 +116,9 @@ export class ThreadManager {
 
   /** Load a stored session into a live query (no-op if already loaded). */
   async resume(p: Params<'thread/resume'>, env: Record<string, string>): Promise<LiveThread> {
+    // Loading it here supersedes following it: the live thread emits its own events, and leaving
+    // the follower attached would report the same items twice.
+    this.unfollow(p.threadId);
     const existing = this.loaded(p.threadId);
     if (existing && !p.atMessageId) return existing;
     if (existing && p.atMessageId) {
@@ -128,6 +167,7 @@ export class ThreadManager {
   }
 
   close(threadId: string) {
+    this.unfollow(threadId);
     const t = this.threads.get(threadId);
     if (!t) return;
     t.close();
@@ -262,8 +302,21 @@ export class ThreadManager {
     const info = await getSessionInfo(threadId, cwd ? { dir: cwd } : undefined);
     const live = this.loaded(threadId);
     const summary = info ? this.summary(info) : undefined;
+    if (!live) {
+      // A session running in another client can still be followed. Its snapshot and seq come from
+      // the follower so that replay after historySeq lines up with what was just handed over, the
+      // same requirement the live path below has.
+      // Start following here, not on subscribe: the client reads before it subscribes, and the
+      // seq it is given has to come from the follower that will replay to it.
+      const follower = this.following(threadId) ?? (await this.follow(threadId, cwd));
+      if (follower) {
+        const snap = follower.history();
+        return { items: snap.items, turns: snap.turns, historySeq: snap.seq, ...(summary ? { summary } : {}) };
+      }
+      const storedOnly = await this.readStored(threadId, cwd);
+      return { ...storedOnly, ...(summary ? { summary } : {}) };
+    }
     const stored = await this.readStored(threadId, cwd);
-    if (!live) return { ...stored, ...(summary ? { summary } : {}) };
     // Live itemizer only knows events since load; stored history covers everything before.
     // Snapshot and seq are taken synchronously together so replay after historySeq never duplicates.
     const liveSnap = live.history();
