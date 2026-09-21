@@ -1,9 +1,10 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import { watch, type FSWatcher } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Item, ThreadInfo, Turn } from '../protocol/index.ts';
+import type { EffortLevel, Item, PermissionMode, ThreadInfo, Turn } from '../protocol/index.ts';
+import { EffortLevel as EffortLevelSchema, PermissionMode as PermissionModeSchema } from '../protocol/common.ts';
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
 import { Itemizer, type Emission } from './itemizer.ts';
 import type { Subscriber } from './LiveThread.ts';
@@ -42,6 +43,13 @@ export class FollowedThread implements WatchableThread {
   private seq = 0;
   private ingested = 0;
   private watcher?: FSWatcher;
+  private path?: string;
+  /**
+   * What the owning client has this session set to. Clients show it in their model, effort and
+   * permission controls; without it they fell back to their own defaults and misreported the
+   * session they were attached to.
+   */
+  private settings: SessionSettings = {};
   private pending?: ReturnType<typeof setTimeout>;
   private reading = false;
   private again = false;
@@ -56,11 +64,13 @@ export class FollowedThread implements WatchableThread {
     const msgs = await getSessionMessages(this.id, { dir: this.cwd, includeSystemMessages: true });
     for (const m of msgs) this.itemizer.ingest(m as never);
     this.ingested = msgs.length;
+    this.path = await transcriptPath(this.id);
+    await this.readSettings();
     await this.watchFile();
   }
 
   private async watchFile(): Promise<void> {
-    const path = await transcriptPath(this.id);
+    const path = this.path;
     if (!path) return; // Nothing to watch; the snapshot still stands.
     try {
       this.watcher = watch(path, () => this.schedule());
@@ -93,6 +103,8 @@ export class FollowedThread implements WatchableThread {
       if (msgs.length) {
         this.ingested += msgs.length;
         for (const m of msgs) this.emitAll(this.itemizer.ingest(m as never));
+        // Switching model or permission mode in the owning client shows up here as it happens.
+        if (await this.readSettings()) this.emit('thread/updated', { thread: this.threadInfo() });
       }
     } catch {
       // The file may be mid-write or gone; the next change re-reads from the same offset.
@@ -119,7 +131,26 @@ export class FollowedThread implements WatchableThread {
   threadInfo(): ThreadInfo {
     // `notLoaded` is the truth: another client owns this session, and this daemon is only reading
     // its transcript. Clients use it to tell following apart from running here.
-    return { threadId: this.id, status: 'notLoaded', cwd: this.cwd, lastSeq: this.seq };
+    return { threadId: this.id, status: 'notLoaded', cwd: this.cwd, lastSeq: this.seq, ...this.settings };
+  }
+
+  /**
+   * Re-reads the session's settings from the end of its transcript. Returns whether they changed.
+   *
+   * From the raw file rather than getSessionMessages: that keeps each assistant message's model
+   * but drops the `effort` beside it and the `permissionMode` recorded on user turns. Only the
+   * tail is read — the latest values are all that matter, and the file can be tens of megabytes.
+   */
+  private async readSettings(): Promise<boolean> {
+    if (!this.path) return false;
+    let next: SessionSettings = {};
+    for (const bytes of [256 * 1024, 4 * 1024 * 1024]) {
+      next = settingsFrom(await readTail(this.path, bytes));
+      if (next.model && next.permissionMode) break; // widen only if the tail was all tool output
+    }
+    const changed = JSON.stringify(next) !== JSON.stringify(this.settings);
+    this.settings = next;
+    return changed;
   }
 
   history(): { items: Item[]; turns: Turn[]; seq: number } {
@@ -183,4 +214,55 @@ async function transcriptPath(threadId: string): Promise<string | undefined> {
     // No projects folder at all.
   }
   return undefined;
+}
+
+type SessionSettings = { model?: string; effort?: EffortLevel; permissionMode?: PermissionMode };
+
+// From the protocol's own enums, so a value added there is recognised here without a second edit.
+const EFFORT: readonly string[] = EffortLevelSchema.options;
+const PERMISSION: readonly string[] = PermissionModeSchema.options;
+
+/** The last `bytes` of a file as whole lines — the first, likely cut mid-line, is dropped. */
+async function readTail(path: string, bytes: number): Promise<string[]> {
+  const fh = await open(path, 'r');
+  try {
+    const { size } = await fh.stat();
+    const start = Math.max(0, size - bytes);
+    const buf = Buffer.alloc(size - start);
+    await fh.read(buf, 0, buf.length, start);
+    const lines = buf.toString('utf8').split('\n');
+    if (start > 0) lines.shift();
+    return lines;
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * The latest model, effort and permission mode, newest line first. Model and effort sit on
+ * assistant turns; permission mode on user turns. Values the protocol does not know are left out
+ * rather than passed through, so a client never gets a value it cannot represent.
+ */
+function settingsFrom(lines: string[]): SessionSettings {
+  const out: SessionSettings = {};
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line) continue;
+    let o: any;
+    try {
+      o = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (o.isSidechain) continue; // a subagent's turn, not the session's
+    if (!out.model && o.type === 'assistant' && typeof o.message?.model === 'string') {
+      out.model = o.message.model;
+      if (typeof o.effort === 'string' && EFFORT.includes(o.effort)) out.effort = o.effort as EffortLevel;
+    }
+    if (!out.permissionMode && o.type === 'user' && PERMISSION.includes(o.permissionMode)) {
+      out.permissionMode = o.permissionMode as PermissionMode;
+    }
+    if (out.model && out.permissionMode) break;
+  }
+  return out;
 }
