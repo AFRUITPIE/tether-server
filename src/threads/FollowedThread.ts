@@ -1,6 +1,6 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import { watch, type FSWatcher } from 'node:fs';
-import { open, readdir } from 'node:fs/promises';
+import { open, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { EffortLevel, Item, PermissionMode, ThreadInfo, Turn } from '../protocol/index.ts';
@@ -23,16 +23,9 @@ export interface WatchableThread {
 }
 
 /**
- * A session this daemon does not own, followed by watching its transcript on disk.
- *
- * Claude Code writes every session to a JSONL file whether or not it was started here, so a
- * session running in another client — the desktop app, a terminal — can be read as it happens.
- * Only read: nothing here writes to the file or to the session, and the thread stays `notLoaded`
- * because the daemon genuinely has not loaded it.
- *
- * The file is appended to, so the follower keeps a count of the messages it has ingested and asks
- * only for the ones past it. Re-reading the whole file on every append is not an option: a long
- * session's transcript reaches tens of megabytes.
+ * A session another client owns (the desktop app, a terminal), followed by watching its
+ * transcript on disk. Read-only, so it stays `notLoaded`. Appends are read from the last ingested
+ * message on, since a long session's transcript reaches tens of megabytes.
  */
 export class FollowedThread implements WatchableThread {
   readonly id: string;
@@ -44,12 +37,10 @@ export class FollowedThread implements WatchableThread {
   private ingested = 0;
   private watcher?: FSWatcher;
   private path?: string;
-  /**
-   * What the owning client has this session set to. Clients show it in their model, effort and
-   * permission controls; without it they fell back to their own defaults and misreported the
-   * session they were attached to.
-   */
+  /** The owning client's model, effort and permission mode, for the attached client's controls. */
   private settings: SessionSettings = {};
+  /** How far into the file `settings` has been read. */
+  private settingsOffset = 0;
   private pending?: ReturnType<typeof setTimeout>;
   private reading = false;
   private again = false;
@@ -59,7 +50,7 @@ export class FollowedThread implements WatchableThread {
     this.cwd = cwd;
   }
 
-  /** Reads what is already on disk. Emits nothing: this is the snapshot `thread/read` hands back. */
+  /** Reads what is already on disk without emitting: the snapshot `thread/read` hands back. */
   async start(): Promise<void> {
     const msgs = await getSessionMessages(this.id, { dir: this.cwd, includeSystemMessages: true });
     for (const m of msgs) this.itemizer.ingest(m as never);
@@ -103,8 +94,7 @@ export class FollowedThread implements WatchableThread {
       if (msgs.length) {
         this.ingested += msgs.length;
         for (const m of msgs) this.emitAll(this.itemizer.ingest(m as never));
-        // Switching model or permission mode in the owning client shows up here as it happens.
-        if (await this.readSettings()) this.emit('thread/updated', { thread: this.threadInfo() });
+        if (await this.updateSettings()) this.emit('thread/updated', { thread: this.threadInfo() });
       }
     } catch {
       // The file may be mid-write or gone; the next change re-reads from the same offset.
@@ -129,28 +119,44 @@ export class FollowedThread implements WatchableThread {
   }
 
   threadInfo(): ThreadInfo {
-    // `notLoaded` is the truth: another client owns this session, and this daemon is only reading
-    // its transcript. Clients use it to tell following apart from running here.
     return { threadId: this.id, status: 'notLoaded', cwd: this.cwd, lastSeq: this.seq, ...this.settings };
   }
 
   /**
-   * Re-reads the session's settings from the end of its transcript. Returns whether they changed.
-   *
-   * From the raw file rather than getSessionMessages: that keeps each assistant message's model
-   * but drops the `effort` beside it and the `permissionMode` recorded on user turns. Only the
-   * tail is read — the latest values are all that matter, and the file can be tens of megabytes.
+   * Settings from the raw file's tail: getSessionMessages keeps each message's model but drops
+   * the `effort` beside it and the `permissionMode` on user turns.
    */
-  private async readSettings(): Promise<boolean> {
-    if (!this.path) return false;
-    let next: SessionSettings = {};
+  private async readSettings(): Promise<void> {
+    if (!this.path) return;
     for (const bytes of [256 * 1024, 4 * 1024 * 1024]) {
-      next = settingsFrom(await readTail(this.path, bytes));
-      if (next.model && next.permissionMode) break; // widen only if the tail was all tool output
+      const tail = await readTail(this.path, bytes);
+      this.settings = settingsFrom(tail.lines);
+      this.settingsOffset = tail.end;
+      if (this.settings.model && this.settings.permissionMode) break; // widen once if all tool output
     }
-    const changed = JSON.stringify(next) !== JSON.stringify(this.settings);
-    this.settings = next;
-    return changed;
+  }
+
+  /** Folds in lines appended since the last read. Returns whether the settings changed. */
+  private async updateSettings(): Promise<boolean> {
+    if (!this.path) return false;
+    const before = JSON.stringify(this.settings);
+    const { size } = await stat(this.path);
+    if (size < this.settingsOffset) {
+      await this.readSettings(); // rewritten, not appended
+    } else {
+      const added = await readFrom(this.path, this.settingsOffset);
+      this.settingsOffset = added.end;
+      const newer = settingsFrom(added.lines);
+      const next = { ...this.settings };
+      if (newer.model) {
+        next.model = newer.model;
+        if (newer.effort) next.effort = newer.effort;
+        else delete next.effort;
+      }
+      if (newer.permissionMode) next.permissionMode = newer.permissionMode;
+      this.settings = next;
+    }
+    return JSON.stringify(this.settings) !== before;
   }
 
   history(): { items: Item[]; turns: Turn[]; seq: number } {
@@ -192,56 +198,59 @@ export class FollowedThread implements WatchableThread {
 }
 
 /**
- * Where Claude Code keeps a session's transcript. The project folder is the working directory with
- * its separators flattened, but the exact rule is the CLI's, so the id is looked for across the
- * project folders rather than derived from the path.
+ * Where Claude Code keeps a session's transcript. The project folder name is the CLI's own
+ * flattening of the cwd, so the id is looked for rather than the path derived.
  */
 async function transcriptPath(threadId: string): Promise<string | undefined> {
   const root = join(homedir(), '.claude', 'projects');
-  const file = `${threadId}.jsonl`;
+  let dirs;
   try {
-    for (const dir of await readdir(root, { withFileTypes: true })) {
-      if (!dir.isDirectory()) continue;
-      const candidate = join(root, dir.name, file);
-      try {
-        const entries = await readdir(join(root, dir.name));
-        if (entries.includes(file)) return candidate;
-      } catch {
-        // Unreadable project folder; keep looking.
-      }
-    }
+    dirs = await readdir(root, { withFileTypes: true });
   } catch {
-    // No projects folder at all.
+    return undefined;
+  }
+  for (const dir of dirs) {
+    if (!dir.isDirectory()) continue;
+    const candidate = join(root, dir.name, `${threadId}.jsonl`);
+    if (await stat(candidate).then(() => true, () => false)) return candidate;
   }
   return undefined;
 }
 
 type SessionSettings = { model?: string; effort?: EffortLevel; permissionMode?: PermissionMode };
 
-// From the protocol's own enums, so a value added there is recognised here without a second edit.
 const EFFORT: readonly string[] = EffortLevelSchema.options;
 const PERMISSION: readonly string[] = PermissionModeSchema.options;
 
-/** The last `bytes` of a file as whole lines — the first, likely cut mid-line, is dropped. */
-async function readTail(path: string, bytes: number): Promise<string[]> {
+type Lines = { lines: string[]; end: number };
+
+/** The last `bytes` of a file as whole lines; the first, likely cut mid-line, is dropped. */
+async function readTail(path: string, bytes: number): Promise<Lines> {
+  const { size } = await stat(path);
+  const start = Math.max(0, size - bytes);
+  const read = await readFrom(path, start);
+  if (start > 0) read.lines.shift();
+  return read;
+}
+
+/** Complete lines from `start` on. `end` stops before a line still being written. */
+async function readFrom(path: string, start: number): Promise<Lines> {
   const fh = await open(path, 'r');
   try {
     const { size } = await fh.stat();
-    const start = Math.max(0, size - bytes);
-    const buf = Buffer.alloc(size - start);
+    const buf = Buffer.alloc(Math.max(0, size - start));
     await fh.read(buf, 0, buf.length, start);
-    const lines = buf.toString('utf8').split('\n');
-    if (start > 0) lines.shift();
-    return lines;
+    const lastNewline = buf.lastIndexOf(0x0a);
+    if (lastNewline < 0) return { lines: [], end: start };
+    return { lines: buf.subarray(0, lastNewline).toString('utf8').split('\n'), end: start + lastNewline + 1 };
   } finally {
     await fh.close();
   }
 }
 
 /**
- * The latest model, effort and permission mode, newest line first. Model and effort sit on
- * assistant turns; permission mode on user turns. Values the protocol does not know are left out
- * rather than passed through, so a client never gets a value it cannot represent.
+ * The latest model and effort (on assistant lines) and permission mode (on user lines). Values
+ * the protocol has no case for are left out.
  */
 function settingsFrom(lines: string[]): SessionSettings {
   const out: SessionSettings = {};

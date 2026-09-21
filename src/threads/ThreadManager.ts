@@ -66,10 +66,7 @@ export class ThreadManager {
     return this.followed.get(threadId);
   }
 
-  /**
-   * Follow a session this daemon did not start, so a client can watch it as it is written.
-   * A thread loaded here needs no follower — it already emits its own events.
-   */
+  /** Follow a session this daemon did not start. A thread loaded here emits its own events. */
   async follow(threadId: string, cwd?: string): Promise<FollowedThread | undefined> {
     if (this.loaded(threadId)) return undefined;
     const existing = this.followed.get(threadId);
@@ -116,8 +113,7 @@ export class ThreadManager {
 
   /** Load a stored session into a live query (no-op if already loaded). */
   async resume(p: Params<'thread/resume'>, env: Record<string, string>): Promise<LiveThread> {
-    // Loading it here supersedes following it: the live thread emits its own events, and leaving
-    // the follower attached would report the same items twice.
+    // A live thread supersedes the follower; both would report the same items.
     this.unfollow(p.threadId);
     const existing = this.loaded(p.threadId);
     if (existing && !p.atMessageId) return existing;
@@ -304,11 +300,8 @@ export class ThreadManager {
     const live = this.loaded(threadId);
     const summary = info ? this.summary(info) : undefined;
     if (!live) {
-      // A session running in another client can still be followed. Its snapshot and seq come from
-      // the follower so that replay after historySeq lines up with what was just handed over, the
-      // same requirement the live path below has.
-      // Start following here, not on subscribe: the client reads before it subscribes, and the
-      // seq it is given has to come from the follower that will replay to it.
+      // Follow on read, not subscribe: the seq handed back has to come from the follower that
+      // will replay to the client after it.
       const follower = this.following(threadId) ?? (await this.follow(threadId, cwd));
       if (follower) {
         const snap = follower.history();
@@ -322,15 +315,37 @@ export class ThreadManager {
       const storedOnly = await this.readStored(threadId, cwd);
       return { ...pageOf(storedOnly.items, page), turns: storedOnly.turns, ...(summary ? { summary } : {}) };
     }
-    const stored = await this.readStored(threadId, cwd);
+    const stored = await this.storedBeforeLoad(live, cwd);
     // Live itemizer only knows events since load; stored history covers everything before.
-    // Snapshot and seq are taken synchronously together so replay after historySeq never duplicates.
+    // Snapshot and seq are taken together so replay after historySeq never duplicates. Where both
+    // have an item the live one wins: the stored copy can predate its tool result.
     const liveSnap = live.history();
     const historySeq = live.threadInfo().lastSeq;
-    const seen = new Set(stored.items.map((i) => i.id));
-    const items = [...stored.items, ...liveSnap.items.filter((i) => !seen.has(i.id))];
-    const turns = [...stored.turns.filter((t) => !liveSnap.turns.some((l) => l.id === t.id)), ...liveSnap.turns];
+    const liveById = new Map(liveSnap.items.map((i) => [i.id, i]));
+    const storedIds = new Set(stored.items.map((i) => i.id));
+    const items = [
+      ...stored.items.map((i) => liveById.get(i.id) ?? i),
+      ...liveSnap.items.filter((i) => !storedIds.has(i.id)),
+    ];
+    const liveTurns = new Set(liveSnap.turns.map((t) => t.id));
+    const turns = [...stored.turns.filter((t) => !liveTurns.has(t.id)), ...liveSnap.turns];
     return { ...pageOf(items, page), turns, historySeq, ...(summary ? { summary } : {}) };
+  }
+
+  /**
+   * A live thread's transcript as it was on disk when first read. Everything written since comes
+   * from the thread itself, so this is parsed once rather than once per page.
+   */
+  private storedSnapshots = new WeakMap<LiveThread, Promise<{ items: Item[]; turns: Turn[] }>>();
+
+  private storedBeforeLoad(live: LiveThread, cwd?: string) {
+    let snap = this.storedSnapshots.get(live);
+    if (!snap) {
+      snap = this.readStored(live.id, cwd);
+      this.storedSnapshots.set(live, snap);
+      snap.catch(() => this.storedSnapshots.delete(live));
+    }
+    return snap;
   }
 
   private async readStored(threadId: string, cwd?: string) {
@@ -361,12 +376,8 @@ export class ThreadManager {
 }
 
 /**
- * The window of a transcript a client asked for, taken from the end.
- *
- * Paging happens over items rather than over the messages on disk: one message can produce
- * several items and several can merge into one, and itemizing a slice in isolation would lose
- * the turn each item belongs to. The whole transcript is itemized either way — it is already in
- * memory for a followed or loaded thread — so this only decides how much of it to send.
+ * The requested window of a transcript, from the end. Pages are over items, not messages on
+ * disk: itemizing a slice of messages alone would lose the turn each item belongs to.
  */
 function pageOf(items: Item[], page?: { limit?: number; before?: string }): { items: Item[]; hasMore: boolean } {
   let end = items.length;

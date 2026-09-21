@@ -149,6 +149,8 @@ export const Methods = {
       /** Client already has events up to this seq; only newer events are replayed. */
       afterSeq: z.number().int().optional(),
       includeHistory: z.boolean().optional(),
+      /** With `includeHistory`, only the most recent `limit` items, as `thread/read` pages them. */
+      limit: z.number().int().positive().optional(),
     }),
     result: z.object({
       thread: ThreadInfo,
@@ -156,6 +158,8 @@ export const Methods = {
       turns: z.array(Turn).optional(),
       /** Seq the history snapshot corresponds to; events after it are streamed. */
       historySeq: z.number().int().optional(),
+      /** Whether older items exist before those returned. */
+      hasMore: z.boolean().optional(),
     }),
   },
 

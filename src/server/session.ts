@@ -167,10 +167,10 @@ export class ClientSession implements Subscriber {
     'thread/resume': async (p) => {
       const t = await this.mgr.resume(p, this.env);
       if (p.includeHistory) {
-        const h = await this.mgr.read(t.id, t.cwd);
+        const h = await this.mgr.read(t.id, t.cwd, { limit: p.limit });
         const historySeq = h.historySeq ?? t.threadInfo().lastSeq;
         this.subscribe(t, historySeq);
-        return { thread: t.threadInfo(), items: h.items, turns: h.turns, historySeq };
+        return { thread: t.threadInfo(), items: h.items, turns: h.turns, historySeq, hasMore: h.hasMore };
       }
       this.subscribe(t, p.afterSeq ?? t.threadInfo().lastSeq);
       return { thread: t.threadInfo() };
@@ -181,8 +181,7 @@ export class ClientSession implements Subscriber {
     'thread/read': async (p) => this.mgr.read(p.threadId, p.cwd, { limit: p.limit, before: p.before }),
 
     'thread/subscribe': async (p) => {
-      // A thread this daemon did not start can still be watched: follow its transcript instead of
-      // refusing, so a session running in another client streams here too.
+      // Not loaded here: follow its transcript, so a session another client runs streams too.
       const t = this.mgr.loaded(p.threadId) ?? (await this.mgr.follow(p.threadId));
       if (!t) throw new RpcError(ErrorCodes.threadNotLoaded, `thread ${p.threadId} is not loaded`);
       const r = this.subscribe(t, p.afterSeq);

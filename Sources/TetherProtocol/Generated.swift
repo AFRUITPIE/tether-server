@@ -2387,8 +2387,9 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
     public var env: EnvOverrides?
     public var afterSeq: Int?
     public var includeHistory: Bool?
+    public var limit: Int?
 
-    public init(threadId: String, cwd: String? = nil, atMessageId: String? = nil, model: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, env: EnvOverrides? = nil, afterSeq: Int? = nil, includeHistory: Bool? = nil) {
+    public init(threadId: String, cwd: String? = nil, atMessageId: String? = nil, model: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, env: EnvOverrides? = nil, afterSeq: Int? = nil, includeHistory: Bool? = nil, limit: Int? = nil) {
         self.threadId = threadId
         self.cwd = cwd
         self.atMessageId = atMessageId
@@ -2398,6 +2399,7 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
         self.env = env
         self.afterSeq = afterSeq
         self.includeHistory = includeHistory
+        self.limit = limit
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2410,6 +2412,7 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
         case env = "env"
         case afterSeq = "afterSeq"
         case includeHistory = "includeHistory"
+        case limit = "limit"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -2423,6 +2426,7 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
         self.env = try c.decodeIfPresent(EnvOverrides.self, forKey: .env)
         self.afterSeq = try c.decodeIfPresent(Int.self, forKey: .afterSeq)
         self.includeHistory = try c.decodeIfPresent(Bool.self, forKey: .includeHistory)
+        self.limit = try c.decodeIfPresent(Int.self, forKey: .limit)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -2436,6 +2440,7 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
         try c.encodeIfPresent(env, forKey: .env)
         try c.encodeIfPresent(afterSeq, forKey: .afterSeq)
         try c.encodeIfPresent(includeHistory, forKey: .includeHistory)
+        try c.encodeIfPresent(limit, forKey: .limit)
     }
 }
 
@@ -2444,12 +2449,14 @@ public struct ThreadResumeResult: Codable, Sendable, Hashable {
     public var items: [Item]?
     public var turns: [Turn]?
     public var historySeq: Int?
+    public var hasMore: Bool?
 
-    public init(thread: ThreadInfo, items: [Item]? = nil, turns: [Turn]? = nil, historySeq: Int? = nil) {
+    public init(thread: ThreadInfo, items: [Item]? = nil, turns: [Turn]? = nil, historySeq: Int? = nil, hasMore: Bool? = nil) {
         self.thread = thread
         self.items = items
         self.turns = turns
         self.historySeq = historySeq
+        self.hasMore = hasMore
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2457,6 +2464,7 @@ public struct ThreadResumeResult: Codable, Sendable, Hashable {
         case items = "items"
         case turns = "turns"
         case historySeq = "historySeq"
+        case hasMore = "hasMore"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -2465,6 +2473,7 @@ public struct ThreadResumeResult: Codable, Sendable, Hashable {
         self.items = try c.decodeIfPresent([Item].self, forKey: .items)
         self.turns = try c.decodeIfPresent([Turn].self, forKey: .turns)
         self.historySeq = try c.decodeIfPresent(Int.self, forKey: .historySeq)
+        self.hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -2473,6 +2482,7 @@ public struct ThreadResumeResult: Codable, Sendable, Hashable {
         try c.encodeIfPresent(items, forKey: .items)
         try c.encodeIfPresent(turns, forKey: .turns)
         try c.encodeIfPresent(historySeq, forKey: .historySeq)
+        try c.encodeIfPresent(hasMore, forKey: .hasMore)
     }
 }
 
