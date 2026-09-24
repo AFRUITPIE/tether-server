@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TetherClient } from '../src/client/TetherClient.ts';
 
+// TETHER_E2E_MODEL / TETHER_E2E_EFFORT pick what the runs cost, e.g. sonnet at low effort.
+const model = { model: process.env.TETHER_E2E_MODEL ?? 'haiku', ...(process.env.TETHER_E2E_EFFORT ? { effort: process.env.TETHER_E2E_EFFORT as 'low' } : {}) };
+
 const home = mkdtempSync(join(tmpdir(), 'tether-home-'));
 const cwd = mkdtempSync(join(tmpdir(), 'tether-d-'));
 const env = { TETHER_HOME: home };
@@ -24,7 +27,7 @@ ok(initA.host.mode === 'daemon', 'connected through daemon');
 let lastSeqA = 0;
 a.on((_, p) => { if (typeof p?.seq === 'number') lastSeqA = p.seq; });
 const gotRequest = new Promise<any>((resolve) => { a.onServerRequest = (m, p) => { resolve({ m, p }); return new Promise(() => {}); }; });
-const { thread } = await a.call('thread/start', { cwd, model: 'haiku' });
+const { thread } = await a.call('thread/start', { cwd, ...model });
 await a.call('turn/start', { threadId: thread.threadId, input: [{ type: 'text', text: 'Write the word "survived" to survive.txt, then reply "done".' }] });
 const req = await gotRequest;
 ok(req.m === 'permission/request', `A received ${req.m} for ${req.p.toolName}`);
@@ -53,7 +56,7 @@ ok(seqs[0] === lastSeqA + 1 || sub.replayed === 0, `B's first event seq ${seqs[0
 
 // A turn that runs while nobody is connected.
 const c = b;
-const { thread: t2 } = await c.call('thread/start', { cwd, model: 'haiku', permissionMode: 'acceptEdits', allowedTools: ['Bash', 'Write'] });
+const { thread: t2 } = await c.call('thread/start', { cwd, ...model, permissionMode: 'acceptEdits', allowedTools: ['Bash', 'Write'] });
 const done2 = c.waitFor((m, p) => m === 'turn/started' && p.threadId === t2.threadId);
 await c.call('turn/start', { threadId: t2.threadId, input: [{ type: 'text', text: 'Run this exact Bash command: for i in 1 2 3 4; do echo $i; sleep 2; done; then write "offline" to offline.txt and reply "ok".' }] });
 await done2;

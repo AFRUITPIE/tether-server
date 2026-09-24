@@ -102,6 +102,11 @@ export class Itemizer {
   private denied = new Map<string, string>();
   private interruptRequested = false;
   private fallbackCounter = 0;
+  /** Background tasks already reported, since a notification can arrive as an event and a message. */
+  private notifiedTasks = new Set<string>();
+  /** The CLI's current background task ids, and which tool call started each task. */
+  private backgroundTaskIds = new Set<string>();
+  private taskTools = new Map<string, string>();
 
   /**
    * @param historyMode transcripts have no `result` messages, so a new real user prompt closes the open turn.
@@ -265,25 +270,19 @@ export class Itemizer {
             },
           },
         ];
+      case 'task_notification':
+        return [
+          ...this.taskEvent(msg),
+          ...this.settleTask(msg.tool_use_id, msg.status),
+          ...(this.worthANotice(msg) ? this.taskNotice(msg.task_id, msg.status, msg.summary, msg.uuid) : []),
+        ];
       case 'task_started':
       case 'task_progress':
       case 'task_updated':
-      case 'task_notification':
-        return [
-          {
-            method: 'task/event',
-            body: {
-              event: msg.subtype.slice('task_'.length),
-              taskId: msg.task_id,
-              ...(msg.tool_use_id ? { toolUseId: msg.tool_use_id } : {}),
-              ...(msg.description ? { description: msg.description } : {}),
-              ...(msg.status || msg.patch?.status ? { status: msg.status ?? msg.patch.status } : {}),
-              ...(msg.summary ? { summary: msg.summary } : {}),
-              data: msg,
-            },
-          },
-        ];
+        if (msg.task_id && msg.tool_use_id) this.taskTools.set(msg.task_id, msg.tool_use_id);
+        return this.taskEvent(msg);
       case 'background_tasks_changed':
+        if (Array.isArray(msg.tasks)) this.backgroundTaskIds = new Set(msg.tasks.map((t: AnyMsg) => String(t.task_id)));
         return [{ method: 'task/backgroundChanged', body: { tasks: msg.tasks ?? msg } }];
       case 'commands_changed':
         return [{ method: 'thread/commandsChanged', body: {} }];
@@ -296,6 +295,112 @@ export class Itemizer {
       default:
         return [this.raw(msg)];
     }
+  }
+
+  private taskEvent(msg: AnyMsg): Emission[] {
+    return [
+      {
+        method: 'task/event',
+        body: {
+          event: msg.subtype.slice('task_'.length),
+          taskId: msg.task_id,
+          ...(msg.tool_use_id ? { toolUseId: msg.tool_use_id } : {}),
+          ...(msg.description ? { description: msg.description } : {}),
+          ...(msg.status || msg.patch?.status ? { status: msg.status ?? msg.patch.status } : {}),
+          ...(msg.summary ? { summary: msg.summary } : {}),
+          data: msg,
+        },
+      },
+    ];
+  }
+
+  /**
+   * A finished background task, as a line in the transcript. The CLI reports one both as an event
+   * and as a `<task-notification>` message it hands the model; history has only the message.
+   */
+  private taskNotice(taskId: string | undefined, status: string | undefined, summary: string | undefined, id?: string): Emission[] {
+    if (taskId) {
+      if (this.notifiedTasks.has(taskId)) return [];
+      this.notifiedTasks.add(taskId);
+    }
+    return this.addCompleted({
+      type: 'notice',
+      id: id ?? `task_${taskId ?? ++this.fallbackCounter}_notification`,
+      turnId: this.turn?.id ?? null,
+      parentToolUseId: null,
+      createdAt: this.now(),
+      kind: 'taskNotification',
+      text: summary || `Background task ${status ?? 'finished'}`,
+      ...(status === 'failed' ? { level: 'warning' as const } : {}),
+    });
+  }
+
+  /** A stopped or failed background agent leaves its own tool calls unfinished; close them. */
+  private settleTask(toolUseId: string | undefined, status: string | undefined): Emission[] {
+    if (!toolUseId) return [];
+    const out: Emission[] = [];
+    for (const t of this.toolItems.values()) {
+      if ((t.status === 'running' || t.status === 'pending') && t.id !== toolUseId && this.descendsFrom(t, toolUseId)) {
+        t.status = status === 'completed' ? 'completed' : 'interrupted';
+        out.push(...this.addCompleted(t));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Only work that went on in the background gets a line of its own. A foreground command is a
+   * task too, but its tool call is still open and reports the result itself; a subagent's own
+   * background command reaches the transcript through the subagent.
+   */
+  private worthANotice(msg: AnyMsg): boolean {
+    if (msg.skip_transcript || msg.ambient) return false;
+    const call = msg.tool_use_id ? this.toolItems.get(msg.tool_use_id) : undefined;
+    if (!call) return true;
+    return !call.parentToolUseId && call.status !== 'running' && call.status !== 'pending';
+  }
+
+  private descendsFrom(t: ToolCallItem, ancestorId: string): boolean {
+    for (let p = t.parentToolUseId; p; p = this.toolItems.get(p)?.parentToolUseId ?? null) if (p === ancestorId) return true;
+    return false;
+  }
+
+  /**
+   * Whether a tool call still running when its turn ends was cut short. One inside a subagent the
+   * turn sent to the background was not: its launcher already returned, and it keeps working.
+   */
+  private endsWithTurn(t: ToolCallItem): boolean {
+    for (let p = t.parentToolUseId; p; ) {
+      if (this.isBackgrounded(p)) return false;
+      const launcher = this.toolItems.get(p);
+      if (!launcher) return true;
+      p = launcher.parentToolUseId;
+    }
+    return true;
+  }
+
+  /** Whether the task a tool call started is in the CLI's background set (the two can arrive in either order). */
+  private isBackgrounded(toolUseId: string): boolean {
+    for (const id of this.backgroundTaskIds) if (this.taskTools.get(id) === toolUseId) return true;
+    return false;
+  }
+
+  /** Tool calls a turn ending leaves unfinished. Collected first: closing a launcher changes its children's answer. */
+  private cutShort(turnId: string): ToolCallItem[] {
+    return [...this.toolItems.values()].filter(
+      (t) => t.turnId === turnId && (t.status === 'running' || t.status === 'pending') && this.endsWithTurn(t),
+    );
+  }
+
+  /**
+   * The turn a message belongs to. A subagent's belongs to the turn that launched it — a background
+   * one keeps writing after that turn has ended, and must not open a turn of its own.
+   */
+  private turnFor(parent: string | null, hintId: string): { out: Emission[]; turnId: string } {
+    const launcher = parent ? this.toolItems.get(parent) : undefined;
+    if (launcher?.turnId) return { out: [], turnId: launcher.turnId };
+    const out = this.ensureTurn(hintId);
+    return { out, turnId: this.turn!.id };
   }
 
   // ---- turns ----
@@ -355,8 +460,9 @@ export class Itemizer {
         const msgId = this.currentStreamMsgId.get(parent);
         if (!msgId) break;
         const cb = ev.content_block ?? {};
-        out.push(...this.ensureTurn(msgId));
-        const turnId = this.turn!.id;
+        const placed = this.turnFor(parent, msgId);
+        out.push(...placed.out);
+        const turnId = placed.turnId;
         const createdAt = this.now();
         let item: Item | null = null;
         if (cb.type === 'text') {
@@ -422,8 +528,9 @@ export class Itemizer {
     const m = msg.message ?? {};
     const msgId: string = m.id ?? msg.uuid ?? `msg_${++this.fallbackCounter}`;
     const parent: string | null = msg.parent_tool_use_id ?? null;
-    const out: Emission[] = [...this.ensureTurn(msgId)];
-    const turnId = this.turn!.id;
+    const placed = this.turnFor(parent, msgId);
+    const out: Emission[] = [...placed.out];
+    const turnId = placed.turnId;
     if (msg.error) {
       out.push(
         ...this.addCompleted({
@@ -528,6 +635,11 @@ export class Itemizer {
     const id: string = msg.uuid ?? `user_${++this.fallbackCounter}`;
     const firstText = inputs[0]?.type === 'text' ? inputs[0].text : '';
     // Transcript conventions for CLI-generated user messages.
+    const notification = parseTaskNotification(firstText);
+    if (notification) {
+      if (parent !== null || !this.worthANotice({ tool_use_id: notification.toolUseId })) return out;
+      return this.taskNotice(notification.taskId, notification.status, notification.summary, id);
+    }
     if (firstText.startsWith('[Request interrupted')) {
       if (this.historyMode) this.interruptRequested = true;
       return this.notice({ uuid: id }, 'interrupted', firstText);
@@ -546,13 +658,20 @@ export class Itemizer {
         ? originKind !== 'human'
         : !command && !!(msg.isSynthetic || msg.isMeta || /^\s*<[a-z-]+>/.test(firstText)));
     if (!synthetic && this.turn && this.historyMode) out.push(...this.closeTurn('completed'));
-    if (!synthetic && !this.turn) out.push(...this.startTurn(id));
-    else out.push(...this.ensureTurn(id));
+    let turnId: string;
+    if (!synthetic && !this.turn) {
+      out.push(...this.startTurn(id));
+      turnId = this.turn!.id;
+    } else {
+      const placed = this.turnFor(parent, id);
+      out.push(...placed.out);
+      turnId = placed.turnId;
+    }
     out.push(
       ...this.addCompleted({
         type: 'userMessage',
         id,
-        turnId: this.turn!.id,
+        turnId,
         parentToolUseId: parent,
         createdAt: msg.timestamp ? Date.parse(msg.timestamp) : this.now(),
         content: inputs,
@@ -607,11 +726,9 @@ export class Itemizer {
     turn.completedAt = this.now();
     turn.result = result;
     // Anything still in flight did not finish.
-    for (const t of this.toolItems.values()) {
-      if (t.turnId === turn.id && (t.status === 'running' || t.status === 'pending')) {
-        t.status = 'interrupted';
-        out.push(...this.addCompleted(t));
-      }
+    for (const t of this.cutShort(turn.id)) {
+      t.status = 'interrupted';
+      out.push(...this.addCompleted(t));
     }
     out.push({ method: 'turn/completed', body: { turn: structuredClone(turn) } });
     out.push({
@@ -628,6 +745,21 @@ export class Itemizer {
     return this.abandonTurn(status);
   }
 
+  /**
+   * The CLI process has ended: nothing it was running will report again, including a background
+   * subagent's tool calls in a turn that has already closed.
+   */
+  abandonAll(): Emission[] {
+    const out = this.abandonTurn('interrupted');
+    for (const t of this.toolItems.values()) {
+      if (t.status !== 'running' && t.status !== 'pending') continue;
+      t.status = 'interrupted';
+      out.push(...this.addCompleted(t));
+    }
+    this.backgroundTaskIds.clear();
+    return out;
+  }
+
   abandonTurn(status: 'completed' | 'interrupted' | 'failed' = 'interrupted'): Emission[] {
     if (!this.turn) return [];
     const turn = this.turn;
@@ -635,11 +767,10 @@ export class Itemizer {
     turn.completedAt = this.now();
     this.interruptRequested = false;
     const out: Emission[] = [];
-    for (const t of this.toolItems.values())
-      if (t.turnId === turn.id && (t.status === 'running' || t.status === 'pending')) {
-        t.status = 'interrupted';
-        out.push(...this.addCompleted(t));
-      }
+    for (const t of this.cutShort(turn.id)) {
+      t.status = 'interrupted';
+      out.push(...this.addCompleted(t));
+    }
     out.push({ method: 'turn/completed', body: { turn: structuredClone(turn) } });
     this.turn = null;
     return out;
@@ -651,4 +782,16 @@ export class Itemizer {
       turns: this.turns.map((t) => structuredClone(t)),
     };
   }
+}
+
+/**
+ * The `<task-notification>` message the CLI hands the model when a background task settles:
+ * `<task-id>`, `<status>` and `<summary>` are what a reader needs.
+ */
+export function parseTaskNotification(
+  text: string,
+): { taskId?: string; toolUseId?: string; status?: string; summary?: string } | undefined {
+  if (!/^\s*<task-notification>/.test(text)) return undefined;
+  const tag = (name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim();
+  return { taskId: tag('task-id'), toolUseId: tag('tool-use-id'), status: tag('status'), summary: tag('summary') };
 }

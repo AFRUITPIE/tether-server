@@ -23,6 +23,7 @@ import type { ServerRequestName, ServerRequestParams, ServerRequestResult } from
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { Itemizer, type Emission } from './itemizer.ts';
 import { PushQueue } from './pushQueue.ts';
+import { replayGap, seqOrigin } from './seq.ts';
 import pkg from '../../package.json' with { type: 'json' };
 
 export const TETHER_VERSION: string = pkg.version;
@@ -73,6 +74,8 @@ export type LiveThreadOptions = {
   maxBudgetUsd?: number;
   betas?: string[];
   title?: string;
+  /** The last seq an earlier stream of this thread used; this one numbers above it. */
+  seqAfter?: number;
   /** Called when the thread's query process has exited and it can be unloaded. */
   onExit?: (t: LiveThread) => void;
   stderr?: (text: string) => void;
@@ -98,16 +101,19 @@ export class LiveThread {
   private q!: Query;
   private input = new PushQueue<SDKUserMessage>();
   private itemizer = new Itemizer();
-  private seq = 0;
+  private seq: number;
   private buffer: BufferedEvent[] = [];
   private subscribers = new Set<Subscriber>();
   private pending = new Map<string, PendingRequest>();
   private info: Omit<ThreadInfo, 'threadId' | 'status' | 'lastSeq' | 'cwd'> = {};
   private exited = false;
+  /** Background tasks that count as work (not ambient watchers), as the CLI last reported them. */
+  private backgroundTasks = new Set<string>();
 
   constructor(private opts: LiveThreadOptions) {
     this.id = opts.threadId;
     this.cwd = opts.cwd;
+    this.seq = seqOrigin(opts.seqAfter);
     if (opts.model) this.info.model = opts.model;
     if (opts.effort) this.info.effort = opts.effort;
     if (opts.permissionMode) this.info.permissionMode = opts.permissionMode;
@@ -185,6 +191,11 @@ export class LiveThread {
     return this.pending.size > 0;
   }
 
+  /** A background command or agent is still running, though the turn that started it has ended. */
+  get hasBackgroundWork() {
+    return this.backgroundTasks.size > 0;
+  }
+
   close() {
     this.input.end();
     try {
@@ -205,7 +216,10 @@ export class LiveThread {
       );
     } finally {
       this.exited = true;
-      this.emitAll(this.itemizer.abandonTurn('interrupted'));
+      // The CLI's background tasks die with it, and a new process starts with none.
+      this.backgroundTasks.clear();
+      this.emitAll(this.itemizer.abandonAll());
+      this.emit('task/backgroundChanged', { tasks: [] });
       for (const p of this.pending.values()) p.reject(new RpcError(ErrorCodes.requestCancelled, 'thread closed'));
       this.pending.clear();
       this.setStatus('closed');
@@ -246,6 +260,10 @@ export class LiveThread {
         }
         this.emitStatus();
         return;
+      }
+      if (m.subtype === 'background_tasks_changed' && Array.isArray(m.tasks)) {
+        // Replace, don't pair edges: this is the CLI's full current set.
+        this.backgroundTasks = new Set(m.tasks.filter((t: any) => !t.ambient).map((t: any) => String(t.task_id)));
       }
       if (m.subtype === 'session_state_changed') {
         if (m.state === 'idle' && this.pending.size === 0 && !this.itemizer.currentTurn) this.setStatus('idle');
@@ -295,8 +313,7 @@ export class LiveThread {
     let replayed = 0;
     let gap = false;
     if (afterSeq !== undefined) {
-      const oldest = this.buffer[0]?.seq ?? this.seq + 1;
-      gap = afterSeq + 1 < oldest && afterSeq < this.seq;
+      gap = replayGap(afterSeq, this.buffer[0]?.seq, this.seq);
       for (const e of this.buffer) {
         if (e.seq > afterSeq) {
           sub.notify(e.method, e.params);

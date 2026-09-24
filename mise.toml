@@ -24,8 +24,8 @@ run = "bun run scripts/release.ts"
 run = "bun run scripts/compile.ts"
 
 [tasks.e2e]
-description = "End-to-end tests against the real `claude` on PATH (costs a few cents on haiku)"
-run = ["bun run scripts/e2e.ts", "bun run scripts/e2e-daemon.ts"]
+description = "End-to-end tests against the real `claude` on PATH (a few cents on haiku; TETHER_E2E_MODEL/TETHER_E2E_EFFORT to change)"
+run = ["bun run scripts/e2e.ts", "bun run scripts/e2e-daemon.ts", "bun run scripts/e2e-background.ts"]
 
 [tasks.swift-test]
 run = "swift test"

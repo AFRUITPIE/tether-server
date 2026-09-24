@@ -35,6 +35,12 @@ export class ThreadManager {
   /** Set by the daemon; invoked once a requested shutdown can proceed without killing work. */
   onDrainRequest?: () => void;
   private draining = false;
+  /** Each thread's last seq from a stream that has ended, so the next one numbers above it. */
+  private lastSeqs = new Map<string, number>();
+
+  private retire(t: { id: string; threadInfo(): { lastSeq: number } }) {
+    this.lastSeqs.set(t.id, Math.max(this.lastSeqs.get(t.id) ?? 0, t.threadInfo().lastSeq));
+  }
 
   constructor(
     readonly claude: ClaudeBinary,
@@ -74,7 +80,7 @@ export class ThreadManager {
     const info = await getSessionInfo(threadId, cwd ? { dir: cwd } : undefined);
     const dir = cwd ?? info?.cwd;
     if (!dir) return undefined;
-    const follower = new FollowedThread(threadId, dir);
+    const follower = new FollowedThread(threadId, dir, this.lastSeqs.get(threadId));
     this.followed.set(threadId, follower);
     await follower.start();
     this.log(`following ${threadId} in ${dir}`);
@@ -85,6 +91,7 @@ export class ThreadManager {
   unfollow(threadId: string) {
     const f = this.followed.get(threadId);
     if (!f) return;
+    this.retire(f);
     f.close();
     this.followed.delete(threadId);
   }
@@ -120,6 +127,7 @@ export class ThreadManager {
     if (existing && p.atMessageId) {
       if (existing.status === 'running' || existing.hasPendingRequests)
         throw new RpcError(ErrorCodes.invalidRequest, 'cannot rewind a running thread; interrupt it first');
+      this.retire(existing);
       existing.close();
       this.threads.delete(p.threadId);
     }
@@ -136,6 +144,7 @@ export class ThreadManager {
         claude: this.claude,
         env: { ...env, ...(p.env ?? {}) },
         mode: 'resume',
+        seqAfter: this.lastSeqs.get(p.threadId),
         ...(p.atMessageId ? { resumeAt: p.atMessageId } : {}),
         ...(p.model ? { model: p.model } : {}),
         ...(p.effort ? { effort: p.effort } : {}),
@@ -166,18 +175,23 @@ export class ThreadManager {
     this.unfollow(threadId);
     const t = this.threads.get(threadId);
     if (!t) return;
+    this.retire(t);
     t.close();
     this.threads.delete(threadId);
   }
 
   private onExit(t: LiveThread) {
+    this.retire(t);
     if (this.threads.get(t.id) === t) this.threads.delete(t.id);
     this.log(`thread ${t.id} exited`);
   }
 
   get busy(): boolean {
     for (const t of this.threads.values())
-      if (!t.isExited && (t.status === 'running' || t.status === 'requiresAction' || t.status === 'starting' || t.hasPendingRequests))
+      if (
+        !t.isExited &&
+        (t.status === 'running' || t.status === 'requiresAction' || t.status === 'starting' || t.hasPendingRequests || t.hasBackgroundWork)
+      )
         return true;
     return false;
   }
@@ -190,12 +204,21 @@ export class ThreadManager {
     return true;
   }
 
-  /** Unload idle threads nobody is watching. Running or waiting threads are never evicted. */
+  /**
+   * Unload idle threads nobody is watching. Running or waiting threads are never evicted, nor is one
+   * whose background command or agent is still going: closing the query would kill it.
+   */
   private sweep() {
     const now = Date.now();
     if (this.draining && !this.busy) this.onDrainRequest?.();
     for (const t of this.threads.values()) {
-      if (t.status === 'idle' && !t.hasPendingRequests && t.subscriberCount === 0 && now - t.lastActivityAt > IDLE_EVICT_MS) {
+      if (
+        t.status === 'idle' &&
+        !t.hasPendingRequests &&
+        !t.hasBackgroundWork &&
+        t.subscriberCount === 0 &&
+        now - t.lastActivityAt > IDLE_EVICT_MS
+      ) {
         this.log(`evicting idle thread ${t.id}`);
         this.close(t.id);
       }
@@ -316,19 +339,10 @@ export class ThreadManager {
       return { ...pageOf(storedOnly.items, page), turns: storedOnly.turns, ...(summary ? { summary } : {}) };
     }
     const stored = await this.storedBeforeLoad(live, cwd);
-    // Live itemizer only knows events since load; stored history covers everything before.
-    // Snapshot and seq are taken together so replay after historySeq never duplicates. Where both
-    // have an item the live one wins: the stored copy can predate its tool result.
+    // Snapshot and seq are taken together so replay after historySeq never duplicates.
     const liveSnap = live.history();
     const historySeq = live.threadInfo().lastSeq;
-    const liveById = new Map(liveSnap.items.map((i) => [i.id, i]));
-    const storedIds = new Set(stored.items.map((i) => i.id));
-    const items = [
-      ...stored.items.map((i) => liveById.get(i.id) ?? i),
-      ...liveSnap.items.filter((i) => !storedIds.has(i.id)),
-    ];
-    const liveTurns = new Set(liveSnap.turns.map((t) => t.id));
-    const turns = [...stored.turns.filter((t) => !liveTurns.has(t.id)), ...liveSnap.turns];
+    const { items, turns } = mergeHistory(stored, liveSnap);
     return { ...pageOf(items, page), turns, historySeq, ...(summary ? { summary } : {}) };
   }
 
@@ -373,6 +387,24 @@ export class ThreadManager {
     this.close(threadId);
     await deleteSession(threadId);
   }
+}
+
+type Snapshot = { items: Item[]; turns: Turn[] };
+
+/**
+ * A live thread's transcript: what was on disk when it loaded, then what it has done since. Where
+ * both have an item the live one wins, since the stored copy can predate its tool result. A stored
+ * turn no item belongs to any more is dropped: the transcript splits a message sent mid-turn into a
+ * turn of its own, where the live thread (and so the item) keeps it in the turn it steered.
+ */
+export function mergeHistory(stored: Snapshot, live: Snapshot): Snapshot {
+  const liveById = new Map(live.items.map((i) => [i.id, i]));
+  const storedIds = new Set(stored.items.map((i) => i.id));
+  const items = [...stored.items.map((i) => liveById.get(i.id) ?? i), ...live.items.filter((i) => !storedIds.has(i.id))];
+  const used = new Set(items.map((i) => i.turnId));
+  const liveTurns = new Set(live.turns.map((t) => t.id));
+  const turns = [...stored.turns.filter((t) => !liveTurns.has(t.id) && used.has(t.id)), ...live.turns];
+  return { items, turns };
 }
 
 /**
