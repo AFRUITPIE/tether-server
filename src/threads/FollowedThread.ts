@@ -8,6 +8,7 @@ import { EffortLevel as EffortLevelSchema, PermissionMode as PermissionModeSchem
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
 import { Itemizer, type Emission } from './itemizer.ts';
 import type { Subscriber } from './LiveThread.ts';
+import { replayGap, seqOrigin } from './seq.ts';
 
 const MAX_BUFFERED_EVENTS = 2000;
 /** Appends arrive in bursts as a message is written; one read per burst is enough. */
@@ -33,7 +34,7 @@ export class FollowedThread implements WatchableThread {
   private readonly itemizer = new Itemizer(Date.now, true);
   private readonly subscribers = new Set<Subscriber>();
   private readonly buffer: { seq: number; method: string; params: unknown }[] = [];
-  private seq = 0;
+  private seq: number;
   private ingested = 0;
   private watcher?: FSWatcher;
   private path?: string;
@@ -45,9 +46,10 @@ export class FollowedThread implements WatchableThread {
   private reading = false;
   private again = false;
 
-  constructor(id: string, cwd: string) {
+  constructor(id: string, cwd: string, seqAfter?: number) {
     this.id = id;
     this.cwd = cwd;
+    this.seq = seqOrigin(seqAfter);
   }
 
   /** Reads what is already on disk without emitting: the snapshot `thread/read` hands back. */
@@ -167,8 +169,7 @@ export class FollowedThread implements WatchableThread {
     let replayed = 0;
     let gap = false;
     if (afterSeq !== undefined) {
-      const oldest = this.buffer[0]?.seq ?? this.seq + 1;
-      gap = afterSeq + 1 < oldest && afterSeq < this.seq;
+      gap = replayGap(afterSeq, this.buffer[0]?.seq, this.seq);
       for (const e of this.buffer) {
         if (e.seq > afterSeq) {
           sub.notify(e.method, e.params);

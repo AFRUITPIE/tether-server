@@ -70,11 +70,11 @@ When a bundled binary version changes, `connect` requests a graceful daemon shut
 - The wire format is JSON-RPC 2.0-shaped JSONL without a `"jsonrpc"` member: one object per line.
 - `initialize` must precede all other methods. Validate every request with its Zod parameter schema.
 - Protocol version is `PROTOCOL_VERSION`; changes must remain coordinated with generated Swift types and app behavior.
-- Every thread-scoped notification carries `threadId` and a monotonically increasing per-thread `seq`.
+- Every thread-scoped notification carries `threadId` and a monotonically increasing per-thread `seq`. Each event stream (a `LiveThread` or `FollowedThread` instance) starts at `seqOrigin()`, microseconds since the epoch, so a stream begun later — after a process exit, a resume, a rewind or a daemon restart — numbers above every earlier one, and a client's stale `afterSeq` is reported as a gap instead of swallowing new events.
 - A history snapshot's `historySeq` states exactly which event prefix it includes. Replay starts after that value so snapshots and live streams never overlap or leave a gap.
 - Unknown SDK messages are forwarded as raw events rather than crashing the session. Generated Swift discriminated unions likewise retain `.unknown` cases.
 - A server-to-client request remains pending until one subscribed client answers or the SDK cancels it. Re-subscribing clients must receive pending requests again. The first answer wins; other clients receive `serverRequest/resolved`.
-- A dropped client never owns a query. Running and action-required threads are not idle-eviction candidates.
+- A dropped client never owns a query. Running and action-required threads are not idle-eviction candidates, nor is one with background work (the CLI's latest `background_tasks_changed`, ambient watchers excluded): closing its query would kill that work. The same holds for an upgrade drain.
 - `turn/start` on an unloaded historical thread resumes it before sending. On a running thread, input respects the requested `now`/`next`/`later` priority.
 
 ## Claude Agent SDK boundary
@@ -92,6 +92,8 @@ SDK types and events can change between Claude Code versions. Be defensive aroun
 ## Itemization and history
 
 The live event path and history path must produce the same conceptual `Item` and `Turn` model. `itemizer.ts` pairs tool uses with results, streams agent/reasoning deltas, nests subagent content using parent tool-use IDs, maps status/task events, and closes turns from result messages.
+
+A subagent's messages belong to the turn that launched it, even after that turn ends; a background subagent's tool calls are not cut short when it does. A background task settling becomes one `taskNotification` notice, from either the `task_notification` event or the `<task-notification>` message the CLI hands the model (the only form history has); a foreground command's own task, and a subagent's inner one, get none.
 
 Keep itemization deterministic and testable. Prefer adding a minimal recorded fixture plus assertions over embedding UI-specific interpretation in the server. The app decides how compactly to display reasoning and tool runs; the server preserves semantic data.
 
@@ -120,6 +122,8 @@ Generated string enums are forward-compatible `RawRepresentable` Swift structs. 
 
 - `test/itemizer.test.ts` consumes recorded `test/fixtures/sdk/*.jsonl` messages and checks emitted items/events.
 - `Tests/TetherProtocolTests/Fixtures/e2e-wire.jsonl` is shared wire traffic used to verify Swift decoding.
+- `test/reattach.test.ts` covers stream numbering, background work and eviction, background subagents, task notices and history merging without a CLI.
+- `scripts/e2e-background.ts` (in `mise run e2e`) runs background work across disconnects, a restarted thread's numbering, and eviction against the real CLI. `TETHER_E2E_MODEL`/`TETHER_E2E_EFFORT` choose the model the E2E scripts use.
 - `scripts/record-sdk.ts` and `mise run e2e` invoke a real Claude CLI and may write temporary project files or spend provider tokens. Run them only when explicitly useful.
 - Daemon tests must set `TETHER_HOME` to a fresh temporary directory. Never test destructive daemon behavior against the user's real `~/.tether`.
 - Prefer `serve --stdio` for deterministic local protocol debugging; use daemon E2E only for reconnect, replay, upgrade, or disconnect-survival behavior.

@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TetherClient } from '../src/client/TetherClient.ts';
 
+// TETHER_E2E_MODEL / TETHER_E2E_EFFORT pick what the runs cost, e.g. sonnet at low effort.
+const model = { model: process.env.TETHER_E2E_MODEL ?? 'haiku', ...(process.env.TETHER_E2E_EFFORT ? { effort: process.env.TETHER_E2E_EFFORT as 'low' } : {}) };
+
 const server = process.argv[2] ? process.argv.slice(2) : ['bun', 'run', join(import.meta.dir, '../src/cli.ts'), 'serve', '--stdio'];
 const cwd = mkdtempSync(join(tmpdir(), 'tether-e2e-'));
 writeFileSync(join(cwd, 'hello.txt'), 'hello from tether\n');
@@ -37,7 +40,7 @@ ok(init.claude.version && init.protocolVersion === 1, `initialize (claude ${init
 const models = await c.call('model/list', { cwd });
 ok(models.models.length > 0, `model/list returned ${models.models.length} models`);
 
-const { thread } = await c.call('thread/start', { cwd, model: 'haiku', permissionMode: 'default' });
+const { thread } = await c.call('thread/start', { cwd, ...model, permissionMode: 'default' });
 ok(thread.threadId && thread.status === 'idle', `thread/start ${thread.threadId}`);
 
 const done1 = c.waitFor((m, p) => m === 'turn/completed' && p.threadId === thread.threadId);
@@ -81,7 +84,7 @@ c.onServerRequest = (method, params) => {
   if (method === 'plan/approve') { planned = true; return { decision: 'approve', permissionMode: 'acceptEdits' }; }
   return prevHandler(method, params);
 };
-const q = await c.call('thread/start', { cwd, model: 'haiku', permissionMode: 'plan' });
+const q = await c.call('thread/start', { cwd, ...model, permissionMode: 'plan' });
 const done4 = c.waitFor((m, p) => m === 'turn/completed' && p.threadId === q.thread.threadId, 240_000);
 await c.call('turn/start', { threadId: q.thread.threadId, input: [{ type: 'text', text: 'First use the AskUserQuestion tool to ask which color I prefer (options: red, blue). Then present a one-step plan to write that color into color.txt and exit plan mode. After approval, write the file.' }] });
 await done4;
