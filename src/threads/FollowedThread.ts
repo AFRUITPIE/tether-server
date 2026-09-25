@@ -252,11 +252,14 @@ export async function transcriptSettings(threadId: string): Promise<SessionSetti
   return path ? (await recordedSettings(path)).settings : {};
 }
 
-/** Settings from the file's tail, widened once when the tail is all tool output. */
+/**
+ * Settings from the file's tail, widened while they aren't all found: a long turn of tool output
+ * (screenshots especially) can put the last prompt, and so the permission mode, megabytes back.
+ */
 export async function recordedSettings(path: string): Promise<{ settings: SessionSettings; end: number }> {
   let read = { settings: {} as SessionSettings, end: 0 };
   try {
-    for (const bytes of [256 * 1024, 4 * 1024 * 1024]) {
+    for (const bytes of [256 * 1024, 4 * 1024 * 1024, Infinity]) {
       const tail = await readTail(path, bytes);
       read = { settings: settingsFrom(tail.lines), end: tail.end };
       if (read.settings.model && read.settings.permissionMode) break;
@@ -306,7 +309,8 @@ function settingsFrom(lines: string[]): SessionSettings {
   const out: SessionSettings = {};
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
-    if (!line) continue;
+    // Most lines are tool output; only these two kinds can carry a setting.
+    if (!line || !(line.includes('"assistant"') || line.includes('"permissionMode"'))) continue;
     let o: any;
     try {
       o = JSON.parse(line);

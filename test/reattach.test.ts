@@ -299,6 +299,20 @@ describe('a resumed session keeps its settings', () => {
     expect(resumeSettings({}, {})).toEqual({});
   });
 
+  test('a permission mode megabytes back, behind a long turn of tool output, is still found', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'tether-settings-')), 'session.jsonl');
+    const screenshot = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'A'.repeat(5_000_000) }] } };
+    writeFileSync(
+      path,
+      [
+        JSON.stringify({ type: 'user', permissionMode: 'auto', message: { role: 'user', content: 'audit this' } }),
+        JSON.stringify(screenshot),
+        JSON.stringify({ type: 'assistant', effort: 'high', message: { model: 'claude-opus-5-5', content: [] } }),
+      ].join('\n') + '\n',
+    );
+    expect((await recordedSettings(path)).settings).toEqual({ model: 'claude-opus-5-5', effort: 'high', permissionMode: 'auto' });
+  });
+
   test('an error the CLI wrote itself is not the model in use', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'tether-settings-')), 'session.jsonl');
     writeFileSync(
