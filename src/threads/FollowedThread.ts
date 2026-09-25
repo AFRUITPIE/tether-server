@@ -1,8 +1,9 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
-import { watch, type FSWatcher } from 'node:fs';
+import { createReadStream, watch, type FSWatcher } from 'node:fs';
 import { open, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import type { EffortLevel, Item, PermissionMode, ThreadInfo, Turn } from '../protocol/index.ts';
 import { EffortLevel as EffortLevelSchema, PermissionMode as PermissionModeSchema } from '../protocol/common.ts';
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
@@ -214,6 +215,36 @@ async function transcriptPath(threadId: string): Promise<string | undefined> {
     if (!dir.isDirectory()) continue;
     const candidate = join(root, dir.name, `${threadId}.jsonl`);
     if (await stat(candidate).then(() => true, () => false)) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * The cwd a transcript records. The SDK looks for it only near the top of the file, which a first
+ * message carrying images can push past, leaving the session without one.
+ */
+export async function transcriptCwd(threadId: string): Promise<string | undefined> {
+  const path = await transcriptPath(threadId);
+  return path ? recordedCwd(path) : undefined;
+}
+
+/** The first `cwd` a transcript's lines carry, read a line at a time until it turns up. */
+export async function recordedCwd(path: string): Promise<string | undefined> {
+  const lines = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (!line.includes('"cwd"')) continue;
+      try {
+        const cwd = JSON.parse(line).cwd;
+        if (typeof cwd === 'string' && cwd) return cwd;
+      } catch {
+        // a line still being written
+      }
+    }
+  } catch {
+    // unreadable: no cwd
+  } finally {
+    lines.close();
   }
   return undefined;
 }
