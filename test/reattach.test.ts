@@ -3,11 +3,11 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Item, ToolCallItem } from '../src/protocol/index.ts';
-import { FollowedThread, recordedCwd } from '../src/threads/FollowedThread.ts';
+import { FollowedThread, recordedCwd, recordedSettings } from '../src/threads/FollowedThread.ts';
 import { Itemizer, parseTaskNotification } from '../src/threads/itemizer.ts';
 import { LiveThread } from '../src/threads/LiveThread.ts';
 import { replayGap } from '../src/threads/seq.ts';
-import { mergeHistory, ThreadManager } from '../src/threads/ThreadManager.ts';
+import { mergeHistory, resumeSettings, ThreadManager } from '../src/threads/ThreadManager.ts';
 
 const claude = { path: '/usr/bin/false', version: '0' } as any;
 const liveThread = (threadId = 'thread-1') => new LiveThread({ threadId, cwd: '/tmp', claude, env: {}, mode: 'new' });
@@ -270,5 +270,49 @@ describe('a session whose cwd the SDK misses', () => {
     writeFileSync(path, '{"type":"summary","note":"no \\"cwd\\" here"}\n{"cwd":\n');
     expect(await recordedCwd(path)).toBeUndefined();
     expect(await recordedCwd(join(tmpdir(), 'missing-transcript.jsonl'))).toBeUndefined();
+  });
+});
+
+describe('a resumed session keeps its settings', () => {
+  const recorded = { model: 'claude-sonnet-5', effort: 'low', permissionMode: 'bypassPermissions' } as const;
+
+  test('what it last ran with, when the client asks for nothing', () => {
+    expect(resumeSettings({}, recorded)).toEqual(recorded);
+  });
+
+  test('what the client asks for wins', () => {
+    expect(resumeSettings({ effort: 'high', permissionMode: 'plan' }, recorded)).toEqual({
+      model: 'claude-sonnet-5',
+      effort: 'high',
+      permissionMode: 'plan',
+    });
+  });
+
+  test('another model drops the recorded effort, which may not apply to it', () => {
+    expect(resumeSettings({ model: 'claude-haiku-4-5' }, recorded)).toEqual({
+      model: 'claude-haiku-4-5',
+      permissionMode: 'bypassPermissions',
+    });
+  });
+
+  test('a session with nothing recorded resumes with the defaults', () => {
+    expect(resumeSettings({}, {})).toEqual({});
+  });
+
+  test('an error the CLI wrote itself is not the model in use', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'tether-settings-')), 'session.jsonl');
+    writeFileSync(
+      path,
+      [
+        JSON.stringify({ type: 'user', permissionMode: 'acceptEdits', message: { role: 'user', content: 'hi' } }),
+        JSON.stringify({ type: 'assistant', effort: 'medium', message: { model: 'claude-opus-5-5', content: [] } }),
+        JSON.stringify({ type: 'assistant', message: { model: '<synthetic>', content: [] } }),
+      ].join('\n') + '\n',
+    );
+    expect((await recordedSettings(path)).settings).toEqual({
+      model: 'claude-opus-5-5',
+      effort: 'medium',
+      permissionMode: 'acceptEdits',
+    });
   });
 });
