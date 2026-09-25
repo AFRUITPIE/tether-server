@@ -17,7 +17,7 @@ import type { ClaudeBinary } from '../claude.ts';
 import type { Item, Params, ThreadSummary, Turn } from '../protocol/index.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { Itemizer } from './itemizer.ts';
-import { FollowedThread } from './FollowedThread.ts';
+import { FollowedThread, transcriptCwd } from './FollowedThread.ts';
 import { LiveThread, TETHER_VERSION } from './LiveThread.ts';
 import { PushQueue } from './pushQueue.ts';
 
@@ -77,7 +77,7 @@ export class ThreadManager {
     if (this.loaded(threadId)) return undefined;
     const existing = this.followed.get(threadId);
     if (existing) return existing;
-    const info = await getSessionInfo(threadId, cwd ? { dir: cwd } : undefined);
+    const info = await sessionInfo(threadId, cwd);
     const dir = cwd ?? info?.cwd;
     if (!dir) return undefined;
     const follower = new FollowedThread(threadId, dir, this.lastSeqs.get(threadId));
@@ -134,7 +134,7 @@ export class ThreadManager {
     const inflight = this.starting.get(p.threadId);
     if (inflight) return inflight;
     const promise = (async () => {
-      const info = await getSessionInfo(p.threadId, p.cwd ? { dir: p.cwd } : undefined);
+      const info = await sessionInfo(p.threadId, p.cwd);
       if (!info) throw new RpcError(ErrorCodes.threadNotFound, `no session ${p.threadId}`);
       const cwd = p.cwd ?? info.cwd;
       if (!cwd) throw new RpcError(ErrorCodes.invalidParams, 'session has no recorded cwd; pass cwd');
@@ -281,7 +281,7 @@ export class ThreadManager {
       ...(p.offset ? { offset: p.offset } : {}),
       ...(p.includeWorktrees ? { includeWorktrees: true } : {}),
     });
-    return sessions.map((s) => this.summary(s));
+    return (await Promise.all(sessions.map(withCwd))).map((s) => this.summary(s));
   }
 
   summary(s: SDKSessionInfo): ThreadSummary {
@@ -301,7 +301,7 @@ export class ThreadManager {
   }
 
   async projects(limit?: number) {
-    const sessions = await listSessions({ limit: 2000 });
+    const sessions = await Promise.all((await listSessions({ limit: 2000 })).map(withCwd));
     const byCwd = new Map<string, { cwd: string; lastActivity: number; threadCount: number }>();
     for (const s of sessions) {
       if (!s.cwd) continue;
@@ -319,7 +319,7 @@ export class ThreadManager {
     cwd?: string,
     page?: { limit?: number; before?: string },
   ): Promise<{ items: Item[]; turns: Turn[]; summary?: ThreadSummary; historySeq?: number; hasMore?: boolean }> {
-    const info = await getSessionInfo(threadId, cwd ? { dir: cwd } : undefined);
+    const info = await sessionInfo(threadId, cwd);
     const live = this.loaded(threadId);
     const summary = info ? this.summary(info) : undefined;
     if (!live) {
@@ -419,4 +419,16 @@ function pageOf(items: Item[], page?: { limit?: number; before?: string }): { it
   }
   const start = page?.limit ? Math.max(0, end - page.limit) : 0;
   return { items: items.slice(start, end), hasMore: start > 0 };
+}
+
+/** A session's info with its cwd, which the SDK can miss (see `transcriptCwd`). */
+async function sessionInfo(threadId: string, cwd?: string): Promise<SDKSessionInfo | undefined> {
+  const info = await getSessionInfo(threadId, cwd ? { dir: cwd } : undefined);
+  return info && withCwd(info);
+}
+
+async function withCwd(s: SDKSessionInfo): Promise<SDKSessionInfo> {
+  if (s.cwd) return s;
+  const cwd = await transcriptCwd(s.sessionId);
+  return cwd ? { ...s, cwd } : s;
 }

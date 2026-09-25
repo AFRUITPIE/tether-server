@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Item, ToolCallItem } from '../src/protocol/index.ts';
-import { FollowedThread } from '../src/threads/FollowedThread.ts';
+import { FollowedThread, recordedCwd } from '../src/threads/FollowedThread.ts';
 import { Itemizer, parseTaskNotification } from '../src/threads/itemizer.ts';
 import { LiveThread } from '../src/threads/LiveThread.ts';
 import { replayGap } from '../src/threads/seq.ts';
@@ -243,5 +246,29 @@ describe('merging stored and live history', () => {
     const merged = mergeHistory(stored, live);
     expect(merged.items.map((i) => [i.id, i.turnId])).toEqual([['a', 'a'], ['b', 'a']]);
     expect(merged.turns.map((t) => t.id)).toEqual(['a', 'x']);
+  });
+});
+
+describe('a session whose cwd the SDK misses', () => {
+  test('is read from past a first message too long for the SDK’s look at the head', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'tether-cwd-')), 'session.jsonl');
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(1_000_000) } };
+    writeFileSync(
+      path,
+      [
+        JSON.stringify({ type: 'queue-operation', operation: 'enqueue' }),
+        JSON.stringify({ type: 'user', message: { role: 'user', content: [image] } }),
+        JSON.stringify({ type: 'attachment', cwd: '/Users/me/project' }),
+        JSON.stringify({ type: 'assistant', cwd: '/Users/me/project/sub' }),
+      ].join('\n') + '\n',
+    );
+    expect(await recordedCwd(path)).toBe('/Users/me/project');
+  });
+
+  test('a transcript that records none has none', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'tether-cwd-')), 'session.jsonl');
+    writeFileSync(path, '{"type":"summary","note":"no \\"cwd\\" here"}\n{"cwd":\n');
+    expect(await recordedCwd(path)).toBeUndefined();
+    expect(await recordedCwd(join(tmpdir(), 'missing-transcript.jsonl'))).toBeUndefined();
   });
 });
