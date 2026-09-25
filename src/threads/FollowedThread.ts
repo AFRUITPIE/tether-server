@@ -131,12 +131,9 @@ export class FollowedThread implements WatchableThread {
    */
   private async readSettings(): Promise<void> {
     if (!this.path) return;
-    for (const bytes of [256 * 1024, 4 * 1024 * 1024]) {
-      const tail = await readTail(this.path, bytes);
-      this.settings = settingsFrom(tail.lines);
-      this.settingsOffset = tail.end;
-      if (this.settings.model && this.settings.permissionMode) break; // widen once if all tool output
-    }
+    const read = await recordedSettings(this.path);
+    this.settings = read.settings;
+    this.settingsOffset = read.end;
   }
 
   /** Folds in lines appended since the last read. Returns whether the settings changed. */
@@ -249,7 +246,28 @@ export async function recordedCwd(path: string): Promise<string | undefined> {
   return undefined;
 }
 
-type SessionSettings = { model?: string; effort?: EffortLevel; permissionMode?: PermissionMode };
+/** The settings a session last ran with, as its transcript records them. */
+export async function transcriptSettings(threadId: string): Promise<SessionSettings> {
+  const path = await transcriptPath(threadId);
+  return path ? (await recordedSettings(path)).settings : {};
+}
+
+/** Settings from the file's tail, widened once when the tail is all tool output. */
+export async function recordedSettings(path: string): Promise<{ settings: SessionSettings; end: number }> {
+  let read = { settings: {} as SessionSettings, end: 0 };
+  try {
+    for (const bytes of [256 * 1024, 4 * 1024 * 1024]) {
+      const tail = await readTail(path, bytes);
+      read = { settings: settingsFrom(tail.lines), end: tail.end };
+      if (read.settings.model && read.settings.permissionMode) break;
+    }
+  } catch {
+    // unreadable: nothing recorded
+  }
+  return read;
+}
+
+export type SessionSettings = { model?: string; effort?: EffortLevel; permissionMode?: PermissionMode };
 
 const EFFORT: readonly string[] = EffortLevelSchema.options;
 const PERMISSION: readonly string[] = PermissionModeSchema.options;
@@ -296,7 +314,8 @@ function settingsFrom(lines: string[]): SessionSettings {
       continue;
     }
     if (o.isSidechain) continue; // a subagent's turn, not the session's
-    if (!out.model && o.type === 'assistant' && typeof o.message?.model === 'string') {
+    // An error the CLI wrote itself carries the model `<synthetic>`, not the one in use.
+    if (!out.model && o.type === 'assistant' && typeof o.message?.model === 'string' && o.message.model !== '<synthetic>') {
       out.model = o.message.model;
       if (typeof o.effort === 'string' && EFFORT.includes(o.effort)) out.effort = o.effort as EffortLevel;
     }

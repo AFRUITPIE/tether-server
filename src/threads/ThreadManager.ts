@@ -17,7 +17,7 @@ import type { ClaudeBinary } from '../claude.ts';
 import type { Item, Params, ThreadSummary, Turn } from '../protocol/index.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { Itemizer } from './itemizer.ts';
-import { FollowedThread, transcriptCwd } from './FollowedThread.ts';
+import { FollowedThread, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
 import { LiveThread, TETHER_VERSION } from './LiveThread.ts';
 import { PushQueue } from './pushQueue.ts';
 
@@ -138,6 +138,7 @@ export class ThreadManager {
       if (!info) throw new RpcError(ErrorCodes.threadNotFound, `no session ${p.threadId}`);
       const cwd = p.cwd ?? info.cwd;
       if (!cwd) throw new RpcError(ErrorCodes.invalidParams, 'session has no recorded cwd; pass cwd');
+      const settings = resumeSettings(p, p.model && p.effort && p.permissionMode ? {} : await transcriptSettings(p.threadId));
       const t = new LiveThread({
         threadId: p.threadId,
         cwd,
@@ -146,9 +147,7 @@ export class ThreadManager {
         mode: 'resume',
         seqAfter: this.lastSeqs.get(p.threadId),
         ...(p.atMessageId ? { resumeAt: p.atMessageId } : {}),
-        ...(p.model ? { model: p.model } : {}),
-        ...(p.effort ? { effort: p.effort } : {}),
-        ...(p.permissionMode ? { permissionMode: p.permissionMode } : {}),
+        ...settings,
         title: info.customTitle ?? info.summary,
         onExit: (lt) => this.onExit(lt),
       });
@@ -431,4 +430,19 @@ async function withCwd(s: SDKSessionInfo): Promise<SDKSessionInfo> {
   if (s.cwd) return s;
   const cwd = await transcriptCwd(s.sessionId);
   return cwd ? { ...s, cwd } : s;
+}
+
+/**
+ * What a resumed session runs with: what the client asked for, else what it last ran with. The
+ * CLI's own resume starts over at the default effort and permission mode. A recorded effort goes
+ * with the recorded model, so it is dropped when the client picks another.
+ */
+export function resumeSettings(
+  asked: { model?: string; effort?: SessionSettings['effort']; permissionMode?: SessionSettings['permissionMode'] },
+  recorded: SessionSettings,
+): SessionSettings {
+  const model = asked.model ?? recorded.model;
+  const effort = asked.effort ?? (model === recorded.model ? recorded.effort : undefined);
+  const permissionMode = asked.permissionMode ?? recorded.permissionMode;
+  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(permissionMode ? { permissionMode } : {}) };
 }
