@@ -1,7 +1,7 @@
 // Emits schema/tether.schema.json: every method, notification and server request, with shared $defs.
 import { z } from 'zod';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { Methods, Notifications, PROTOCOL_VERSION, ServerRequests } from '../src/protocol/index.ts';
+import { MIN_CLIENT_PROTOCOL, Methods, Notifications, PROTOCOL_VERSION, ServerRequests } from '../src/protocol/index.ts';
 
 const defs: Record<string, unknown> = {};
 
@@ -17,6 +17,7 @@ const doc = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   title: 'Tether protocol',
   protocolVersion: PROTOCOL_VERSION,
+  minClientProtocol: MIN_CLIENT_PROTOCOL,
   methods: Object.fromEntries(
     Object.entries(Methods).map(([name, m]) => [name, { params: convert(m.params), result: convert(m.result) }]),
   ),

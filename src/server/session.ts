@@ -1,6 +1,6 @@
 import { hostname, arch, platform, homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { Methods, PROTOCOL_VERSION, type MethodName, type Params, type Result } from '../protocol/index.ts';
+import { Methods, MIN_CLIENT_PROTOCOL, PROTOCOL_VERSION, type MethodName, type Params, type Result } from '../protocol/index.ts';
 import { Connection, ErrorCodes, RpcError } from '../rpc/connection.ts';
 import type { WatchableThread } from '../threads/FollowedThread.ts';
 import type { Subscriber } from '../threads/LiveThread.ts';
@@ -84,6 +84,15 @@ export class ClientSession implements Subscriber {
   private handlers: { [M in MethodName]?: Handler<M> } = {
     initialize: (p) => {
       if (this.initialized) throw new RpcError(ErrorCodes.alreadyInitialized, 'Already initialized');
+      const clientProtocol = p.protocolVersion ?? 1;
+      if (clientProtocol < MIN_CLIENT_PROTOCOL) {
+        this.log(`client ${this.id} refused: ${p.clientInfo.name} ${p.clientInfo.version} speaks protocol ${clientProtocol}`);
+        throw new RpcError(
+          ErrorCodes.incompatibleProtocol,
+          `This client speaks protocol ${clientProtocol}; tether ${TETHER_VERSION} needs ${MIN_CLIENT_PROTOCOL} or later`,
+          { protocolVersion: PROTOCOL_VERSION, minClientProtocol: MIN_CLIENT_PROTOCOL },
+        );
+      }
       this.initialized = true;
       this.env = p.env ?? {};
       this.experimental = !!p.capabilities?.experimentalApi;
@@ -92,6 +101,7 @@ export class ClientSession implements Subscriber {
       return {
         serverInfo: { name: 'tether', version: TETHER_VERSION },
         protocolVersion: PROTOCOL_VERSION,
+        minClientProtocol: MIN_CLIENT_PROTOCOL,
         host: { hostname: hostname(), platform: platform(), arch: arch(), home: homedir(), pid: process.pid, mode: this.mode },
         claude: this.mgr.claude,
       };

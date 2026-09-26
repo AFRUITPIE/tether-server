@@ -4,6 +4,7 @@ import { Connection } from './rpc/connection.ts';
 import { ClientSession } from './server/session.ts';
 import { ThreadManager } from './threads/ThreadManager.ts';
 import { TETHER_VERSION } from './threads/LiveThread.ts';
+import { versionInfo } from './version.ts';
 import { readDaemonMeta, runConnect, runDaemon, SOCKET_PATH } from './daemon/daemon.ts';
 
 const [cmd = 'help', ...args] = process.argv.slice(2);
@@ -43,7 +44,9 @@ switch (cmd) {
   }
   case 'version':
   case '--version':
-    console.log(TETHER_VERSION);
+    // `--json` is what a client probes a host with before deciding to install or update.
+    if (process.argv.includes('--json')) console.log(JSON.stringify(versionInfo()));
+    else console.log(TETHER_VERSION);
     break;
   default:
     console.log(`tether ${TETHER_VERSION}
@@ -52,5 +55,5 @@ usage:
   tether daemon            run the daemon in the foreground
   tether status            show the running daemon
   tether serve --stdio     JSON-RPC over stdio (single client, in-process threads; for tests)
-  tether version`);
+  tether version [--json]`);
 }

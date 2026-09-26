@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
+/**
+ * Bumped on a breaking change to a method, notification or payload. Additive changes (a new
+ * notification, an optional field) don't bump it: unions already keep unknown variants.
+ */
 export const PROTOCOL_VERSION = 1;
+/** The oldest client protocol this server still serves. */
+export const MIN_CLIENT_PROTOCOL = 1;
 
 export const JsonValue: z.ZodType<unknown> = z.unknown().meta({ id: 'JsonValue' });
 

@@ -3,6 +3,8 @@
 import Foundation
 
 public let tetherProtocolVersion = 1
+/// The oldest client protocol the server this was generated from still serves.
+public let tetherMinClientProtocol = 1
 
 public typealias EnvOverrides = [String: String]
 
@@ -1483,17 +1485,20 @@ public struct PermissionScope: RawRepresentable, Codable, Sendable, Hashable, Ca
 
 public struct InitializeParams: Codable, Sendable, Hashable {
     public var clientInfo: ClientInfo
+    public var protocolVersion: Int?
     public var capabilities: Capabilities?
     public var env: EnvOverrides?
 
-    public init(clientInfo: ClientInfo, capabilities: Capabilities? = nil, env: EnvOverrides? = nil) {
+    public init(clientInfo: ClientInfo, protocolVersion: Int? = nil, capabilities: Capabilities? = nil, env: EnvOverrides? = nil) {
         self.clientInfo = clientInfo
+        self.protocolVersion = protocolVersion
         self.capabilities = capabilities
         self.env = env
     }
 
     private enum CodingKeys: String, CodingKey {
         case clientInfo = "clientInfo"
+        case protocolVersion = "protocolVersion"
         case capabilities = "capabilities"
         case env = "env"
     }
@@ -1501,6 +1506,7 @@ public struct InitializeParams: Codable, Sendable, Hashable {
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.clientInfo = try c.decode(ClientInfo.self, forKey: .clientInfo)
+        self.protocolVersion = try c.decodeIfPresent(Int.self, forKey: .protocolVersion)
         self.capabilities = try c.decodeIfPresent(Capabilities.self, forKey: .capabilities)
         self.env = try c.decodeIfPresent(EnvOverrides.self, forKey: .env)
     }
@@ -1508,6 +1514,7 @@ public struct InitializeParams: Codable, Sendable, Hashable {
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(clientInfo, forKey: .clientInfo)
+        try c.encodeIfPresent(protocolVersion, forKey: .protocolVersion)
         try c.encodeIfPresent(capabilities, forKey: .capabilities)
         try c.encodeIfPresent(env, forKey: .env)
     }
@@ -1574,12 +1581,14 @@ public struct InitializeParams: Codable, Sendable, Hashable {
 public struct InitializeResult: Codable, Sendable, Hashable {
     public var serverInfo: ServerInfo
     public var protocolVersion: Int
+    public var minClientProtocol: Int?
     public var host: Host
     public var claude: Claude
 
-    public init(serverInfo: ServerInfo, protocolVersion: Int, host: Host, claude: Claude) {
+    public init(serverInfo: ServerInfo, protocolVersion: Int, minClientProtocol: Int? = nil, host: Host, claude: Claude) {
         self.serverInfo = serverInfo
         self.protocolVersion = protocolVersion
+        self.minClientProtocol = minClientProtocol
         self.host = host
         self.claude = claude
     }
@@ -1587,6 +1596,7 @@ public struct InitializeResult: Codable, Sendable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case serverInfo = "serverInfo"
         case protocolVersion = "protocolVersion"
+        case minClientProtocol = "minClientProtocol"
         case host = "host"
         case claude = "claude"
     }
@@ -1595,6 +1605,7 @@ public struct InitializeResult: Codable, Sendable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.serverInfo = try c.decode(ServerInfo.self, forKey: .serverInfo)
         self.protocolVersion = try c.decode(Int.self, forKey: .protocolVersion)
+        self.minClientProtocol = try c.decodeIfPresent(Int.self, forKey: .minClientProtocol)
         self.host = try c.decode(Host.self, forKey: .host)
         self.claude = try c.decode(Claude.self, forKey: .claude)
     }
@@ -1603,6 +1614,7 @@ public struct InitializeResult: Codable, Sendable, Hashable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(serverInfo, forKey: .serverInfo)
         try c.encode(protocolVersion, forKey: .protocolVersion)
+        try c.encodeIfPresent(minClientProtocol, forKey: .minClientProtocol)
         try c.encode(host, forKey: .host)
         try c.encode(claude, forKey: .claude)
     }
