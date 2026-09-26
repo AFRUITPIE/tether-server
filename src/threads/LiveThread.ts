@@ -26,7 +26,9 @@ import { PushQueue } from './pushQueue.ts';
 import { replayGap, seqOrigin } from './seq.ts';
 import pkg from '../../package.json' with { type: 'json' };
 
-export const TETHER_VERSION: string = pkg.version;
+/** Set by `scripts/compile.ts`: the package version, or a `-dev.<time>` stamp for a local build. */
+declare const TETHER_BUILD_VERSION: string | undefined;
+export const TETHER_VERSION: string = typeof TETHER_BUILD_VERSION === 'string' ? TETHER_BUILD_VERSION : pkg.version;
 /** The Agent SDK this build wraps. Reported, not encoded in TETHER_VERSION: the daemon replaces
  *  itself only when the running version differs, so that string has to move when Tether changes
  *  even if the SDK hasn't. */
