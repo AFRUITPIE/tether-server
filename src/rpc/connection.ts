@@ -17,6 +17,8 @@ export const ErrorCodes = {
   overloaded: -32001,
   notInitialized: -32002,
   alreadyInitialized: -32003,
+  /** `data`: `{ protocolVersion, minClientProtocol }` of the server that refused the client. */
+  incompatibleProtocol: -32004,
   threadNotFound: -32010,
   threadNotLoaded: -32011,
   sdkError: -32020,

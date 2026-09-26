@@ -70,6 +70,8 @@ When a bundled binary version changes, `connect` requests a graceful daemon shut
 - The wire format is JSON-RPC 2.0-shaped JSONL without a `"jsonrpc"` member: one object per line.
 - `initialize` must precede all other methods. Validate every request with its Zod parameter schema.
 - Protocol version is `PROTOCOL_VERSION`; changes must remain coordinated with generated Swift types and app behavior.
+- Bump `PROTOCOL_VERSION` only for a breaking change. Raise `MIN_CLIENT_PROTOCOL` only when the server can no longer serve older clients: `initialize` then refuses them with `incompatibleProtocol`, carrying both numbers so the app can say which side to update. Additive changes (a new notification, an optional field) bump neither, and a new result field must be optional so older servers still decode.
+- `tether version --json` reports the version, protocol range, Agent SDK version and platform without a daemon; clients probe a host with it before installing or updating.
 - Every thread-scoped notification carries `threadId` and a monotonically increasing per-thread `seq`. Each event stream (a `LiveThread` or `FollowedThread` instance) starts at `seqOrigin()`, microseconds since the epoch, so a stream begun later — after a process exit, a resume, a rewind or a daemon restart — numbers above every earlier one, and a client's stale `afterSeq` is reported as a gap instead of swallowing new events.
 - A history snapshot's `historySeq` states exactly which event prefix it includes. Replay starts after that value so snapshots and live streams never overlap or leave a gap.
 - Unknown SDK messages are forwarded as raw events rather than crashing the session. Generated Swift discriminated unions likewise retain `.unknown` cases.
