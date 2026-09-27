@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createWorktree } from '../src/server/fsApi.ts';
+import { createWorktree, removeWorktree } from '../src/server/fsApi.ts';
 import { Itemizer, userContentToInputs } from '../src/threads/itemizer.ts';
 
 describe('documents', () => {
@@ -50,6 +50,21 @@ describe('worktrees', () => {
     expect(git('branch', '--list', 'claude/tether-abc').trim()).toContain('claude/tether-abc');
     expect(readFileSync(join(repo, '.git', 'info', 'exclude'), 'utf8')).toContain('.claude/worktrees/');
     expect(git('status', '--porcelain').trim()).toBe('');
+  });
+
+  test('removing one takes its branch too, and refuses uncommitted changes unless forced', async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'tether-wt-')));
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+    git('init', '-q', '-b', 'main');
+    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'first');
+    const path = await createWorktree(repo, 'tether-rm');
+    execFileSync('sh', ['-c', 'echo hi > notes.txt'], { cwd: path });
+
+    await expect(removeWorktree(path, false)).rejects.toThrow('uncommitted changes');
+    await removeWorktree(path, true);
+
+    expect(existsSync(path)).toBe(false);
+    expect(git('branch', '--list', 'claude/tether-rm').trim()).toBe('');
   });
 
   test('outside a repository it says so', async () => {

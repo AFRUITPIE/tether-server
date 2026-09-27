@@ -298,6 +298,15 @@ export const Methods = {
     result: z.object({ diff: z.string() }),
   },
 
+  /**
+   * Removes a worktree `thread/start` made (under `.claude/worktrees/`) and its branch. Refuses one
+   * with uncommitted changes unless `force`.
+   */
+  'git/removeWorktree': {
+    params: z.object({ path: z.string(), force: z.boolean().optional() }),
+    result: Empty,
+  },
+
   // ---- scheduled tasks (kept and run by the daemon) ----
   'schedule/list': { params: Empty, result: z.object({ tasks: z.array(ScheduledTask) }) },
   /** Creates the task when `id` is absent, else replaces it. */

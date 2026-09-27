@@ -1689,6 +1689,28 @@
         "additionalProperties": false
       }
     },
+    "git/removeWorktree": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "force": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
     "schedule/list": {
       "params": {
         "type": "object",

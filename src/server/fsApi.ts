@@ -162,3 +162,27 @@ export async function createWorktree(cwd: string, name: string): Promise<string>
   }
   return path;
 }
+
+/** Removes a worktree made by `createWorktree`, and its `claude/…` branch once it's gone. */
+export async function removeWorktree(path: string, force: boolean) {
+  const dir = expand(path);
+  if (!dir.includes('/.claude/worktrees/'))
+    throw new RpcError(ErrorCodes.invalidParams, `${path} isn't a worktree Tether made`);
+  let branch = '';
+  try {
+    branch = (await run('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir })).stdout.trim();
+  } catch {
+    // Already gone: nothing to read the branch from.
+  }
+  const root = dir.slice(0, dir.indexOf('/.claude/worktrees/'));
+  try {
+    await run('git', ['worktree', 'remove', ...(force ? ['--force'] : []), dir], { cwd: root });
+  } catch (e) {
+    const message = (e as Error).message;
+    throw new RpcError(
+      ErrorCodes.invalidParams,
+      /modified or untracked|contains modified/.test(message) ? 'The worktree has uncommitted changes.' : `Couldn't remove the worktree: ${message}`,
+    );
+  }
+  if (branch.startsWith('claude/')) await run('git', ['branch', '-D', branch], { cwd: root }).catch(() => {});
+}

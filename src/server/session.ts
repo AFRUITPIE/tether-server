@@ -290,6 +290,10 @@ export class ClientSession implements Subscriber {
     'fs/search': (p) => fsApi.search(p.cwd, p.query, p.limit),
     'git/status': (p) => fsApi.gitStatus(p.cwd),
     'git/diff': (p) => fsApi.gitDiff(p.cwd, p.path, p.staged),
+    'git/removeWorktree': async (p) => {
+      await fsApi.removeWorktree(p.path, p.force ?? false);
+      return {};
+    },
 
     'schedule/list': () => ({ tasks: this.scheduler().list() }),
     'schedule/save': (p) => ({ task: this.scheduler().save(p) }),

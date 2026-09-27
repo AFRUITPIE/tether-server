@@ -4280,6 +4280,41 @@ public struct GitDiffResult: Codable, Sendable, Hashable {
     }
 }
 
+public struct GitRemoveWorktreeParams: Codable, Sendable, Hashable {
+    public var path: String
+    public var force: Bool?
+
+    public init(path: String, force: Bool? = nil) {
+        self.path = path
+        self.force = force
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path = "path"
+        case force = "force"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.path = try c.decode(String.self, forKey: .path)
+        self.force = try c.decodeIfPresent(Bool.self, forKey: .force)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(path, forKey: .path)
+        try c.encodeIfPresent(force, forKey: .force)
+    }
+}
+
+public struct GitRemoveWorktreeResult: Codable, Sendable, Hashable {
+
+    public init() {
+    }
+    public init(from decoder: any Decoder) throws {}
+    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
+}
+
 public struct ScheduleListParams: Codable, Sendable, Hashable {
 
     public init() {
@@ -4714,6 +4749,11 @@ public enum Methods {
         public static let name = "git/diff"
         public typealias Params = GitDiffParams
         public typealias Result = GitDiffResult
+    }
+    public enum GitRemoveWorktree: TetherMethod {
+        public static let name = "git/removeWorktree"
+        public typealias Params = GitRemoveWorktreeParams
+        public typealias Result = GitRemoveWorktreeResult
     }
     public enum ScheduleList: TetherMethod {
         public static let name = "schedule/list"
