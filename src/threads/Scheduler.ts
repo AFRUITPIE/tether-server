@@ -58,10 +58,9 @@ export function loadTasks(raw: unknown, now: Date, log: (m: string) => void = ()
       continue;
     }
     const repaired: Record<string, unknown> = { ...entry };
+    if (typeof repaired.enabled !== 'boolean') repaired.enabled = false;
     for (const [key, field] of Object.entries(shape)) {
-      if (repaired[key] === undefined || field.safeParse(repaired[key]).success) continue;
-      if (key === 'enabled') repaired.enabled = false;
-      else if (field.safeParse(undefined).success) delete repaired[key];
+      if (repaired[key] !== undefined && !field.safeParse(repaired[key]).success && field.safeParse(undefined).success) delete repaired[key];
     }
     const parsed = ScheduledTask.safeParse(repaired);
     if (!parsed.success) {

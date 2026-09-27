@@ -167,14 +167,16 @@ describe('loading schedules.json', () => {
           { ...good, name: 'Same id as the first' },
           { ...good, id: 'f', cadence: 'manual', nextRunAt: 5 },
           { ...good, id: 'g', nextRunAt: undefined },
+          { ...good, id: 'h', enabled: undefined },
         ],
       },
       wed,
       (m) => logged.push(m),
     );
-    expect(tasks.map((t) => t.id)).toEqual(['a', 'b', 'c', 'f', 'g']);
+    expect(tasks.map((t) => t.id)).toEqual(['a', 'b', 'c', 'f', 'g', 'h']);
     for (const t of tasks) expect(ScheduledTask.safeParse(t).success).toBe(true);
-    const [a, b, c, f, g] = tasks;
+    const [a, b, c, f, g, h] = tasks;
+    expect(h!.enabled).toBe(false);
     expect(a).toEqual(good as ScheduledTask);
     expect(b).toEqual({ ...good, id: 'b', cadence: 'weekly' } as ScheduledTask);
     expect(c!.enabled).toBe(false);
