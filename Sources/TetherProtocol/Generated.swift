@@ -4280,6 +4280,55 @@ public struct GitDiffResult: Codable, Sendable, Hashable {
     }
 }
 
+public struct ThreadSideQuestionParams: Codable, Sendable, Hashable {
+    public var threadId: String
+    public var question: String
+
+    public init(threadId: String, question: String) {
+        self.threadId = threadId
+        self.question = question
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case threadId = "threadId"
+        case question = "question"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.threadId = try c.decode(String.self, forKey: .threadId)
+        self.question = try c.decode(String.self, forKey: .question)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(threadId, forKey: .threadId)
+        try c.encode(question, forKey: .question)
+    }
+}
+
+public struct ThreadSideQuestionResult: Codable, Sendable, Hashable {
+    public var answer: String?
+
+    public init(answer: String? = nil) {
+        self.answer = answer
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case answer = "answer"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.answer = try c.decodeIfPresent(String.self, forKey: .answer)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(answer, forKey: .answer)
+    }
+}
+
 public struct GitRemoveWorktreeParams: Codable, Sendable, Hashable {
     public var path: String
     public var force: Bool?
@@ -4749,6 +4798,11 @@ public enum Methods {
         public static let name = "git/diff"
         public typealias Params = GitDiffParams
         public typealias Result = GitDiffResult
+    }
+    public enum ThreadSideQuestion: TetherMethod {
+        public static let name = "thread/sideQuestion"
+        public typealias Params = ThreadSideQuestionParams
+        public typealias Result = ThreadSideQuestionResult
     }
     public enum GitRemoveWorktree: TetherMethod {
         public static let name = "git/removeWorktree"

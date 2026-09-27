@@ -290,6 +290,16 @@ export class ClientSession implements Subscriber {
     'fs/search': (p) => fsApi.search(p.cwd, p.query, p.limit),
     'git/status': (p) => fsApi.gitStatus(p.cwd),
     'git/diff': (p) => fsApi.gitDiff(p.cwd, p.path, p.staged),
+    'thread/sideQuestion': async (p) => {
+      // Not in the SDK's published typings yet: asked for defensively.
+      const query = this.mgr.get(p.threadId).query as unknown as {
+        askSideQuestion?: (q: string) => Promise<{ response: string } | null>;
+      };
+      if (typeof query.askSideQuestion !== 'function')
+        throw new RpcError(ErrorCodes.invalidRequest, 'Side questions need a newer Claude Code.');
+      const r = await query.askSideQuestion(p.question);
+      return { answer: r?.response ?? null };
+    },
     'git/removeWorktree': async (p) => {
       await fsApi.removeWorktree(p.path, p.force ?? false);
       return {};

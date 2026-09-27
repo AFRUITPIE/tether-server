@@ -299,6 +299,15 @@ export const Methods = {
   },
 
   /**
+   * A question about the thread, answered with its context but kept out of its transcript and
+   * context (the CLI's /btw). `answer` is null when Claude Code gave none.
+   */
+  'thread/sideQuestion': {
+    params: z.object({ threadId: z.string(), question: z.string() }),
+    result: z.object({ answer: z.string().nullable() }),
+  },
+
+  /**
    * Removes a worktree `thread/start` made (under `.claude/worktrees/`) and its branch. Refuses one
    * with uncommitted changes unless `force`.
    */

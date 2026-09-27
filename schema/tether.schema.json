@@ -1689,6 +1689,39 @@
         "additionalProperties": false
       }
     },
+    "thread/sideQuestion": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "threadId": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId",
+          "question"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
     "git/removeWorktree": {
       "params": {
         "type": "object",
