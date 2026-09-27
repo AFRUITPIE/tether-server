@@ -7,6 +7,7 @@ import type { Subscriber } from '../threads/LiveThread.ts';
 import { TETHER_VERSION } from '../threads/LiveThread.ts';
 import type { ThreadManager } from '../threads/ThreadManager.ts';
 import * as fsApi from './fsApi.ts';
+import * as plugins from './plugins.ts';
 
 type Handler<M extends MethodName> = (p: Params<M>) => Promise<Result<M>> | Result<M>;
 
@@ -302,6 +303,20 @@ export class ClientSession implements Subscriber {
     },
     'git/removeWorktree': async (p) => {
       await fsApi.removeWorktree(p.path, p.force ?? false);
+      return {};
+    },
+
+    'plugin/list': (p) => plugins.listPlugins(this.mgr.claude.path, p.cwd, this.env),
+    'plugin/install': async (p) => {
+      await plugins.installPlugin(this.mgr.claude.path, p.pluginId, p.scope, p.cwd, this.env);
+      return {};
+    },
+    'plugin/uninstall': async (p) => {
+      await plugins.uninstallPlugin(this.mgr.claude.path, p.pluginId, p.scope, p.cwd, this.env);
+      return {};
+    },
+    'plugin/setEnabled': async (p) => {
+      await plugins.setPluginEnabled(this.mgr.claude.path, p.pluginId, p.enabled, p.scope, p.cwd, this.env);
       return {};
     },
 

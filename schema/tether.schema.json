@@ -1750,6 +1750,124 @@
         "additionalProperties": false
       }
     },
+    "plugin/list": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "installed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "available": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          }
+        },
+        "required": [
+          "installed",
+          "available"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "plugin/install": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "pluginId": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "user",
+              "project",
+              "local"
+            ]
+          },
+          "cwd": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pluginId",
+          "scope"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    "plugin/uninstall": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "pluginId": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pluginId"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    "plugin/setEnabled": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "pluginId": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pluginId",
+          "enabled"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
     "schedule/list": {
       "params": {
         "type": "object",

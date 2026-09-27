@@ -320,6 +320,25 @@ export const Methods = {
     result: Empty,
   },
 
+  // ---- plugins (the host's `claude plugin`) ----
+  /** Installed plugins, and those the host's marketplaces offer, as `claude plugin list --json --available` reports them. */
+  'plugin/list': {
+    params: z.object({ cwd: z.string().optional() }),
+    result: z.object({ installed: z.array(JsonValue), available: z.array(JsonValue) }),
+  },
+  'plugin/install': {
+    params: z.object({ pluginId: z.string(), scope: z.enum(['user', 'project', 'local']), cwd: z.string().optional() }),
+    result: Empty,
+  },
+  'plugin/uninstall': {
+    params: z.object({ pluginId: z.string(), scope: z.string().optional(), cwd: z.string().optional() }),
+    result: Empty,
+  },
+  'plugin/setEnabled': {
+    params: z.object({ pluginId: z.string(), enabled: z.boolean(), scope: z.string().optional(), cwd: z.string().optional() }),
+    result: Empty,
+  },
+
   // ---- scheduled tasks (kept and run by the daemon) ----
   'schedule/list': { params: Empty, result: z.object({ tasks: z.array(ScheduledTask) }) },
   /** Creates the task when `id` is absent, else replaces it. */

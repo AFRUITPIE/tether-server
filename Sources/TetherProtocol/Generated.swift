@@ -4374,6 +4374,192 @@ public struct GitRemoveWorktreeResult: Codable, Sendable, Hashable {
     public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
 }
 
+public struct PluginListParams: Codable, Sendable, Hashable {
+    public var cwd: String?
+
+    public init(cwd: String? = nil) {
+        self.cwd = cwd
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case cwd = "cwd"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(cwd, forKey: .cwd)
+    }
+}
+
+public struct PluginListResult: Codable, Sendable, Hashable {
+    public var installed: [JSONValue]
+    public var available: [JSONValue]
+
+    public init(installed: [JSONValue], available: [JSONValue]) {
+        self.installed = installed
+        self.available = available
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case installed = "installed"
+        case available = "available"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.installed = try c.decode([JSONValue].self, forKey: .installed)
+        self.available = try c.decode([JSONValue].self, forKey: .available)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(installed, forKey: .installed)
+        try c.encode(available, forKey: .available)
+    }
+}
+
+public struct PluginInstallParams: Codable, Sendable, Hashable {
+    public var pluginId: String
+    public var scope: Scope
+    public var cwd: String?
+
+    public init(pluginId: String, scope: Scope, cwd: String? = nil) {
+        self.pluginId = pluginId
+        self.scope = scope
+        self.cwd = cwd
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pluginId = "pluginId"
+        case scope = "scope"
+        case cwd = "cwd"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.pluginId = try c.decode(String.self, forKey: .pluginId)
+        self.scope = try c.decode(Scope.self, forKey: .scope)
+        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(pluginId, forKey: .pluginId)
+        try c.encode(scope, forKey: .scope)
+        try c.encodeIfPresent(cwd, forKey: .cwd)
+    }
+
+    public struct Scope: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
+        public let rawValue: String
+        public init(rawValue: String) { self.rawValue = rawValue }
+        public init(stringLiteral value: String) { self.rawValue = value }
+        public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
+        public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
+        public static let user = Scope(rawValue: "user")
+        public static let project = Scope(rawValue: "project")
+        public static let local = Scope(rawValue: "local")
+        public static let allCases: [Scope] = [.user, .project, .local]
+    }
+}
+
+public struct PluginInstallResult: Codable, Sendable, Hashable {
+
+    public init() {
+    }
+    public init(from decoder: any Decoder) throws {}
+    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
+}
+
+public struct PluginUninstallParams: Codable, Sendable, Hashable {
+    public var pluginId: String
+    public var scope: String?
+    public var cwd: String?
+
+    public init(pluginId: String, scope: String? = nil, cwd: String? = nil) {
+        self.pluginId = pluginId
+        self.scope = scope
+        self.cwd = cwd
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pluginId = "pluginId"
+        case scope = "scope"
+        case cwd = "cwd"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.pluginId = try c.decode(String.self, forKey: .pluginId)
+        self.scope = try c.decodeIfPresent(String.self, forKey: .scope)
+        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(pluginId, forKey: .pluginId)
+        try c.encodeIfPresent(scope, forKey: .scope)
+        try c.encodeIfPresent(cwd, forKey: .cwd)
+    }
+}
+
+public struct PluginUninstallResult: Codable, Sendable, Hashable {
+
+    public init() {
+    }
+    public init(from decoder: any Decoder) throws {}
+    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
+}
+
+public struct PluginSetEnabledParams: Codable, Sendable, Hashable {
+    public var pluginId: String
+    public var enabled: Bool
+    public var scope: String?
+    public var cwd: String?
+
+    public init(pluginId: String, enabled: Bool, scope: String? = nil, cwd: String? = nil) {
+        self.pluginId = pluginId
+        self.enabled = enabled
+        self.scope = scope
+        self.cwd = cwd
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pluginId = "pluginId"
+        case enabled = "enabled"
+        case scope = "scope"
+        case cwd = "cwd"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.pluginId = try c.decode(String.self, forKey: .pluginId)
+        self.enabled = try c.decode(Bool.self, forKey: .enabled)
+        self.scope = try c.decodeIfPresent(String.self, forKey: .scope)
+        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(pluginId, forKey: .pluginId)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encodeIfPresent(scope, forKey: .scope)
+        try c.encodeIfPresent(cwd, forKey: .cwd)
+    }
+}
+
+public struct PluginSetEnabledResult: Codable, Sendable, Hashable {
+
+    public init() {
+    }
+    public init(from decoder: any Decoder) throws {}
+    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
+}
+
 public struct ScheduleListParams: Codable, Sendable, Hashable {
 
     public init() {
@@ -4818,6 +5004,26 @@ public enum Methods {
         public static let name = "git/removeWorktree"
         public typealias Params = GitRemoveWorktreeParams
         public typealias Result = GitRemoveWorktreeResult
+    }
+    public enum PluginList: TetherMethod {
+        public static let name = "plugin/list"
+        public typealias Params = PluginListParams
+        public typealias Result = PluginListResult
+    }
+    public enum PluginInstall: TetherMethod {
+        public static let name = "plugin/install"
+        public typealias Params = PluginInstallParams
+        public typealias Result = PluginInstallResult
+    }
+    public enum PluginUninstall: TetherMethod {
+        public static let name = "plugin/uninstall"
+        public typealias Params = PluginUninstallParams
+        public typealias Result = PluginUninstallResult
+    }
+    public enum PluginSetEnabled: TetherMethod {
+        public static let name = "plugin/setEnabled"
+        public typealias Params = PluginSetEnabledParams
+        public typealias Result = PluginSetEnabledResult
     }
     public enum ScheduleList: TetherMethod {
         public static let name = "schedule/list"
