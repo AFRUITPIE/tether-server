@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ScheduledTask } from '../src/protocol/index.ts';
+import { ScheduledTask } from '../src/protocol/index.ts';
 import { LiveThread } from '../src/threads/LiveThread.ts';
-import { nextRun, Scheduler } from '../src/threads/Scheduler.ts';
+import { loadTasks, nextRun, Scheduler } from '../src/threads/Scheduler.ts';
 import { ThreadManager } from '../src/threads/ThreadManager.ts';
 
 // Local time, as schedules are: Wednesday 16 September 2026, 09:30.
@@ -61,8 +61,9 @@ describe('scheduler', () => {
 
     const reloaded = make().list()[0]!;
     expect(reloaded.lastThreadId).toBe('thread-1');
+    expect(reloaded.lastRunAt).toBe(new Date(2026, 8, 16, 13, 50).getTime());
     expect(reloaded.nextRunAt).toBe(new Date(2026, 8, 16, 14, 45).getTime());
-    expect(path).toBeTruthy();
+    expect(JSON.parse(readFileSync(path, 'utf8')).tasks).toEqual([reloaded]);
   });
 
   test('run starts a manual task now; delete forgets it', async () => {
@@ -83,6 +84,112 @@ describe('scheduler', () => {
     const t = s.save({ name: 'Broken', prompt: 'x', cwd: '/nope', cadence: 'manual', hour: 0, minute: 0, enabled: true });
     await expect(s.run(t.id)).rejects.toThrow('no such folder');
     expect(s.list()[0]!.lastError).toBe('no such folder');
+  });
+});
+
+describe('saving a task', () => {
+  const path = () => join(mkdtempSync(join(tmpdir(), 'tether-sched-')), 'schedules.json');
+  const base = { name: 'Audit', prompt: 'Check deps', cwd: '/tmp', cadence: 'weekly', hour: 10, minute: 0, enabled: true } as const;
+
+  test('replaces it: a field left out is cleared, and only what runs recorded is kept', async () => {
+    let fail = false;
+    const s = new Scheduler(
+      { startScheduled: async () => { if (fail) throw new Error('no such folder'); return 'thread-1'; } },
+      path(),
+      () => {},
+      () => wed,
+    );
+    const t = s.save({ ...base, model: 'opus', permissionMode: 'plan', weekday: 3 });
+    await s.run(t.id);
+    fail = true;
+    await s.run(t.id).catch(() => {});
+    const saved = s.save({ ...base, id: t.id, cadence: 'daily', name: 'Audit deps' });
+    expect(saved).toEqual({
+      ...base,
+      id: t.id,
+      cadence: 'daily',
+      name: 'Audit deps',
+      lastRunAt: wed.getTime(),
+      lastThreadId: 'thread-1',
+      lastError: 'no such folder',
+      nextRunAt: new Date(2026, 8, 16, 10, 0).getTime(),
+    });
+    expect(s.list()).toEqual([saved]);
+  });
+
+  test('an enabled task needs a prompt; a disabled one can wait for it', () => {
+    const s = new Scheduler({ startScheduled: async () => 'thread-1' }, path(), () => {}, () => wed);
+    expect(() => s.save({ ...base, prompt: '  \n' })).toThrow('needs a prompt');
+    expect(s.save({ ...base, prompt: '', enabled: false }).prompt).toBe('');
+  });
+
+  test('a save while a run is starting keeps what the run records', async () => {
+    let start!: (id: string) => void;
+    let failStart!: (e: Error) => void;
+    const file = path();
+    const s = new Scheduler(
+      { startScheduled: () => new Promise<string>((resolve, reject) => ((start = resolve), (failStart = reject))) },
+      file,
+      () => {},
+      () => wed,
+    );
+    const t = s.save({ ...base, cadence: 'manual' });
+    const running = s.run(t.id);
+    s.save({ ...base, id: t.id, cadence: 'manual', name: 'Renamed mid-run' });
+    start('thread-1');
+    await running;
+    expect(s.list()[0]).toMatchObject({ name: 'Renamed mid-run', lastThreadId: 'thread-1', lastRunAt: wed.getTime() });
+    expect(JSON.parse(readFileSync(file, 'utf8')).tasks[0]).toMatchObject({ name: 'Renamed mid-run', lastThreadId: 'thread-1' });
+
+    const again = s.run(t.id);
+    s.save({ ...base, id: t.id, cadence: 'manual', name: 'Renamed again' });
+    failStart(new Error('no such folder'));
+    await again.catch(() => {});
+    expect(s.list()[0]).toMatchObject({ name: 'Renamed again', lastThreadId: 'thread-1', lastError: 'no such folder' });
+  });
+});
+
+describe('loading schedules.json', () => {
+  const good = { id: 'a', name: 'Good', prompt: 'x', cwd: '/tmp', cadence: 'daily', hour: 10, minute: 0, enabled: true, nextRunAt: 1 };
+
+  test('keeps good tasks, repairs what it safely can, and skips the rest', () => {
+    const logged: string[] = [];
+    const tasks = loadTasks(
+      {
+        tasks: [
+          good,
+          { ...good, id: 'b', cadence: 'weekly', weekday: 9, model: 42, extra: 'dropped' },
+          { ...good, id: 'c', enabled: 'yes' },
+          { ...good, id: 'd', prompt: undefined },
+          { ...good, id: 'e', hour: 31 },
+          'not a task',
+          null,
+          { ...good, name: 'Same id as the first' },
+          { ...good, id: 'f', cadence: 'manual', nextRunAt: 5 },
+          { ...good, id: 'g', nextRunAt: undefined },
+        ],
+      },
+      wed,
+      (m) => logged.push(m),
+    );
+    expect(tasks.map((t) => t.id)).toEqual(['a', 'b', 'c', 'f', 'g']);
+    for (const t of tasks) expect(ScheduledTask.safeParse(t).success).toBe(true);
+    const [a, b, c, f, g] = tasks;
+    expect(a).toEqual(good as ScheduledTask);
+    expect(b).toEqual({ ...good, id: 'b', cadence: 'weekly' } as ScheduledTask);
+    expect(c!.enabled).toBe(false);
+    expect(c!.nextRunAt).toBeUndefined();
+    expect(f!.nextRunAt).toBeUndefined();
+    expect(g!.nextRunAt).toBe(new Date(2026, 8, 16, 10, 0).getTime());
+    expect(logged).toHaveLength(5);
+  });
+
+  test('a file that is not a task list, or not there, is no tasks', () => {
+    expect(loadTasks(undefined, wed)).toEqual([]);
+    expect(loadTasks({ tasks: 'nope' }, wed)).toEqual([]);
+    const file = join(mkdtempSync(join(tmpdir(), 'tether-sched-')), 'schedules.json');
+    writeFileSync(file, JSON.stringify({ tasks: [good, { id: 'bad' }] }));
+    expect(new Scheduler({ startScheduled: async () => 't' }, file, () => {}, () => wed).list().map((t) => t.id)).toEqual(['a']);
   });
 });
 

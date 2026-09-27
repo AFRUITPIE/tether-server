@@ -353,7 +353,11 @@ export const Methods = {
 
   // ---- scheduled tasks (kept and run by the daemon) ----
   'schedule/list': { params: Empty, result: z.object({ tasks: z.array(ScheduledTask) }) },
-  /** Creates the task when `id` is absent, else replaces it. */
+  /**
+   * Creates the task when `id` is absent, else replaces it whole: an optional field left out is
+   * cleared. Only what runs recorded (`lastRunAt`, `lastThreadId`, `lastError`) is kept, and
+   * `nextRunAt` is worked out afresh. An enabled task needs a prompt that isn't blank.
+   */
   'schedule/save': {
     params: z.object({
       id: z.string().optional(),
