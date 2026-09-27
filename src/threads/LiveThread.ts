@@ -96,6 +96,19 @@ export type LiveThreadOptions = {
 
 const MAX_BUFFERED_EVENTS = 20_000;
 
+/** The in-process MCP server the session tools are served from, and the tools it registers. */
+const SESSION_TOOL_SERVER = 'tether';
+const SESSION_TOOLS = { list: 'list_sessions', read: 'read_session', suggest: 'suggest_task' } as const;
+
+/**
+ * The session tools as the CLI names them. These, and only on a thread that has them, run without
+ * asking: they read and suggest, never change anything. Any other `mcp__tether__…` tool, such as
+ * one from a project's own MCP server called `tether`, is asked about like every other tool.
+ */
+export const SESSION_TOOL_NAMES: ReadonlySet<string> = new Set(
+  Object.values(SESSION_TOOLS).map((name) => `mcp__${SESSION_TOOL_SERVER}__${name}`),
+);
+
 const SCOPE_DESTINATION = {
   session: 'session',
   project: 'projectSettings',
@@ -122,10 +135,13 @@ export class LiveThread {
   private exited = false;
   /** Background tasks that count as work (not ambient watchers), as the CLI last reported them. */
   private backgroundTasks = new Set<string>();
+  /** Whether the client asked for session tools on this thread; only then are they allowed. */
+  private readonly sessionToolsEnabled: boolean;
 
   constructor(private opts: LiveThreadOptions) {
     this.id = opts.threadId;
     this.cwd = opts.cwd;
+    this.sessionToolsEnabled = !!opts.sessionTools;
     this.seq = seqOrigin(opts.seqAfter);
     if (opts.model) this.info.model = opts.model;
     if (opts.effort) this.info.effort = opts.effort;
@@ -169,7 +185,12 @@ export class LiveThread {
       ...(o.allowedTools ? { allowedTools: o.allowedTools } : {}),
       ...(o.disallowedTools ? { disallowedTools: o.disallowedTools } : {}),
       ...(o.mcpServers || o.sessionTools
-        ? { mcpServers: { ...((o.mcpServers ?? {}) as Options['mcpServers']), ...(o.sessionTools ? { tether: this.sessionToolServer(o.sessionTools) } : {}) } }
+        ? {
+            mcpServers: {
+              ...((o.mcpServers ?? {}) as Options['mcpServers']),
+              ...(o.sessionTools ? { [SESSION_TOOL_SERVER]: this.sessionToolServer(o.sessionTools) } : {}),
+            },
+          }
         : {}),
       ...(o.agent ? { agent: o.agent } : {}),
       ...(o.maxTurns ? { maxTurns: o.maxTurns } : {}),
@@ -464,21 +485,21 @@ export class LiveThread {
   private sessionToolServer(tools: SessionTools) {
     const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
     return createSdkMcpServer({
-      name: 'tether',
+      name: SESSION_TOOL_SERVER,
       instructions:
         "Tools for the user's other Claude Code chats on this machine. Read another chat only when it helps with this one. Use suggest_task for work that belongs in a chat of its own; the user decides whether to start it.",
       tools: [
-        tool('list_sessions', "List the user's other chats on this machine, most recent first: id, title, folder, status.", {}, async () =>
+        tool(SESSION_TOOLS.list, "List the user's other chats on this machine, most recent first: id, title, folder, status.", {}, async () =>
           text(JSON.stringify((await tools.list()).filter((s) => s.threadId !== this.id))),
         ),
         tool(
-          'read_session',
+          SESSION_TOOLS.read,
           "Read another chat's recent messages, as text.",
           { sessionId: z.string(), limit: z.number().int().min(1).max(100).optional() },
           async (a) => text(await tools.read(a.sessionId, a.limit ?? 30)),
         ),
         tool(
-          'suggest_task',
+          SESSION_TOOLS.suggest,
           'Suggest a separate task to the user. It appears as a button that starts it in a new chat with this prompt.',
           { title: z.string(), prompt: z.string(), cwd: z.string().optional() },
           async (a) => {
@@ -495,8 +516,7 @@ export class LiveThread {
     input: Record<string, unknown>,
     ctx: Parameters<NonNullable<Options['canUseTool']>>[2],
   ): Promise<PermissionResult> {
-    // The client turned these on; they read and suggest, never change anything.
-    if (toolName.startsWith('mcp__tether__')) return { behavior: 'allow', updatedInput: input };
+    if (this.sessionToolsEnabled && SESSION_TOOL_NAMES.has(toolName)) return { behavior: 'allow', updatedInput: input };
     const deny = (message: string, interrupt?: boolean): PermissionResult => {
       this.itemizer.noteDenied(ctx.toolUseID, message);
       return { behavior: 'deny', message, ...(interrupt ? { interrupt } : {}) };

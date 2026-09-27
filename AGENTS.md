@@ -89,6 +89,7 @@ When a bundled binary version changes, `connect` requests a graceful daemon shut
 - Merge client/thread environment overrides without dropping the host environment.
 - Stamp human input with its human origin so Claude Code features that depend on provenance keep working.
 - Keep partial-message streaming, file checkpointing, permission callbacks, elicitation, stderr, task events, and initialization data routed through the typed Tether protocol.
+- Session tools (`sessionTools` on `thread/start`/`thread/resume`) are an in-process MCP server named `tether`. Only its own tools (`SESSION_TOOL_NAMES`), and only on a thread that asked for them, skip the permission prompt; any other `mcp__tether__…` tool, such as one from a project's own server of that name, is asked about like every other tool.
 
 SDK types and events can change between Claude Code versions. Be defensive around optional fields, preserve raw unknown events, and cover newly observed shapes with recorded fixtures before tightening assumptions.
 
