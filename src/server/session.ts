@@ -26,6 +26,12 @@ export class ClientSession implements Subscriber {
     private log: (m: string) => void = () => {},
   ) {}
 
+  /** Scheduled tasks live in the daemon; a single-client server has none to offer. */
+  private scheduler() {
+    if (!this.mgr.scheduler) throw new RpcError(ErrorCodes.invalidRequest, 'scheduled tasks need the Tether daemon');
+    return this.mgr.scheduler;
+  }
+
   start() {
     this.conn.start({
       onRequest: (method, params) => this.dispatch(method, params),
@@ -284,5 +290,13 @@ export class ClientSession implements Subscriber {
     'fs/search': (p) => fsApi.search(p.cwd, p.query, p.limit),
     'git/status': (p) => fsApi.gitStatus(p.cwd),
     'git/diff': (p) => fsApi.gitDiff(p.cwd, p.path, p.staged),
+
+    'schedule/list': () => ({ tasks: this.scheduler().list() }),
+    'schedule/save': (p) => ({ task: this.scheduler().save(p) }),
+    'schedule/delete': (p) => {
+      this.scheduler().delete(p.id);
+      return {};
+    },
+    'schedule/run': async (p) => ({ threadId: await this.scheduler().run(p.id) }),
   };
 }

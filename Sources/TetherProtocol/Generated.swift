@@ -1529,6 +1529,114 @@ public struct ModelUsage: Codable, Sendable, Hashable {
     }
 }
 
+public struct ScheduledTask: Codable, Sendable, Hashable {
+    public var id: String
+    public var name: String
+    public var prompt: String
+    public var cwd: String
+    public var model: String?
+    public var permissionMode: PermissionMode?
+    public var cadence: ScheduleCadence
+    public var hour: Int
+    public var minute: Int
+    public var weekday: Int?
+    public var enabled: Bool
+    /// ms since epoch
+    public var lastRunAt: Double?
+    public var lastThreadId: String?
+    /// ms since epoch; absent for manual or disabled
+    public var nextRunAt: Double?
+    public var lastError: String?
+
+    public init(id: String, name: String, prompt: String, cwd: String, model: String? = nil, permissionMode: PermissionMode? = nil, cadence: ScheduleCadence, hour: Int, minute: Int, weekday: Int? = nil, enabled: Bool, lastRunAt: Double? = nil, lastThreadId: String? = nil, nextRunAt: Double? = nil, lastError: String? = nil) {
+        self.id = id
+        self.name = name
+        self.prompt = prompt
+        self.cwd = cwd
+        self.model = model
+        self.permissionMode = permissionMode
+        self.cadence = cadence
+        self.hour = hour
+        self.minute = minute
+        self.weekday = weekday
+        self.enabled = enabled
+        self.lastRunAt = lastRunAt
+        self.lastThreadId = lastThreadId
+        self.nextRunAt = nextRunAt
+        self.lastError = lastError
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case name = "name"
+        case prompt = "prompt"
+        case cwd = "cwd"
+        case model = "model"
+        case permissionMode = "permissionMode"
+        case cadence = "cadence"
+        case hour = "hour"
+        case minute = "minute"
+        case weekday = "weekday"
+        case enabled = "enabled"
+        case lastRunAt = "lastRunAt"
+        case lastThreadId = "lastThreadId"
+        case nextRunAt = "nextRunAt"
+        case lastError = "lastError"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.prompt = try c.decode(String.self, forKey: .prompt)
+        self.cwd = try c.decode(String.self, forKey: .cwd)
+        self.model = try c.decodeIfPresent(String.self, forKey: .model)
+        self.permissionMode = try c.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
+        self.cadence = try c.decode(ScheduleCadence.self, forKey: .cadence)
+        self.hour = try c.decode(Int.self, forKey: .hour)
+        self.minute = try c.decode(Int.self, forKey: .minute)
+        self.weekday = try c.decodeIfPresent(Int.self, forKey: .weekday)
+        self.enabled = try c.decode(Bool.self, forKey: .enabled)
+        self.lastRunAt = try c.decodeIfPresent(Double.self, forKey: .lastRunAt)
+        self.lastThreadId = try c.decodeIfPresent(String.self, forKey: .lastThreadId)
+        self.nextRunAt = try c.decodeIfPresent(Double.self, forKey: .nextRunAt)
+        self.lastError = try c.decodeIfPresent(String.self, forKey: .lastError)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(prompt, forKey: .prompt)
+        try c.encode(cwd, forKey: .cwd)
+        try c.encodeIfPresent(model, forKey: .model)
+        try c.encodeIfPresent(permissionMode, forKey: .permissionMode)
+        try c.encode(cadence, forKey: .cadence)
+        try c.encode(hour, forKey: .hour)
+        try c.encode(minute, forKey: .minute)
+        try c.encodeIfPresent(weekday, forKey: .weekday)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encodeIfPresent(lastRunAt, forKey: .lastRunAt)
+        try c.encodeIfPresent(lastThreadId, forKey: .lastThreadId)
+        try c.encodeIfPresent(nextRunAt, forKey: .nextRunAt)
+        try c.encodeIfPresent(lastError, forKey: .lastError)
+    }
+}
+
+public struct ScheduleCadence: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public init(stringLiteral value: String) { self.rawValue = value }
+    public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
+    public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
+    public static let manual = ScheduleCadence(rawValue: "manual")
+    public static let hourly = ScheduleCadence(rawValue: "hourly")
+    public static let daily = ScheduleCadence(rawValue: "daily")
+    public static let weekdays = ScheduleCadence(rawValue: "weekdays")
+    public static let weekly = ScheduleCadence(rawValue: "weekly")
+    public static let allCases: [ScheduleCadence] = [.manual, .hourly, .daily, .weekdays, .weekly]
+}
+
 public struct PermissionScope: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
@@ -4172,6 +4280,204 @@ public struct GitDiffResult: Codable, Sendable, Hashable {
     }
 }
 
+public struct ScheduleListParams: Codable, Sendable, Hashable {
+
+    public init() {
+    }
+    public init(from decoder: any Decoder) throws {}
+    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
+}
+
+public struct ScheduleListResult: Codable, Sendable, Hashable {
+    public var tasks: [ScheduledTask]
+
+    public init(tasks: [ScheduledTask]) {
+        self.tasks = tasks
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case tasks = "tasks"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.tasks = try c.decode([ScheduledTask].self, forKey: .tasks)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(tasks, forKey: .tasks)
+    }
+}
+
+public struct ScheduleSaveParams: Codable, Sendable, Hashable {
+    public var id: String?
+    public var name: String
+    public var prompt: String
+    public var cwd: String
+    public var model: String?
+    public var permissionMode: PermissionMode?
+    public var cadence: ScheduleCadence
+    public var hour: Int
+    public var minute: Int
+    public var weekday: Int?
+    public var enabled: Bool
+
+    public init(id: String? = nil, name: String, prompt: String, cwd: String, model: String? = nil, permissionMode: PermissionMode? = nil, cadence: ScheduleCadence, hour: Int, minute: Int, weekday: Int? = nil, enabled: Bool) {
+        self.id = id
+        self.name = name
+        self.prompt = prompt
+        self.cwd = cwd
+        self.model = model
+        self.permissionMode = permissionMode
+        self.cadence = cadence
+        self.hour = hour
+        self.minute = minute
+        self.weekday = weekday
+        self.enabled = enabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case name = "name"
+        case prompt = "prompt"
+        case cwd = "cwd"
+        case model = "model"
+        case permissionMode = "permissionMode"
+        case cadence = "cadence"
+        case hour = "hour"
+        case minute = "minute"
+        case weekday = "weekday"
+        case enabled = "enabled"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(String.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.prompt = try c.decode(String.self, forKey: .prompt)
+        self.cwd = try c.decode(String.self, forKey: .cwd)
+        self.model = try c.decodeIfPresent(String.self, forKey: .model)
+        self.permissionMode = try c.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
+        self.cadence = try c.decode(ScheduleCadence.self, forKey: .cadence)
+        self.hour = try c.decode(Int.self, forKey: .hour)
+        self.minute = try c.decode(Int.self, forKey: .minute)
+        self.weekday = try c.decodeIfPresent(Int.self, forKey: .weekday)
+        self.enabled = try c.decode(Bool.self, forKey: .enabled)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(prompt, forKey: .prompt)
+        try c.encode(cwd, forKey: .cwd)
+        try c.encodeIfPresent(model, forKey: .model)
+        try c.encodeIfPresent(permissionMode, forKey: .permissionMode)
+        try c.encode(cadence, forKey: .cadence)
+        try c.encode(hour, forKey: .hour)
+        try c.encode(minute, forKey: .minute)
+        try c.encodeIfPresent(weekday, forKey: .weekday)
+        try c.encode(enabled, forKey: .enabled)
+    }
+}
+
+public struct ScheduleSaveResult: Codable, Sendable, Hashable {
+    public var task: ScheduledTask
+
+    public init(task: ScheduledTask) {
+        self.task = task
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case task = "task"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.task = try c.decode(ScheduledTask.self, forKey: .task)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(task, forKey: .task)
+    }
+}
+
+public struct ScheduleDeleteParams: Codable, Sendable, Hashable {
+    public var id: String
+
+    public init(id: String) {
+        self.id = id
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+    }
+}
+
+public struct ScheduleDeleteResult: Codable, Sendable, Hashable {
+
+    public init() {
+    }
+    public init(from decoder: any Decoder) throws {}
+    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
+}
+
+public struct ScheduleRunParams: Codable, Sendable, Hashable {
+    public var id: String
+
+    public init(id: String) {
+        self.id = id
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+    }
+}
+
+public struct ScheduleRunResult: Codable, Sendable, Hashable {
+    public var threadId: String
+
+    public init(threadId: String) {
+        self.threadId = threadId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case threadId = "threadId"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.threadId = try c.decode(String.self, forKey: .threadId)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(threadId, forKey: .threadId)
+    }
+}
+
 /// Client → server requests.
 public enum Methods {
     public enum Initialize: TetherMethod {
@@ -4408,6 +4714,26 @@ public enum Methods {
         public static let name = "git/diff"
         public typealias Params = GitDiffParams
         public typealias Result = GitDiffResult
+    }
+    public enum ScheduleList: TetherMethod {
+        public static let name = "schedule/list"
+        public typealias Params = ScheduleListParams
+        public typealias Result = ScheduleListResult
+    }
+    public enum ScheduleSave: TetherMethod {
+        public static let name = "schedule/save"
+        public typealias Params = ScheduleSaveParams
+        public typealias Result = ScheduleSaveResult
+    }
+    public enum ScheduleDelete: TetherMethod {
+        public static let name = "schedule/delete"
+        public typealias Params = ScheduleDeleteParams
+        public typealias Result = ScheduleDeleteResult
+    }
+    public enum ScheduleRun: TetherMethod {
+        public static let name = "schedule/run"
+        public typealias Params = ScheduleRunParams
+        public typealias Result = ScheduleRunResult
     }
 }
 

@@ -14,7 +14,8 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
 import type { ClaudeBinary } from '../claude.ts';
-import type { Item, Params, ThreadSummary, Turn } from '../protocol/index.ts';
+import type { Item, Params, ScheduledTask, ThreadSummary, Turn } from '../protocol/index.ts';
+import type { Scheduler } from './Scheduler.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { createWorktree } from '../server/fsApi.ts';
 import { Itemizer } from './itemizer.ts';
@@ -119,6 +120,19 @@ export class ThreadManager {
     }
     this.log(`thread ${threadId} started in ${cwd}`);
     return t;
+  }
+
+  /** The daemon's scheduled tasks; absent in `serve --stdio`, which would run them twice. */
+  scheduler?: Scheduler;
+
+  /** A scheduled task's run: a new thread in its folder, sent its prompt. */
+  async startScheduled(task: ScheduledTask): Promise<string> {
+    const t = await this.start(
+      { cwd: task.cwd, title: task.name, ...(task.model ? { model: task.model } : {}), ...(task.permissionMode ? { permissionMode: task.permissionMode } : {}) },
+      {},
+    );
+    t.send([{ type: 'text', text: task.prompt }]);
+    return t.id;
   }
 
   /** Load a stored session into a live query (no-op if already loaded). */

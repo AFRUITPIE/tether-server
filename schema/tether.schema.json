@@ -1688,6 +1688,141 @@
         ],
         "additionalProperties": false
       }
+    },
+    "schedule/list": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/ScheduledTask"
+            }
+          }
+        },
+        "required": [
+          "tasks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "schedule/save": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "permissionMode": {
+            "$ref": "#/$defs/PermissionMode"
+          },
+          "cadence": {
+            "$ref": "#/$defs/ScheduleCadence"
+          },
+          "hour": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 23
+          },
+          "minute": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 59
+          },
+          "weekday": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "prompt",
+          "cwd",
+          "cadence",
+          "hour",
+          "minute",
+          "enabled"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "$ref": "#/$defs/ScheduledTask"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "schedule/delete": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    "schedule/run": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "notifications": {
@@ -3837,6 +3972,85 @@
         "costUsd"
       ],
       "additionalProperties": false
+    },
+    "ScheduledTask": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "permissionMode": {
+          "$ref": "#/$defs/PermissionMode"
+        },
+        "cadence": {
+          "$ref": "#/$defs/ScheduleCadence"
+        },
+        "hour": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 23
+        },
+        "minute": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 59
+        },
+        "weekday": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "lastRunAt": {
+          "description": "ms since epoch",
+          "type": "number"
+        },
+        "lastThreadId": {
+          "type": "string"
+        },
+        "nextRunAt": {
+          "description": "ms since epoch; absent for manual or disabled",
+          "type": "number"
+        },
+        "lastError": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "prompt",
+        "cwd",
+        "cadence",
+        "hour",
+        "minute",
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "ScheduleCadence": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "hourly",
+        "daily",
+        "weekdays",
+        "weekly"
+      ]
     },
     "PermissionScope": {
       "type": "string",

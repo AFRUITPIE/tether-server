@@ -8,6 +8,8 @@ import {
   McpServerStatus,
   ModelInfo,
   PermissionMode,
+  ScheduleCadence,
+  ScheduledTask,
   SlashCommand,
   ThinkingSetting,
   ThreadInfo,
@@ -295,6 +297,29 @@ export const Methods = {
     params: z.object({ cwd: z.string(), path: z.string().optional(), staged: z.boolean().optional() }),
     result: z.object({ diff: z.string() }),
   },
+
+  // ---- scheduled tasks (kept and run by the daemon) ----
+  'schedule/list': { params: Empty, result: z.object({ tasks: z.array(ScheduledTask) }) },
+  /** Creates the task when `id` is absent, else replaces it. */
+  'schedule/save': {
+    params: z.object({
+      id: z.string().optional(),
+      name: z.string(),
+      prompt: z.string(),
+      cwd: z.string(),
+      model: z.string().optional(),
+      permissionMode: PermissionMode.optional(),
+      cadence: ScheduleCadence,
+      hour: z.number().int().min(0).max(23),
+      minute: z.number().int().min(0).max(59),
+      weekday: z.number().int().min(1).max(7).optional(),
+      enabled: z.boolean(),
+    }),
+    result: z.object({ task: ScheduledTask }),
+  },
+  'schedule/delete': { params: z.object({ id: z.string() }), result: Empty },
+  /** Runs the task now, whatever its schedule; the new thread's id. */
+  'schedule/run': { params: z.object({ id: z.string() }), result: z.object({ threadId: z.string() }) },
 } as const;
 
 export type MethodName = keyof typeof Methods;
