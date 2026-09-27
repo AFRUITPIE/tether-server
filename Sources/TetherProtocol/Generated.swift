@@ -4342,27 +4342,32 @@ public struct ThreadSideQuestionResult: Codable, Sendable, Hashable {
 public struct GitRemoveWorktreeParams: Codable, Sendable, Hashable {
     public var path: String
     public var force: Bool?
+    public var discardCommits: Bool?
 
-    public init(path: String, force: Bool? = nil) {
+    public init(path: String, force: Bool? = nil, discardCommits: Bool? = nil) {
         self.path = path
         self.force = force
+        self.discardCommits = discardCommits
     }
 
     private enum CodingKeys: String, CodingKey {
         case path = "path"
         case force = "force"
+        case discardCommits = "discardCommits"
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.path = try c.decode(String.self, forKey: .path)
         self.force = try c.decodeIfPresent(Bool.self, forKey: .force)
+        self.discardCommits = try c.decodeIfPresent(Bool.self, forKey: .discardCommits)
     }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(path, forKey: .path)
         try c.encodeIfPresent(force, forKey: .force)
+        try c.encodeIfPresent(discardCommits, forKey: .discardCommits)
     }
 }
 

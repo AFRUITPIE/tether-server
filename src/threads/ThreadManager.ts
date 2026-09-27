@@ -17,7 +17,7 @@ import type { ClaudeBinary } from '../claude.ts';
 import type { Item, Params, ScheduledTask, ThreadSummary, Turn } from '../protocol/index.ts';
 import type { Scheduler } from './Scheduler.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
-import { createWorktree } from '../server/fsApi.ts';
+import { createWorktree, worktreeName } from '../server/fsApi.ts';
 import { Itemizer } from './itemizer.ts';
 import { FollowedThread, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
 import { LiveThread, TETHER_VERSION } from './LiveThread.ts';
@@ -100,7 +100,7 @@ export class ThreadManager {
 
   async start(p: Params<'thread/start'>, env: Record<string, string>): Promise<LiveThread> {
     const threadId = randomUUID();
-    const cwd = p.worktree ? await createWorktree(p.cwd, `tether-${threadId.slice(0, 8)}`) : p.cwd;
+    const cwd = p.worktree ? await createWorktree(p.cwd, worktreeName(threadId)) : p.cwd;
     const t = new LiveThread({
       ...p,
       cwd,

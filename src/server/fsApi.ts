@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
+import { existsSync, realpathSync } from 'node:fs';
 import { open, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 
@@ -163,26 +164,148 @@ export async function createWorktree(cwd: string, name: string): Promise<string>
   return path;
 }
 
-/** Removes a worktree made by `createWorktree`, and its `claude/…` branch once it's gone. */
-export async function removeWorktree(path: string, force: boolean) {
+/** A worktree Tether makes is named `tether-<first 8 of the thread id>`, on a branch `claude/<name>`. */
+export function worktreeName(threadId: string) {
+  return `tether-${threadId.slice(0, 8)}`;
+}
+const TETHER_WORKTREE_NAME = /^tether-[0-9a-f]{8}$/;
+
+/** What `git/removeWorktree` found, as the `data` of its `worktreeDirty` and `worktreeUnmerged` errors. */
+export type WorktreeRemovalData = {
+  branch: string;
+  uncommittedChanges: boolean;
+  /** Commits on the branch that neither its upstream nor the main checkout's HEAD has. */
+  unmergedCommits: number;
+  /** Set when the folder is gone already and only the branch was kept. */
+  worktreeRemoved?: boolean;
+};
+
+/**
+ * Removes a worktree `thread/start` made, and its `claude/…` branch. Only a registered worktree at
+ * exactly `<checkout>/.claude/worktrees/tether-<id>` qualifies: Claude Desktop's worktrees there,
+ * and anything else, are refused. Nothing is lost without being asked for: uncommitted changes need
+ * `force` (else `worktreeDirty`), and a branch with commits merged nowhere else needs
+ * `discardCommits` (else `worktreeUnmerged`, checked before anything is removed). Both errors carry
+ * `WorktreeRemovalData`, so a client can ask once for both. Any other failure is reported.
+ */
+export async function removeWorktree(path: string, opts: { force?: boolean; discardCommits?: boolean } = {}) {
   const dir = expand(path);
-  if (!dir.includes('/.claude/worktrees/'))
-    throw new RpcError(ErrorCodes.invalidParams, `${path} isn't a worktree Tether made`);
-  let branch = '';
+  const name = basename(dir);
+  const worktrees = dirname(dir);
+  const root = dirname(dirname(worktrees));
+  const notOurs = () => new RpcError(ErrorCodes.invalidParams, `${path} isn't a worktree Tether made`);
+  if (!TETHER_WORKTREE_NAME.test(name) || basename(worktrees) !== 'worktrees' || basename(dirname(worktrees)) !== '.claude')
+    throw notOurs();
+  // The folder holding `.claude/worktrees` has to be the top of a checkout of the repository.
+  let top: string;
   try {
-    branch = (await run('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir })).stdout.trim();
+    top = (await git(['rev-parse', '--show-toplevel'], root)).stdout.trim();
   } catch {
-    // Already gone: nothing to read the branch from.
+    throw notOurs();
   }
-  const root = dir.slice(0, dir.indexOf('/.claude/worktrees/'));
+  if (canonical(top) !== canonical(root)) throw notOurs();
+
+  const registered = parseWorktreeList((await git(['worktree', 'list', '--porcelain'], root)).stdout).some(
+    (w) => canonical(w) === canonical(dir),
+  );
+  const exists = existsSync(dir);
+  // A folder there that git doesn't know as a worktree isn't one to delete.
+  if (!registered && exists) throw notOurs();
+
+  const branch = `claude/${name}`;
+  const hasBranch = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], root).then(
+    () => true,
+    () => false,
+  );
+  const uncommittedChanges = registered && exists ? await isDirty(dir) : false;
+  const unmergedCommits = hasBranch ? await unmergedCount(branch, root) : 0;
+  const data: WorktreeRemovalData = { branch, uncommittedChanges, unmergedCommits };
+  if (uncommittedChanges && !opts.force)
+    throw new RpcError(ErrorCodes.worktreeDirty, 'The worktree has uncommitted changes.', data);
+  if (unmergedCommits > 0 && !opts.discardCommits)
+    throw new RpcError(ErrorCodes.worktreeUnmerged, unmergedMessage(branch, unmergedCommits), data);
+
+  if (registered) {
+    try {
+      if (exists) await git(['worktree', 'remove', ...(opts.force ? ['--force'] : []), dir], root);
+      else await git(['worktree', 'prune'], root);
+    } catch (e) {
+      const message = gitMessage(e);
+      if (/modified or untracked|contains modified/.test(message))
+        throw new RpcError(ErrorCodes.worktreeDirty, 'The worktree has uncommitted changes.', { ...data, uncommittedChanges: true });
+      throw new RpcError(ErrorCodes.invalidRequest, `Couldn't remove the worktree: ${message}`);
+    }
+  }
+  if (!hasBranch) return;
   try {
-    await run('git', ['worktree', 'remove', ...(force ? ['--force'] : []), dir], { cwd: root });
+    await git(['branch', opts.discardCommits ? '-D' : '-d', branch], root);
   } catch (e) {
-    const message = (e as Error).message;
-    throw new RpcError(
-      ErrorCodes.invalidParams,
-      /modified or untracked|contains modified/.test(message) ? 'The worktree has uncommitted changes.' : `Couldn't remove the worktree: ${message}`,
-    );
+    const message = gitMessage(e);
+    // Merged by the check above, but not by git's own: the commits are kept, and so is the branch.
+    if (/not fully merged/.test(message))
+      throw new RpcError(
+        ErrorCodes.worktreeUnmerged,
+        `The worktree is removed, but ${unmergedMessage(branch, Math.max(unmergedCommits, 1))} It's kept.`,
+        { ...data, unmergedCommits: Math.max(unmergedCommits, 1), worktreeRemoved: true },
+      );
+    throw new RpcError(ErrorCodes.invalidRequest, `The worktree is removed, but its branch ${branch} couldn't be deleted: ${message}`);
   }
-  if (branch.startsWith('claude/')) await run('git', ['branch', '-D', branch], { cwd: root }).catch(() => {});
+}
+
+function unmergedMessage(branch: string, count: number) {
+  return `Its branch ${branch} has ${count === 1 ? 'a commit' : `${count} commits`} that ${count === 1 ? "isn't" : "aren't"} merged.`;
+}
+
+/** Uncommitted changes, untracked files included, as `git worktree remove` counts them. */
+async function isDirty(dir: string) {
+  try {
+    return (await git(['status', '--porcelain'], dir)).stdout.trim().length > 0;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Commits `git branch -d` would refuse to lose: those on `branch` that its upstream (or, with none,
+ * the checkout's HEAD) doesn't have. Unknown counts as one, so a failed check never deletes.
+ */
+async function unmergedCount(branch: string, root: string): Promise<number> {
+  const upstream = await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', `${branch}@{upstream}`], root).then(
+    (r) => r.stdout.trim(),
+    () => '',
+  );
+  try {
+    const out = await git(['rev-list', '--count', `${upstream || 'HEAD'}..refs/heads/${branch}`], root);
+    return Number(out.stdout.trim()) || 0;
+  } catch {
+    return 1;
+  }
+}
+
+/** The paths `git worktree list --porcelain` reports. */
+function parseWorktreeList(out: string): string[] {
+  return out
+    .split('\n')
+    .filter((l) => l.startsWith('worktree '))
+    .map((l) => l.slice('worktree '.length));
+}
+
+/** A path with symlinks resolved as far as it exists (macOS's /var is /private/var). */
+function canonical(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    const parent = dirname(p);
+    return parent === p ? p : join(canonical(parent), basename(p));
+  }
+}
+
+function git(args: string[], cwd: string) {
+  return run('git', args, { cwd, maxBuffer: 64 << 20 });
+}
+
+/** What git said went wrong, without Node's "Command failed" preamble. */
+function gitMessage(e: unknown): string {
+  const err = e as Error & { stderr?: string };
+  return err.stderr?.trim() || err.message;
 }

@@ -1737,6 +1737,9 @@
           },
           "force": {
             "type": "boolean"
+          },
+          "discardCommits": {
+            "type": "boolean"
           }
         },
         "required": [

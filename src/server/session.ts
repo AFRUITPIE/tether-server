@@ -302,7 +302,7 @@ export class ClientSession implements Subscriber {
       return { answer: r?.response ?? null };
     },
     'git/removeWorktree': async (p) => {
-      await fsApi.removeWorktree(p.path, p.force ?? false);
+      await fsApi.removeWorktree(p.path, { force: p.force ?? false, discardCommits: p.discardCommits ?? false });
       return {};
     },
 

@@ -22,6 +22,16 @@ export const ErrorCodes = {
   threadNotFound: -32010,
   threadNotLoaded: -32011,
   sdkError: -32020,
+  /**
+   * `git/removeWorktree`: the worktree has uncommitted changes; asking again with `force` discards
+   * them. `data`: `{ branch, uncommittedChanges, unmergedCommits, worktreeRemoved? }`.
+   */
+  worktreeDirty: -32030,
+  /**
+   * `git/removeWorktree`: the worktree's branch has commits merged nowhere else; asking again with
+   * `discardCommits` deletes them. `data` as for `worktreeDirty`.
+   */
+  worktreeUnmerged: -32031,
   requestCancelled: -32800,
 } as const;
 

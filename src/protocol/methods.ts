@@ -312,11 +312,20 @@ export const Methods = {
   },
 
   /**
-   * Removes a worktree `thread/start` made (under `.claude/worktrees/`) and its branch. Refuses one
-   * with uncommitted changes unless `force`.
+   * Removes a worktree `thread/start` made (`<checkout>/.claude/worktrees/tether-…`) and its
+   * `claude/…` branch; any other path is refused. Refuses one with uncommitted changes unless
+   * `force` (error `worktreeDirty`), and one whose branch has commits merged nowhere else unless
+   * `discardCommits` (error `worktreeUnmerged`, before anything is removed). Both errors' `data`
+   * says which of the two apply, so a client can ask once.
    */
   'git/removeWorktree': {
-    params: z.object({ path: z.string(), force: z.boolean().optional() }),
+    params: z.object({
+      path: z.string(),
+      /** Discard uncommitted changes in the worktree. */
+      force: z.boolean().optional(),
+      /** Delete the branch even though it has commits merged nowhere else. */
+      discardCommits: z.boolean().optional(),
+    }),
     result: Empty,
   },
 
