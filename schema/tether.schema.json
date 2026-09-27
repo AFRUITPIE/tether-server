@@ -1825,7 +1825,12 @@
             "type": "string"
           },
           "scope": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "user",
+              "project",
+              "local"
+            ]
           },
           "cwd": {
             "type": "string"
@@ -1853,7 +1858,12 @@
             "type": "boolean"
           },
           "scope": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "user",
+              "project",
+              "local"
+            ]
           },
           "cwd": {
             "type": "string"

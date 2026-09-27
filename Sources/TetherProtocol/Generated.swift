@@ -4482,10 +4482,10 @@ public struct PluginInstallResult: Codable, Sendable, Hashable {
 
 public struct PluginUninstallParams: Codable, Sendable, Hashable {
     public var pluginId: String
-    public var scope: String?
+    public var scope: Scope?
     public var cwd: String?
 
-    public init(pluginId: String, scope: String? = nil, cwd: String? = nil) {
+    public init(pluginId: String, scope: Scope? = nil, cwd: String? = nil) {
         self.pluginId = pluginId
         self.scope = scope
         self.cwd = cwd
@@ -4500,7 +4500,7 @@ public struct PluginUninstallParams: Codable, Sendable, Hashable {
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.pluginId = try c.decode(String.self, forKey: .pluginId)
-        self.scope = try c.decodeIfPresent(String.self, forKey: .scope)
+        self.scope = try c.decodeIfPresent(Scope.self, forKey: .scope)
         self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
     }
 
@@ -4509,6 +4509,18 @@ public struct PluginUninstallParams: Codable, Sendable, Hashable {
         try c.encode(pluginId, forKey: .pluginId)
         try c.encodeIfPresent(scope, forKey: .scope)
         try c.encodeIfPresent(cwd, forKey: .cwd)
+    }
+
+    public struct Scope: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
+        public let rawValue: String
+        public init(rawValue: String) { self.rawValue = rawValue }
+        public init(stringLiteral value: String) { self.rawValue = value }
+        public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
+        public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
+        public static let user = Scope(rawValue: "user")
+        public static let project = Scope(rawValue: "project")
+        public static let local = Scope(rawValue: "local")
+        public static let allCases: [Scope] = [.user, .project, .local]
     }
 }
 
@@ -4523,10 +4535,10 @@ public struct PluginUninstallResult: Codable, Sendable, Hashable {
 public struct PluginSetEnabledParams: Codable, Sendable, Hashable {
     public var pluginId: String
     public var enabled: Bool
-    public var scope: String?
+    public var scope: Scope?
     public var cwd: String?
 
-    public init(pluginId: String, enabled: Bool, scope: String? = nil, cwd: String? = nil) {
+    public init(pluginId: String, enabled: Bool, scope: Scope? = nil, cwd: String? = nil) {
         self.pluginId = pluginId
         self.enabled = enabled
         self.scope = scope
@@ -4544,7 +4556,7 @@ public struct PluginSetEnabledParams: Codable, Sendable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.pluginId = try c.decode(String.self, forKey: .pluginId)
         self.enabled = try c.decode(Bool.self, forKey: .enabled)
-        self.scope = try c.decodeIfPresent(String.self, forKey: .scope)
+        self.scope = try c.decodeIfPresent(Scope.self, forKey: .scope)
         self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
     }
 
@@ -4554,6 +4566,18 @@ public struct PluginSetEnabledParams: Codable, Sendable, Hashable {
         try c.encode(enabled, forKey: .enabled)
         try c.encodeIfPresent(scope, forKey: .scope)
         try c.encodeIfPresent(cwd, forKey: .cwd)
+    }
+
+    public struct Scope: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
+        public let rawValue: String
+        public init(rawValue: String) { self.rawValue = rawValue }
+        public init(stringLiteral value: String) { self.rawValue = value }
+        public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
+        public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
+        public static let user = Scope(rawValue: "user")
+        public static let project = Scope(rawValue: "project")
+        public static let local = Scope(rawValue: "local")
+        public static let allCases: [Scope] = [.user, .project, .local]
     }
 }
 

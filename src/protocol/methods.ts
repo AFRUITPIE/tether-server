@@ -19,6 +19,8 @@ import {
 import { Item, Turn } from './items.ts';
 
 const Empty = z.object({});
+/** The scopes `claude plugin` takes. Inlined, so each method's params keep a nested `Scope` in Swift. */
+const PluginScope = z.enum(['user', 'project', 'local']);
 const ThreadRef = z.object({ threadId: z.string() });
 
 /** Client → server requests. Each entry: params and result schema. */
@@ -332,22 +334,22 @@ export const Methods = {
     result: Empty,
   },
 
-  // ---- plugins (the host's `claude plugin`) ----
+  // ---- plugins (the host's `claude plugin`); `scope` is the settings file the plugin is in ----
   /** Installed plugins, and those the host's marketplaces offer, as `claude plugin list --json --available` reports them. */
   'plugin/list': {
     params: z.object({ cwd: z.string().optional() }),
     result: z.object({ installed: z.array(JsonValue), available: z.array(JsonValue) }),
   },
   'plugin/install': {
-    params: z.object({ pluginId: z.string(), scope: z.enum(['user', 'project', 'local']), cwd: z.string().optional() }),
+    params: z.object({ pluginId: z.string(), scope: PluginScope, cwd: z.string().optional() }),
     result: Empty,
   },
   'plugin/uninstall': {
-    params: z.object({ pluginId: z.string(), scope: z.string().optional(), cwd: z.string().optional() }),
+    params: z.object({ pluginId: z.string(), scope: PluginScope.optional(), cwd: z.string().optional() }),
     result: Empty,
   },
   'plugin/setEnabled': {
-    params: z.object({ pluginId: z.string(), enabled: z.boolean(), scope: z.string().optional(), cwd: z.string().optional() }),
+    params: z.object({ pluginId: z.string(), enabled: z.boolean(), scope: PluginScope.optional(), cwd: z.string().optional() }),
     result: Empty,
   },
 
