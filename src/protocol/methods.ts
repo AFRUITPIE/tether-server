@@ -146,6 +146,8 @@ export const Methods = {
        * branch of its own, so parallel sessions don't edit the same checkout.
        */
       worktree: z.boolean().optional(),
+      /** Give Claude tools to list and read the host's other sessions and to suggest tasks. */
+      sessionTools: z.boolean().optional(),
     }),
     result: z.object({ thread: ThreadInfo }),
   },
@@ -153,6 +155,8 @@ export const Methods = {
   'thread/resume': {
     params: z.object({
       threadId: z.string(),
+      /** As thread/start's; applies when this resume loads the thread. */
+      sessionTools: z.boolean().optional(),
       cwd: z.string().optional(),
       /** Resume with history truncated after this message uuid (conversation rewind). */
       atMessageId: z.string().optional(),

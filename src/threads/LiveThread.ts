@@ -1,5 +1,7 @@
 import {
+  createSdkMcpServer,
   query,
+  tool,
   type Options,
   type PermissionResult,
   type PermissionUpdate,
@@ -9,6 +11,7 @@ import {
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import type { ClaudeBinary } from '../claude.ts';
 import type {
   EffortLevel,
@@ -53,6 +56,12 @@ type PendingRequest = {
   sentTo: Set<Subscriber>;
 };
 
+/** What the session tools need from the thread manager. */
+export interface SessionTools {
+  list(): Promise<{ threadId: string; title?: string; cwd?: string; updatedAt?: number; status?: string }[]>;
+  read(threadId: string, limit: number): Promise<string>;
+}
+
 export type LiveThreadOptions = {
   threadId: string;
   cwd: string;
@@ -80,6 +89,8 @@ export type LiveThreadOptions = {
   seqAfter?: number;
   /** Called when the thread's query process has exited and it can be unloaded. */
   onExit?: (t: LiveThread) => void;
+  /** Tools for the host's other sessions, when the client asked for them. */
+  sessionTools?: SessionTools;
   stderr?: (text: string) => void;
 };
 
@@ -157,7 +168,9 @@ export class LiveThread {
       ...(o.additionalDirectories?.length ? { additionalDirectories: o.additionalDirectories } : {}),
       ...(o.allowedTools ? { allowedTools: o.allowedTools } : {}),
       ...(o.disallowedTools ? { disallowedTools: o.disallowedTools } : {}),
-      ...(o.mcpServers ? { mcpServers: o.mcpServers as Options['mcpServers'] } : {}),
+      ...(o.mcpServers || o.sessionTools
+        ? { mcpServers: { ...((o.mcpServers ?? {}) as Options['mcpServers']), ...(o.sessionTools ? { tether: this.sessionToolServer(o.sessionTools) } : {}) } }
+        : {}),
       ...(o.agent ? { agent: o.agent } : {}),
       ...(o.maxTurns ? { maxTurns: o.maxTurns } : {}),
       ...(o.maxBudgetUsd ? { maxBudgetUsd: o.maxBudgetUsd } : {}),
@@ -447,11 +460,43 @@ export class LiveThread {
       this.setStatus(this.itemizer.currentTurn ? 'running' : 'idle');
   }
 
+  /** The session tools as an in-process MCP server named `tether`. */
+  private sessionToolServer(tools: SessionTools) {
+    const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
+    return createSdkMcpServer({
+      name: 'tether',
+      instructions:
+        "Tools for the user's other Claude Code chats on this machine. Read another chat only when it helps with this one. Use suggest_task for work that belongs in a chat of its own; the user decides whether to start it.",
+      tools: [
+        tool('list_sessions', "List the user's other chats on this machine, most recent first: id, title, folder, status.", {}, async () =>
+          text(JSON.stringify((await tools.list()).filter((s) => s.threadId !== this.id))),
+        ),
+        tool(
+          'read_session',
+          "Read another chat's recent messages, as text.",
+          { sessionId: z.string(), limit: z.number().int().min(1).max(100).optional() },
+          async (a) => text(await tools.read(a.sessionId, a.limit ?? 30)),
+        ),
+        tool(
+          'suggest_task',
+          'Suggest a separate task to the user. It appears as a button that starts it in a new chat with this prompt.',
+          { title: z.string(), prompt: z.string(), cwd: z.string().optional() },
+          async (a) => {
+            this.emit('thread/taskSuggested', { title: a.title, prompt: a.prompt, ...(a.cwd ? { cwd: a.cwd } : {}) });
+            return text('Suggested to the user.');
+          },
+        ),
+      ],
+    });
+  }
+
   private async canUseTool(
     toolName: string,
     input: Record<string, unknown>,
     ctx: Parameters<NonNullable<Options['canUseTool']>>[2],
   ): Promise<PermissionResult> {
+    // The client turned these on; they read and suggest, never change anything.
+    if (toolName.startsWith('mcp__tether__')) return { behavior: 'allow', updatedInput: input };
     const deny = (message: string, interrupt?: boolean): PermissionResult => {
       this.itemizer.noteDenied(ctx.toolUseID, message);
       return { behavior: 'deny', message, ...(interrupt ? { interrupt } : {}) };

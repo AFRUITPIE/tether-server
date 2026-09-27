@@ -104,6 +104,7 @@ export class ThreadManager {
     const t = new LiveThread({
       ...p,
       cwd,
+      sessionTools: p.sessionTools ? this.sessionTools : undefined,
       threadId,
       claude: this.claude,
       env: { ...env, ...(p.env ?? {}) },
@@ -164,6 +165,7 @@ export class ThreadManager {
         mode: 'resume',
         seqAfter: this.lastSeqs.get(p.threadId),
         ...(p.atMessageId ? { resumeAt: p.atMessageId } : {}),
+        ...(p.sessionTools ? { sessionTools: this.sessionTools } : {}),
         ...settings,
         title: info.customTitle ?? info.summary,
         onExit: (lt) => this.onExit(lt),
@@ -377,6 +379,28 @@ export class ThreadManager {
     }
     return snap;
   }
+
+  /** For session tools: the host's sessions, and one's recent messages as text. */
+  readonly sessionTools = {
+    list: async () =>
+      (await this.list({ limit: 30 })).map((s) => ({
+        threadId: s.threadId,
+        title: s.customTitle ?? s.title,
+        ...(s.cwd ? { cwd: s.cwd } : {}),
+        updatedAt: s.updatedAt,
+        status: s.status,
+      })),
+    read: async (threadId: string, limit: number) => {
+      const { items } = await this.readStored(threadId);
+      const lines = items.flatMap((i) => {
+        if (i.type === 'userMessage' && !i.synthetic)
+          return [`User: ${i.content.map((c) => (c.type === 'text' ? c.text : '')).join(' ').trim()}`];
+        if (i.type === 'agentMessage' && i.parentToolUseId === null && i.text) return [`Claude: ${i.text}`];
+        return [];
+      });
+      return lines.slice(-limit).join('\n\n') || 'That chat has no messages yet.';
+    },
+  };
 
   private async readStored(threadId: string, cwd?: string) {
     const msgs = await getSessionMessages(threadId, { ...(cwd ? { dir: cwd } : {}), includeSystemMessages: true });

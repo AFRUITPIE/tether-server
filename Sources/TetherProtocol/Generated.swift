@@ -2444,8 +2444,9 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
     public var title: String?
     public var input: [UserInput]?
     public var worktree: Bool?
+    public var sessionTools: Bool?
 
-    public init(cwd: String, model: String? = nil, fallbackModel: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastMode: Bool? = nil, thinking: ThinkingSetting? = nil, additionalDirectories: [String]? = nil, systemPromptAppend: String? = nil, allowedTools: [String]? = nil, disallowedTools: [String]? = nil, mcpServers: [String: JSONValue]? = nil, agent: String? = nil, maxTurns: Int? = nil, maxBudgetUsd: Double? = nil, betas: [String]? = nil, env: EnvOverrides? = nil, title: String? = nil, input: [UserInput]? = nil, worktree: Bool? = nil) {
+    public init(cwd: String, model: String? = nil, fallbackModel: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastMode: Bool? = nil, thinking: ThinkingSetting? = nil, additionalDirectories: [String]? = nil, systemPromptAppend: String? = nil, allowedTools: [String]? = nil, disallowedTools: [String]? = nil, mcpServers: [String: JSONValue]? = nil, agent: String? = nil, maxTurns: Int? = nil, maxBudgetUsd: Double? = nil, betas: [String]? = nil, env: EnvOverrides? = nil, title: String? = nil, input: [UserInput]? = nil, worktree: Bool? = nil, sessionTools: Bool? = nil) {
         self.cwd = cwd
         self.model = model
         self.fallbackModel = fallbackModel
@@ -2466,6 +2467,7 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         self.title = title
         self.input = input
         self.worktree = worktree
+        self.sessionTools = sessionTools
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2489,6 +2491,7 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         case title = "title"
         case input = "input"
         case worktree = "worktree"
+        case sessionTools = "sessionTools"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -2513,6 +2516,7 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         self.title = try c.decodeIfPresent(String.self, forKey: .title)
         self.input = try c.decodeIfPresent([UserInput].self, forKey: .input)
         self.worktree = try c.decodeIfPresent(Bool.self, forKey: .worktree)
+        self.sessionTools = try c.decodeIfPresent(Bool.self, forKey: .sessionTools)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -2537,6 +2541,7 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         try c.encodeIfPresent(title, forKey: .title)
         try c.encodeIfPresent(input, forKey: .input)
         try c.encodeIfPresent(worktree, forKey: .worktree)
+        try c.encodeIfPresent(sessionTools, forKey: .sessionTools)
     }
 }
 
@@ -2564,6 +2569,7 @@ public struct ThreadStartResult: Codable, Sendable, Hashable {
 
 public struct ThreadResumeParams: Codable, Sendable, Hashable {
     public var threadId: String
+    public var sessionTools: Bool?
     public var cwd: String?
     public var atMessageId: String?
     public var model: String?
@@ -2574,8 +2580,9 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
     public var includeHistory: Bool?
     public var limit: Int?
 
-    public init(threadId: String, cwd: String? = nil, atMessageId: String? = nil, model: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, env: EnvOverrides? = nil, afterSeq: Int? = nil, includeHistory: Bool? = nil, limit: Int? = nil) {
+    public init(threadId: String, sessionTools: Bool? = nil, cwd: String? = nil, atMessageId: String? = nil, model: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, env: EnvOverrides? = nil, afterSeq: Int? = nil, includeHistory: Bool? = nil, limit: Int? = nil) {
         self.threadId = threadId
+        self.sessionTools = sessionTools
         self.cwd = cwd
         self.atMessageId = atMessageId
         self.model = model
@@ -2589,6 +2596,7 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
 
     private enum CodingKeys: String, CodingKey {
         case threadId = "threadId"
+        case sessionTools = "sessionTools"
         case cwd = "cwd"
         case atMessageId = "atMessageId"
         case model = "model"
@@ -2603,6 +2611,7 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.threadId = try c.decode(String.self, forKey: .threadId)
+        self.sessionTools = try c.decodeIfPresent(Bool.self, forKey: .sessionTools)
         self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
         self.atMessageId = try c.decodeIfPresent(String.self, forKey: .atMessageId)
         self.model = try c.decodeIfPresent(String.self, forKey: .model)
@@ -2617,6 +2626,7 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(threadId, forKey: .threadId)
+        try c.encodeIfPresent(sessionTools, forKey: .sessionTools)
         try c.encodeIfPresent(cwd, forKey: .cwd)
         try c.encodeIfPresent(atMessageId, forKey: .atMessageId)
         try c.encodeIfPresent(model, forKey: .model)
@@ -5503,6 +5513,48 @@ public struct ThreadPromptSuggestionNotification: Codable, Sendable, Hashable {
     }
 }
 
+public struct ThreadTaskSuggestedNotification: Codable, Sendable, Hashable {
+    public var threadId: String
+    public var seq: Int
+    public var title: String
+    public var prompt: String
+    public var cwd: String?
+
+    public init(threadId: String, seq: Int, title: String, prompt: String, cwd: String? = nil) {
+        self.threadId = threadId
+        self.seq = seq
+        self.title = title
+        self.prompt = prompt
+        self.cwd = cwd
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case threadId = "threadId"
+        case seq = "seq"
+        case title = "title"
+        case prompt = "prompt"
+        case cwd = "cwd"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.threadId = try c.decode(String.self, forKey: .threadId)
+        self.seq = try c.decode(Int.self, forKey: .seq)
+        self.title = try c.decode(String.self, forKey: .title)
+        self.prompt = try c.decode(String.self, forKey: .prompt)
+        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(threadId, forKey: .threadId)
+        try c.encode(seq, forKey: .seq)
+        try c.encode(title, forKey: .title)
+        try c.encode(prompt, forKey: .prompt)
+        try c.encodeIfPresent(cwd, forKey: .cwd)
+    }
+}
+
 public struct ThreadCommandsChangedNotification: Codable, Sendable, Hashable {
     public var threadId: String
     public var seq: Int
@@ -5872,6 +5924,7 @@ public enum ServerNotification: Sendable, Hashable {
     case taskBackgroundChanged(TaskBackgroundChangedNotification)
     case threadQueuedInput(ThreadQueuedInputNotification)
     case threadPromptSuggestion(ThreadPromptSuggestionNotification)
+    case threadTaskSuggested(ThreadTaskSuggestedNotification)
     case threadCommandsChanged(ThreadCommandsChangedNotification)
     case threadApiRetry(ThreadApiRetryNotification)
     case threadRateLimit(ThreadRateLimitNotification)
@@ -5883,7 +5936,7 @@ public enum ServerNotification: Sendable, Hashable {
     case threadStderr(ThreadStderrNotification)
     case unknown(method: String, params: JSONValue)
 
-    public static let methods: Set<String> = ["thread/started", "thread/updated", "thread/status/changed", "thread/closed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "item/started", "item/updated", "item/completed", "item/agentMessage/delta", "item/reasoning/delta", "item/toolCall/inputDelta", "item/toolCall/progress", "task/event", "task/backgroundChanged", "thread/queuedInput", "thread/promptSuggestion", "thread/commandsChanged", "thread/apiRetry", "thread/rateLimit", "thread/authStatus", "thread/notification", "thread/hook", "thread/rawEvent", "serverRequest/resolved", "thread/stderr"]
+    public static let methods: Set<String> = ["thread/started", "thread/updated", "thread/status/changed", "thread/closed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "item/started", "item/updated", "item/completed", "item/agentMessage/delta", "item/reasoning/delta", "item/toolCall/inputDelta", "item/toolCall/progress", "task/event", "task/backgroundChanged", "thread/queuedInput", "thread/promptSuggestion", "thread/taskSuggested", "thread/commandsChanged", "thread/apiRetry", "thread/rateLimit", "thread/authStatus", "thread/notification", "thread/hook", "thread/rawEvent", "serverRequest/resolved", "thread/stderr"]
 
     public init(method: String, params: Data, decoder: JSONDecoder = JSONDecoder()) throws {
         switch method {
@@ -5905,6 +5958,7 @@ public enum ServerNotification: Sendable, Hashable {
         case "task/backgroundChanged": self = .taskBackgroundChanged(try decoder.decode(TaskBackgroundChangedNotification.self, from: params))
         case "thread/queuedInput": self = .threadQueuedInput(try decoder.decode(ThreadQueuedInputNotification.self, from: params))
         case "thread/promptSuggestion": self = .threadPromptSuggestion(try decoder.decode(ThreadPromptSuggestionNotification.self, from: params))
+        case "thread/taskSuggested": self = .threadTaskSuggested(try decoder.decode(ThreadTaskSuggestedNotification.self, from: params))
         case "thread/commandsChanged": self = .threadCommandsChanged(try decoder.decode(ThreadCommandsChangedNotification.self, from: params))
         case "thread/apiRetry": self = .threadApiRetry(try decoder.decode(ThreadApiRetryNotification.self, from: params))
         case "thread/rateLimit": self = .threadRateLimit(try decoder.decode(ThreadRateLimitNotification.self, from: params))
@@ -5939,6 +5993,7 @@ public enum ServerNotification: Sendable, Hashable {
         case .taskBackgroundChanged(let n): return n.threadId
         case .threadQueuedInput(let n): return n.threadId
         case .threadPromptSuggestion(let n): return n.threadId
+        case .threadTaskSuggested(let n): return n.threadId
         case .threadCommandsChanged(let n): return n.threadId
         case .threadApiRetry(let n): return n.threadId
         case .threadRateLimit(let n): return n.threadId
@@ -5971,6 +6026,7 @@ public enum ServerNotification: Sendable, Hashable {
         case .taskBackgroundChanged(let n): return n.seq
         case .threadQueuedInput(let n): return n.seq
         case .threadPromptSuggestion(let n): return n.seq
+        case .threadTaskSuggested(let n): return n.seq
         case .threadCommandsChanged(let n): return n.seq
         case .threadApiRetry(let n): return n.seq
         case .threadRateLimit(let n): return n.seq

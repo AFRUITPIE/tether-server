@@ -546,6 +546,9 @@
           },
           "worktree": {
             "type": "boolean"
+          },
+          "sessionTools": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -572,6 +575,9 @@
         "properties": {
           "threadId": {
             "type": "string"
+          },
+          "sessionTools": {
+            "type": "boolean"
           },
           "cwd": {
             "type": "string"
@@ -2349,6 +2355,35 @@
         "threadId",
         "seq",
         "suggestion"
+      ],
+      "additionalProperties": false
+    },
+    "thread/taskSuggested": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "title": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "seq",
+        "title",
+        "prompt"
       ],
       "additionalProperties": false
     },
