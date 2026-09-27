@@ -143,7 +143,10 @@ export const Methods = {
       input: z.array(UserInput).optional(),
       /**
        * Start in a new git worktree of `cwd`'s repository, under `<repo>/.claude/worktrees/`, on a
-       * branch of its own, so parallel sessions don't edit the same checkout.
+       * branch of its own, so parallel sessions don't edit the same checkout. The thread's `cwd` is
+       * the worktree's copy of the folder asked for (its root if the checkout lacks that folder);
+       * from inside a worktree, the new one goes beside it in the main checkout, from its HEAD. A
+       * thread that fails to start removes the worktree again.
        */
       worktree: z.boolean().optional(),
       /** Give Claude tools to list and read the host's other sessions and to suggest tasks. */

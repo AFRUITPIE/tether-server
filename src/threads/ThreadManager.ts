@@ -17,7 +17,7 @@ import type { ClaudeBinary } from '../claude.ts';
 import type { Item, Params, ScheduledTask, ThreadSummary, Turn } from '../protocol/index.ts';
 import type { Scheduler } from './Scheduler.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
-import { createWorktree, worktreeName } from '../server/fsApi.ts';
+import { createWorktree, removeWorktree, worktreeName } from '../server/fsApi.ts';
 import { Itemizer } from './itemizer.ts';
 import { FollowedThread, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
 import { LiveThread, TETHER_VERSION } from './LiveThread.ts';
@@ -100,7 +100,8 @@ export class ThreadManager {
 
   async start(p: Params<'thread/start'>, env: Record<string, string>): Promise<LiveThread> {
     const threadId = randomUUID();
-    const cwd = p.worktree ? await createWorktree(p.cwd, worktreeName(threadId)) : p.cwd;
+    const worktree = p.worktree ? await createWorktree(p.cwd, worktreeName(threadId)) : undefined;
+    const cwd = worktree?.cwd ?? p.cwd;
     const t = new LiveThread({
       ...p,
       cwd,
@@ -117,6 +118,11 @@ export class ThreadManager {
     } catch (e) {
       this.threads.delete(threadId);
       t.close();
+      // Made for this thread alone, a moment ago: nothing in it to keep.
+      if (worktree)
+        await removeWorktree(worktree.path, { force: true, discardCommits: true }).catch((err) =>
+          this.log(`couldn't remove the worktree of a thread that failed to start: ${(err as Error).message}`),
+        );
       throw e;
     }
     this.log(`thread ${threadId} started in ${cwd}`);

@@ -134,24 +134,32 @@ export async function gitDiff(cwd: string, path?: string, staged?: boolean) {
  * A new git worktree of `cwd`'s repository, where the desktop app keeps them
  * (`<repo>/.claude/worktrees/<name>`), on a branch of its own off the current HEAD. The folder is
  * excluded locally (`.git/info/exclude`) so the main checkout doesn't list it as untracked.
+ *
+ * Started from inside a worktree, the new one goes beside it in the main checkout rather than
+ * inside it, and branches from that worktree's HEAD. `cwd` is the new worktree's counterpart of the
+ * folder started from (its root when that folder isn't in the new checkout, say an ignored one).
  */
-export async function createWorktree(cwd: string, name: string): Promise<string> {
+export async function createWorktree(cwd: string, name: string): Promise<{ path: string; cwd: string }> {
   const dir = expand(cwd);
-  let root: string;
+  let top: string;
+  let prefix: string;
   try {
-    root = (await run('git', ['rev-parse', '--show-toplevel'], { cwd: dir })).stdout.trim();
+    const [t = '', p = ''] = (await git(['rev-parse', '--show-toplevel', '--show-prefix'], dir)).stdout.split('\n');
+    top = t.trim();
+    prefix = p.trim();
   } catch {
     throw new RpcError(ErrorCodes.invalidParams, `${cwd} isn't in a git repository, so it can't have a worktree`);
   }
-  const path = join(root, '.claude', 'worktrees', name);
+  const main = await mainCheckout(top);
+  const path = join(main, '.claude', 'worktrees', name);
   try {
-    await run('git', ['worktree', 'add', '-b', `claude/${name}`, path, 'HEAD'], { cwd: root });
+    await git(['worktree', 'add', '-b', `claude/${name}`, path, 'HEAD'], top);
   } catch (e) {
-    throw new RpcError(ErrorCodes.invalidParams, `Couldn't create a worktree: ${(e as Error).message}`);
+    throw new RpcError(ErrorCodes.invalidParams, `Couldn't create a worktree: ${gitMessage(e)}`);
   }
   try {
-    const common = (await run('git', ['rev-parse', '--git-common-dir'], { cwd: root })).stdout.trim();
-    const exclude = resolve(root, common, 'info', 'exclude');
+    const common = (await git(['rev-parse', '--git-common-dir'], main)).stdout.trim();
+    const exclude = resolve(main, common, 'info', 'exclude');
     const { readFile, appendFile, mkdir } = await import('node:fs/promises');
     const current = await readFile(exclude, 'utf8').catch(() => '');
     if (!current.split('\n').includes('.claude/worktrees/')) {
@@ -161,7 +169,17 @@ export async function createWorktree(cwd: string, name: string): Promise<string>
   } catch {
     // Only tidiness: the worktree itself is made.
   }
-  return path;
+  const sub = prefix ? join(path, prefix.replace(/\/$/, '')) : path;
+  return { path, cwd: existsSync(sub) ? sub : path };
+}
+
+/** The repository's main checkout, which git lists first; `top` itself for a bare repository. */
+async function mainCheckout(top: string): Promise<string> {
+  try {
+    const [first, ...rest] = (await git(['worktree', 'list', '--porcelain'], top)).stdout.split('\n\n')[0]!.split('\n');
+    if (first?.startsWith('worktree ') && !rest.includes('bare')) return first.slice('worktree '.length);
+  } catch {}
+  return top;
 }
 
 /** A worktree Tether makes is named `tether-<first 8 of the thread id>`, on a branch `claude/<name>`. */
