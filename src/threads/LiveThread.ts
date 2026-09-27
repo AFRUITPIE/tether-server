@@ -54,6 +54,19 @@ type PendingRequest = {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
   sentTo: Set<Subscriber>;
+  /** An unattended thread's deadline for an answer. */
+  timer?: ReturnType<typeof setTimeout>;
+};
+
+/**
+ * A thread no person started or is expected to be watching: a scheduled run. What it asks of a
+ * person is denied once it has waited `requestTimeoutMs` with no client subscribed, rather than
+ * holding the thread (and a daemon upgrade) forever. A client looking at it gets as long as it takes.
+ */
+export type Unattended = {
+  requestTimeoutMs: number;
+  /** Told why the run was held up: a request that went unanswered, or the daemon stopping. */
+  onUnanswered: (message: string) => void;
 };
 
 /** What the session tools need from the thread manager. */
@@ -91,6 +104,8 @@ export type LiveThreadOptions = {
   onExit?: (t: LiveThread) => void;
   /** Tools for the host's other sessions, when the client asked for them. */
   sessionTools?: SessionTools;
+  /** Set for a scheduled run, which nobody is there to answer. */
+  unattended?: Unattended;
   stderr?: (text: string) => void;
 };
 
@@ -232,6 +247,17 @@ export class LiveThread {
     return this.backgroundTasks.size > 0;
   }
 
+  /** An unattended thread waiting on a person, with no client subscribed to be that person. */
+  get waitingUnattended() {
+    return !!this.opts.unattended && this.pending.size > 0 && this.subscribers.size === 0;
+  }
+
+  /** Records on an unattended thread that it was stopped while it waited on a person. */
+  abandonUnattended(why: string) {
+    const p = this.pending.values().next().value;
+    if (this.opts.unattended && p) this.opts.unattended.onUnanswered(`${why} while it waited for ${describeRequest(p)}.`);
+  }
+
   close() {
     this.input.end();
     try {
@@ -256,7 +282,10 @@ export class LiveThread {
       this.backgroundTasks.clear();
       this.emitAll(this.itemizer.abandonAll());
       this.emit('task/backgroundChanged', { tasks: [] });
-      for (const p of this.pending.values()) p.reject(new RpcError(ErrorCodes.requestCancelled, 'thread closed'));
+      for (const p of this.pending.values()) {
+        clearTimeout(p.timer);
+        p.reject(new RpcError(ErrorCodes.requestCancelled, 'thread closed'));
+      }
       this.pending.clear();
       this.setStatus('closed');
       this.emit('thread/closed', {});
@@ -458,8 +487,25 @@ export class LiveThread {
       this.pending.set(requestId, p);
       this.setStatus('requiresAction');
       signal?.addEventListener('abort', () => this.resolvePending(p, null, 'cancelled'), { once: true });
+      if (this.opts.unattended) this.armDeadline(p, this.opts.unattended);
       for (const s of this.subscribers) this.sendPendingTo(p, s);
     });
+  }
+
+  /** Denies an unattended thread's request once it has waited its time with nobody subscribed. */
+  private armDeadline(p: PendingRequest, u: Unattended) {
+    p.timer = setTimeout(() => {
+      if (!this.pending.has(p.requestId)) return;
+      // Someone is looking at it: theirs to answer, however long they take.
+      if (this.subscribers.size > 0) return this.armDeadline(p, u);
+      u.onUnanswered(`No one answered its request for ${describeRequest(p)} within ${duration(u.requestTimeoutMs)}, so it was denied.`);
+      const denial =
+        p.method === 'permission/request'
+          ? { decision: 'deny', message: 'No one was there to answer: this is a scheduled run nobody is watching.', interrupt: true }
+          : null;
+      this.resolvePending(p, denial, 'cancelled');
+    }, u.requestTimeoutMs);
+    p.timer.unref?.();
   }
 
   private sendPendingTo(p: PendingRequest, sub: Subscriber) {
@@ -474,6 +520,7 @@ export class LiveThread {
   private resolvePending(p: PendingRequest, result: unknown, reason: 'answered' | 'cancelled') {
     if (!this.pending.has(p.requestId)) return;
     this.pending.delete(p.requestId);
+    clearTimeout(p.timer);
     for (const s of p.sentTo) s.cancelRequest(p.requestId);
     p.resolve(result);
     this.emit('serverRequest/resolved', { requestId: p.requestId, reason });
@@ -603,6 +650,27 @@ export class LiveThread {
     );
     return r ?? { behavior: 'cancelled' };
   }
+}
+
+/** What a request asks of a person, for an unattended run's record. */
+function describeRequest(p: Pick<PendingRequest, 'method' | 'params'>): string {
+  switch (p.method) {
+    case 'permission/request':
+      return `permission to use ${String(p.params.displayName ?? p.params.toolName)}`;
+    case 'question/request':
+      return 'an answer to a question';
+    case 'plan/approve':
+      return 'approval of its plan';
+    case 'elicitation/request':
+      return `input for ${String(p.params.serverName)}`;
+    default:
+      return 'a decision';
+  }
+}
+
+function duration(ms: number): string {
+  const unit = (n: number, what: string) => `${n} ${what}${n === 1 ? '' : 's'}`;
+  return ms >= 60_000 ? unit(Math.round(ms / 60_000), 'minute') : unit(Math.max(1, Math.round(ms / 1000)), 'second');
 }
 
 function toSdkThinking(t: ThinkingSetting): Options['thinking'] {

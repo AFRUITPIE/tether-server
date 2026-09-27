@@ -102,6 +102,8 @@ export class ClientSession implements Subscriber {
       }
       this.initialized = true;
       this.env = p.env ?? {};
+      // Scheduled runs have no client, so they take the environment the last one asked for.
+      if (p.env) this.mgr.noteClientEnv(p.env);
       this.experimental = !!p.capabilities?.experimentalApi;
       for (const m of p.capabilities?.optOutNotificationMethods ?? []) this.optOut.add(m);
       this.log(`client ${this.id} initialized: ${p.clientInfo.name} ${p.clientInfo.version}`);

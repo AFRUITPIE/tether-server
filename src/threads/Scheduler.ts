@@ -4,9 +4,12 @@ import { dirname } from 'node:path';
 import type { Params, ScheduledTask } from '../protocol/index.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 
-/** What the scheduler needs from the thread manager: a way to start a thread with a prompt. */
+/**
+ * What the scheduler needs from the thread manager: a way to start a thread with a prompt, which
+ * says (through `onUnanswered`) when the run was denied something for want of a person to ask.
+ */
 export interface ThreadStarter {
-  startScheduled(task: ScheduledTask): Promise<string>;
+  startScheduled(task: ScheduledTask, onUnanswered: (threadId: string, message: string) => void): Promise<string>;
 }
 
 /**
@@ -43,6 +46,8 @@ export function nextRun(task: Pick<ScheduledTask, 'cadence' | 'hour' | 'minute' 
 export class Scheduler {
   private tasks: ScheduledTask[] = [];
   private timer?: ReturnType<typeof setInterval>;
+  /** Once stopped (the daemon draining or exiting), no task comes due here again. */
+  private stopped = false;
 
   constructor(
     private starter: ThreadStarter,
@@ -65,7 +70,10 @@ export class Scheduler {
   }
 
   stop() {
+    if (this.stopped) return;
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
+    this.persist();
   }
 
   list(): ScheduledTask[] {
@@ -103,6 +111,7 @@ export class Scheduler {
   async tick() {
     const now = this.now();
     for (const task of this.tasks) {
+      if (this.stopped) return;
       if (task.nextRunAt !== undefined && task.nextRunAt <= now.getTime()) {
         await this.fire(task).catch(() => {});
       }
@@ -116,7 +125,7 @@ export class Scheduler {
     if (next) task.nextRunAt = next.getTime();
     else delete task.nextRunAt;
     try {
-      const threadId = await this.starter.startScheduled(task);
+      const threadId = await this.starter.startScheduled(task, (id, message) => this.noteUnanswered(task.id, id, message));
       task.lastThreadId = threadId;
       delete task.lastError;
       this.log(`scheduled task "${task.name}" started thread ${threadId}`);
@@ -128,6 +137,15 @@ export class Scheduler {
     } finally {
       this.persist();
     }
+  }
+
+  /** A run held up for want of a person to ask, unless a later run has been recorded since. */
+  private noteUnanswered(taskId: string, threadId: string, message: string) {
+    const task = this.tasks.find((t) => t.id === taskId);
+    if (!task || (task.lastThreadId !== undefined && task.lastThreadId !== threadId)) return;
+    task.lastError = message;
+    this.log(`scheduled task "${task.name}": ${message}`);
+    this.persist();
   }
 
   private persist() {
