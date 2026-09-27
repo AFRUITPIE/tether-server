@@ -43,7 +43,8 @@ mise run compile
 - `src/threads/itemizer.ts`: pure-ish SDK-message-to-Tether-item/event reducer.
 - `src/threads/pushQueue.ts`: async streaming-input queue.
 - `src/daemon/daemon.ts`: Unix-socket daemon, detached startup, stdio bridge, and graceful version handoff.
-- `src/server/fsApi.ts`: remote file and Git helpers exposed to clients.
+- `src/server/fsApi.ts`: remote file and Git helpers exposed to clients, including the worktrees `thread/start` can make under `<repo>/.claude/worktrees/` (excluded locally through `.git/info/exclude`) and their removal.
+- `src/threads/Scheduler.ts`: scheduled tasks, kept in `schedules.json` in the daemon's home and run from a one-minute timer as new threads. Only the daemon that owns the socket runs them (`serve --stdio` has none), so none runs twice; a run missed during sleep happens once on waking.
 - `src/claude.ts`: resolves and reports the host Claude CLI.
 - `scripts/gen-schema.ts`, `scripts/gen-swift.ts`: protocol code generation.
 - `scripts/compile.ts`: standalone binary matrix.
