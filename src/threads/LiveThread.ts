@@ -554,6 +554,8 @@ function toContentBlocks(content: UserInput[], cwd: string): any[] {
     if (c.type === 'text') text += (text ? '\n' : '') + c.text;
     else if (c.type === 'fileRef') text += `${text && !text.endsWith(' ') ? ' ' : ''}@${c.path}`;
     else if (c.type === 'image') blocks.push({ type: 'image', source: { type: 'base64', media_type: c.mediaType, data: c.data } });
+    else if (c.type === 'document' && c.data)
+      blocks.push({ type: 'document', source: { type: 'base64', media_type: c.mediaType, data: c.data }, ...(c.name ? { title: c.name } : {}) });
   }
   if (text) blocks.unshift({ type: 'text', text });
   return blocks;

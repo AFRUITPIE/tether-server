@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import type { ClaudeBinary } from '../claude.ts';
 import type { Item, Params, ThreadSummary, Turn } from '../protocol/index.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
+import { createWorktree } from '../server/fsApi.ts';
 import { Itemizer } from './itemizer.ts';
 import { FollowedThread, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
 import { LiveThread, TETHER_VERSION } from './LiveThread.ts';
@@ -98,8 +99,10 @@ export class ThreadManager {
 
   async start(p: Params<'thread/start'>, env: Record<string, string>): Promise<LiveThread> {
     const threadId = randomUUID();
+    const cwd = p.worktree ? await createWorktree(p.cwd, `tether-${threadId.slice(0, 8)}`) : p.cwd;
     const t = new LiveThread({
       ...p,
+      cwd,
       threadId,
       claude: this.claude,
       env: { ...env, ...(p.env ?? {}) },
@@ -114,7 +117,7 @@ export class ThreadManager {
       t.close();
       throw e;
     }
-    this.log(`thread ${threadId} started in ${p.cwd}`);
+    this.log(`thread ${threadId} started in ${cwd}`);
     return t;
   }
 

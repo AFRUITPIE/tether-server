@@ -409,6 +409,7 @@ public enum UserInput: Codable, Sendable, Hashable {
     case text(Text)
     case image(Image)
     case fileRef(FileRef)
+    case document(Document)
     /// A variant this client does not know yet (newer server).
     case unknown(JSONValue)
 
@@ -417,6 +418,7 @@ public enum UserInput: Codable, Sendable, Hashable {
         case .text: return "text"
         case .image: return "image"
         case .fileRef: return "fileRef"
+        case .document: return "document"
         case .unknown(let v): return v["type"]?.stringValue ?? ""
         }
     }
@@ -428,6 +430,7 @@ public enum UserInput: Codable, Sendable, Hashable {
         case "text": self = .text(try Text(from: decoder))
         case "image": self = .image(try Image(from: decoder))
         case "fileRef": self = .fileRef(try FileRef(from: decoder))
+        case "document": self = .document(try Document(from: decoder))
         default: self = .unknown(try JSONValue(from: decoder))
         }
     }
@@ -437,6 +440,7 @@ public enum UserInput: Codable, Sendable, Hashable {
         case .text(let v): try v.encode(to: encoder)
         case .image(let v): try v.encode(to: encoder)
         case .fileRef(let v): try v.encode(to: encoder)
+        case .document(let v): try v.encode(to: encoder)
         case .unknown(let v): try v.encode(to: encoder)
         }
     }
@@ -535,6 +539,52 @@ public enum UserInput: Codable, Sendable, Hashable {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(type, forKey: .type)
             try c.encode(path, forKey: .path)
+        }
+    }
+
+    public struct Document: Codable, Sendable, Hashable {
+        public var type: String = "document"
+        public var mediaType: MediaType
+        public var data: String?
+        public var name: String?
+
+        public init(mediaType: MediaType, data: String? = nil, name: String? = nil) {
+            self.mediaType = mediaType
+            self.data = data
+            self.name = name
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case type = "type"
+            case mediaType = "mediaType"
+            case data = "data"
+            case name = "name"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.type = try c.decode(String.self, forKey: .type)
+            self.mediaType = try c.decode(MediaType.self, forKey: .mediaType)
+            self.data = try c.decodeIfPresent(String.self, forKey: .data)
+            self.name = try c.decodeIfPresent(String.self, forKey: .name)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(type, forKey: .type)
+            try c.encode(mediaType, forKey: .mediaType)
+            try c.encodeIfPresent(data, forKey: .data)
+            try c.encodeIfPresent(name, forKey: .name)
+        }
+
+        public struct MediaType: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
+            public let rawValue: String
+            public init(rawValue: String) { self.rawValue = rawValue }
+            public init(stringLiteral value: String) { self.rawValue = value }
+            public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
+            public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
+            public static let applicationPdf = MediaType(rawValue: "application/pdf")
+            public static let allCases: [MediaType] = [.applicationPdf]
         }
     }
 }
@@ -764,8 +814,10 @@ public enum Item: Codable, Sendable, Hashable {
         public var queued: Bool?
         public var synthetic: Bool?
         public var origin: String?
+        public var originName: String?
+        public var originSession: String?
 
-        public init(id: String, turnId: String? = nil, parentToolUseId: String? = nil, createdAt: Double, content: [UserInput], queued: Bool? = nil, synthetic: Bool? = nil, origin: String? = nil) {
+        public init(id: String, turnId: String? = nil, parentToolUseId: String? = nil, createdAt: Double, content: [UserInput], queued: Bool? = nil, synthetic: Bool? = nil, origin: String? = nil, originName: String? = nil, originSession: String? = nil) {
             self.id = id
             self.turnId = turnId
             self.parentToolUseId = parentToolUseId
@@ -774,6 +826,8 @@ public enum Item: Codable, Sendable, Hashable {
             self.queued = queued
             self.synthetic = synthetic
             self.origin = origin
+            self.originName = originName
+            self.originSession = originSession
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -786,6 +840,8 @@ public enum Item: Codable, Sendable, Hashable {
             case queued = "queued"
             case synthetic = "synthetic"
             case origin = "origin"
+            case originName = "originName"
+            case originSession = "originSession"
         }
 
         public init(from decoder: any Decoder) throws {
@@ -799,6 +855,8 @@ public enum Item: Codable, Sendable, Hashable {
             self.queued = try c.decodeIfPresent(Bool.self, forKey: .queued)
             self.synthetic = try c.decodeIfPresent(Bool.self, forKey: .synthetic)
             self.origin = try c.decodeIfPresent(String.self, forKey: .origin)
+            self.originName = try c.decodeIfPresent(String.self, forKey: .originName)
+            self.originSession = try c.decodeIfPresent(String.self, forKey: .originSession)
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -812,6 +870,8 @@ public enum Item: Codable, Sendable, Hashable {
             try c.encodeIfPresent(queued, forKey: .queued)
             try c.encodeIfPresent(synthetic, forKey: .synthetic)
             try c.encodeIfPresent(origin, forKey: .origin)
+            try c.encodeIfPresent(originName, forKey: .originName)
+            try c.encodeIfPresent(originSession, forKey: .originSession)
         }
     }
 
@@ -2275,8 +2335,9 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
     public var env: EnvOverrides?
     public var title: String?
     public var input: [UserInput]?
+    public var worktree: Bool?
 
-    public init(cwd: String, model: String? = nil, fallbackModel: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastMode: Bool? = nil, thinking: ThinkingSetting? = nil, additionalDirectories: [String]? = nil, systemPromptAppend: String? = nil, allowedTools: [String]? = nil, disallowedTools: [String]? = nil, mcpServers: [String: JSONValue]? = nil, agent: String? = nil, maxTurns: Int? = nil, maxBudgetUsd: Double? = nil, betas: [String]? = nil, env: EnvOverrides? = nil, title: String? = nil, input: [UserInput]? = nil) {
+    public init(cwd: String, model: String? = nil, fallbackModel: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastMode: Bool? = nil, thinking: ThinkingSetting? = nil, additionalDirectories: [String]? = nil, systemPromptAppend: String? = nil, allowedTools: [String]? = nil, disallowedTools: [String]? = nil, mcpServers: [String: JSONValue]? = nil, agent: String? = nil, maxTurns: Int? = nil, maxBudgetUsd: Double? = nil, betas: [String]? = nil, env: EnvOverrides? = nil, title: String? = nil, input: [UserInput]? = nil, worktree: Bool? = nil) {
         self.cwd = cwd
         self.model = model
         self.fallbackModel = fallbackModel
@@ -2296,6 +2357,7 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         self.env = env
         self.title = title
         self.input = input
+        self.worktree = worktree
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2318,6 +2380,7 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         case env = "env"
         case title = "title"
         case input = "input"
+        case worktree = "worktree"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -2341,6 +2404,7 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         self.env = try c.decodeIfPresent(EnvOverrides.self, forKey: .env)
         self.title = try c.decodeIfPresent(String.self, forKey: .title)
         self.input = try c.decodeIfPresent([UserInput].self, forKey: .input)
+        self.worktree = try c.decodeIfPresent(Bool.self, forKey: .worktree)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -2364,6 +2428,7 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         try c.encodeIfPresent(env, forKey: .env)
         try c.encodeIfPresent(title, forKey: .title)
         try c.encodeIfPresent(input, forKey: .input)
+        try c.encodeIfPresent(worktree, forKey: .worktree)
     }
 }
 

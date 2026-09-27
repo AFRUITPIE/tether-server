@@ -543,6 +543,9 @@
             "items": {
               "$ref": "#/$defs/UserInput"
             }
+          },
+          "worktree": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -3124,6 +3127,32 @@
             "path"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "document"
+            },
+            "mediaType": {
+              "type": "string",
+              "enum": [
+                "application/pdf"
+              ]
+            },
+            "data": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "mediaType"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -3292,6 +3321,12 @@
               "type": "boolean"
             },
             "origin": {
+              "type": "string"
+            },
+            "originName": {
+              "type": "string"
+            },
+            "originSession": {
               "type": "string"
             }
           },

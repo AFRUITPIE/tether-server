@@ -128,3 +128,37 @@ export async function gitDiff(cwd: string, path?: string, staged?: boolean) {
     throw new RpcError(ErrorCodes.invalidParams, (e as Error).message);
   }
 }
+
+/**
+ * A new git worktree of `cwd`'s repository, where the desktop app keeps them
+ * (`<repo>/.claude/worktrees/<name>`), on a branch of its own off the current HEAD. The folder is
+ * excluded locally (`.git/info/exclude`) so the main checkout doesn't list it as untracked.
+ */
+export async function createWorktree(cwd: string, name: string): Promise<string> {
+  const dir = expand(cwd);
+  let root: string;
+  try {
+    root = (await run('git', ['rev-parse', '--show-toplevel'], { cwd: dir })).stdout.trim();
+  } catch {
+    throw new RpcError(ErrorCodes.invalidParams, `${cwd} isn't in a git repository, so it can't have a worktree`);
+  }
+  const path = join(root, '.claude', 'worktrees', name);
+  try {
+    await run('git', ['worktree', 'add', '-b', `claude/${name}`, path, 'HEAD'], { cwd: root });
+  } catch (e) {
+    throw new RpcError(ErrorCodes.invalidParams, `Couldn't create a worktree: ${(e as Error).message}`);
+  }
+  try {
+    const common = (await run('git', ['rev-parse', '--git-common-dir'], { cwd: root })).stdout.trim();
+    const exclude = resolve(root, common, 'info', 'exclude');
+    const { readFile, appendFile, mkdir } = await import('node:fs/promises');
+    const current = await readFile(exclude, 'utf8').catch(() => '');
+    if (!current.split('\n').includes('.claude/worktrees/')) {
+      await mkdir(resolve(exclude, '..'), { recursive: true });
+      await appendFile(exclude, `${current && !current.endsWith('\n') ? '\n' : ''}.claude/worktrees/\n`);
+    }
+  } catch {
+    // Only tidiness: the worktree itself is made.
+  }
+  return path;
+}

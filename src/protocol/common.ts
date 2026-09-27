@@ -43,6 +43,13 @@ export const UserInput = z
       data: z.string().describe('base64'),
     }),
     z.object({ type: z.literal('fileRef'), path: z.string() }),
+    z.object({
+      type: z.literal('document'),
+      mediaType: z.enum(['application/pdf']),
+      /** base64. Left out of history, where only the name and type are needed. */
+      data: z.string().optional(),
+      name: z.string().optional(),
+    }),
   ])
   .meta({ id: 'UserInput' });
 export type UserInput = z.infer<typeof UserInput>;

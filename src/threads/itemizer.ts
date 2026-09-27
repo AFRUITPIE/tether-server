@@ -65,7 +65,7 @@ function contentToText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content))
     return content
-      .map((b: AnyMsg) => (b?.type === 'text' ? b.text : b?.type === 'image' ? '[image]' : ''))
+      .map((b: AnyMsg) => (b?.type === 'text' ? b.text : b?.type === 'image' ? '[image]' : b?.type === 'document' ? '[document]' : ''))
       .filter(Boolean)
       .join('\n');
   return '';
@@ -79,6 +79,9 @@ export function userContentToInputs(content: unknown): UserInput[] {
     if (b?.type === 'text') out.push({ type: 'text', text: b.text });
     else if (b?.type === 'image' && b.source?.type === 'base64')
       out.push({ type: 'image', mediaType: b.source.media_type, data: b.source.data });
+    else if (b?.type === 'document' && b.source?.media_type === 'application/pdf')
+      // Named, not carried: a PDF's bytes would make every history read as large as the file.
+      out.push({ type: 'document', mediaType: 'application/pdf', ...(b.title ? { name: b.title } : {}) });
   }
   return out;
 }
@@ -677,6 +680,8 @@ export class Itemizer {
         content: inputs,
         ...(synthetic ? { synthetic: true } : {}),
         ...(originKind && originKind !== 'human' ? { origin: originKind } : {}),
+        ...(originKind === 'peer' && typeof msg.origin?.name === 'string' ? { originName: msg.origin.name } : {}),
+        ...(originKind === 'peer' && typeof msg.origin?.fromSession === 'string' ? { originSession: msg.origin.fromSession } : {}),
       }),
     );
     return out;

@@ -139,6 +139,11 @@ export const Methods = {
       title: z.string().optional(),
       /** First user input, sent immediately after start. */
       input: z.array(UserInput).optional(),
+      /**
+       * Start in a new git worktree of `cwd`'s repository, under `<repo>/.claude/worktrees/`, on a
+       * branch of its own, so parallel sessions don't edit the same checkout.
+       */
+      worktree: z.boolean().optional(),
     }),
     result: z.object({ thread: ThreadInfo }),
   },
