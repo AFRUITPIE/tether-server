@@ -11,6 +11,35 @@ import * as plugins from './plugins.ts';
 
 type Handler<M extends MethodName> = (p: Params<M>) => Promise<Result<M>> | Result<M>;
 
+const SIDE_QUESTION_TIMEOUT_MS = 60_000;
+
+/**
+ * A side question (the CLI's /btw), given up on after `timeoutMs`: the request is cancelled in
+ * Claude Code and the client told, rather than left waiting on an answer that may never come.
+ */
+export async function askSideQuestion(query: unknown, question: string, timeoutMs = SIDE_QUESTION_TIMEOUT_MS): Promise<string | null> {
+  // Not in the SDK's published typings yet: asked for defensively.
+  const q = query as {
+    askSideQuestion?: (q: string, options?: { signal?: AbortSignal }) => Promise<{ response: string } | null>;
+  };
+  if (typeof q.askSideQuestion !== 'function') throw new RpcError(ErrorCodes.invalidRequest, 'Side questions need a newer Claude Code.');
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new RpcError(ErrorCodes.sdkError, `Claude Code didn't answer the side question within ${Math.round(timeoutMs / 1000)} seconds.`));
+    }, timeoutMs);
+  });
+  try {
+    // Raced as well as aborted, in case a Claude Code version ignores the signal.
+    const r = await Promise.race([q.askSideQuestion(question, { signal: controller.signal }), timedOut]);
+    return r?.response ?? null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** One client connection: handshake state, env overrides, thread subscriptions. */
 export class ClientSession implements Subscriber {
   readonly id = randomUUID();
@@ -293,16 +322,7 @@ export class ClientSession implements Subscriber {
     'fs/search': (p) => fsApi.search(p.cwd, p.query, p.limit),
     'git/status': (p) => fsApi.gitStatus(p.cwd),
     'git/diff': (p) => fsApi.gitDiff(p.cwd, p.path, p.staged),
-    'thread/sideQuestion': async (p) => {
-      // Not in the SDK's published typings yet: asked for defensively.
-      const query = this.mgr.get(p.threadId).query as unknown as {
-        askSideQuestion?: (q: string) => Promise<{ response: string } | null>;
-      };
-      if (typeof query.askSideQuestion !== 'function')
-        throw new RpcError(ErrorCodes.invalidRequest, 'Side questions need a newer Claude Code.');
-      const r = await query.askSideQuestion(p.question);
-      return { answer: r?.response ?? null };
-    },
+    'thread/sideQuestion': async (p) => ({ answer: await askSideQuestion(this.mgr.get(p.threadId).query, p.question) }),
     'git/removeWorktree': async (p) => {
       await fsApi.removeWorktree(p.path, { force: p.force ?? false, discardCommits: p.discardCommits ?? false });
       return {};

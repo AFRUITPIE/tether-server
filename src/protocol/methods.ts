@@ -309,7 +309,8 @@ export const Methods = {
 
   /**
    * A question about the thread, answered with its context but kept out of its transcript and
-   * context (the CLI's /btw). `answer` is null when Claude Code gave none.
+   * context (the CLI's /btw). `answer` is null when Claude Code gave none. Given up on (error
+   * `sdkError`) after 60 seconds without an answer.
    */
   'thread/sideQuestion': {
     params: z.object({ threadId: z.string(), question: z.string() }),
