@@ -223,9 +223,13 @@ export async function removeWorktree(path: string, opts: { force?: boolean; disc
   }
   if (canonical(top) !== canonical(root)) throw notOurs();
 
-  const registered = parseWorktreeList((await git(['worktree', 'list', '--porcelain'], root)).stdout).some(
-    (w) => canonical(w) === canonical(dir),
-  );
+  let listed: string[];
+  try {
+    listed = parseWorktreeList((await git(['worktree', 'list', '--porcelain'], root)).stdout);
+  } catch (e) {
+    throw new RpcError(ErrorCodes.invalidRequest, `Couldn't list the repository's worktrees: ${gitMessage(e)}`);
+  }
+  const registered = listed.some((w) => canonical(w) === canonical(dir));
   const exists = existsSync(dir);
   // A folder there that git doesn't know as a worktree isn't one to delete.
   if (!registered && exists) throw notOurs();
@@ -263,7 +267,7 @@ export async function removeWorktree(path: string, opts: { force?: boolean; disc
     if (/not fully merged/.test(message))
       throw new RpcError(
         ErrorCodes.worktreeUnmerged,
-        `The worktree is removed, but ${unmergedMessage(branch, Math.max(unmergedCommits, 1))} It's kept.`,
+        `The worktree is removed, but its branch ${branch} has commits that aren't merged, so it's kept.`,
         { ...data, unmergedCommits: Math.max(unmergedCommits, 1), worktreeRemoved: true },
       );
     throw new RpcError(ErrorCodes.invalidRequest, `The worktree is removed, but its branch ${branch} couldn't be deleted: ${message}`);
