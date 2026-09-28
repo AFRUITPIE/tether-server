@@ -27,7 +27,7 @@ mise run compile
 - `mise run swift-test`: verify Swift decoding against recorded wire traffic.
 - `mise run build-npm`: the npm package under `npm/`: one bundled file for Node 18 or later, no dependencies (`--dev` stamps a dev version).
 - `mise run compile`: standalone darwin/linux × arm64/x64 binaries under `dist/`, with the `SHA256SUMS` a release carries.
-- `mise run release`: compile, then publish the binaries and `SHA256SUMS` as the GitHub release for `package.json`'s version. Publishing the release publishes the same version to npm (`.github/workflows/npm.yml`, with provenance; it needs the `NPM_TOKEN` secret).
+- `mise run release`: compile, then publish the binaries and `SHA256SUMS` as the GitHub release for `package.json`'s version. Publishing the release publishes the same version to npm (`.github/workflows/npm.yml`, by trusted publishing, with provenance; no token is stored anywhere).
 - `mise run e2e`: real Claude Code E2E tests. These use the configured account/provider and can incur cost; do not run casually.
 
 ## Repository map
@@ -71,7 +71,7 @@ When a bundled binary version changes, `connect` requests a graceful daemon shut
 
 ## Installing and updating a host
 
-Hosts run the npm package, which needs Node 18 or later: the app runs `npx -y tether-server@<version> connect` under the host's login shell, pinned to the version it was built against. Nothing is installed beside npm's cache, and an update is the app naming the next version: that `connect` finds a daemon of another version and replaces it as above. The package is one file (`scripts/build-npm.ts`): everything bundled, the Agent SDK included, without the SDK's platform packages, no dependencies and no install scripts, not minified. It's published with provenance from this repository's workflow when a GitHub release is published.
+Hosts run the npm package, which needs Node 18 or later: the app runs `npx --yes --prefer-offline tether-server@<version> connect` under the host's login shell, pinned to the version it was built against. Nothing is installed beside npm's cache, and an update is the app naming the next version: that `connect` finds a daemon of another version and replaces it as above. The package is one file (`scripts/build-npm.ts`): everything bundled, the Agent SDK included, without the SDK's platform packages, no dependencies and no install scripts, not minified. It's published from this repository's workflow when a GitHub release is published, by trusted publishing (npm's OIDC exchange, no token), which records provenance.
 
 A release also carries the standalone binaries (`tether-<version>-<platform>`) and `SHA256SUMS` (one `<sha256>  <file>` line per binary, as `sha256sum -c` reads it). They're for a host without Node: the app downloads one on the Mac, checks it against the checksum it carries for that release (not the release's own `SHA256SUMS`, which comes from the same place as the binary), and copies it to `~/.tether/bin/tether-<version>` itself. `release.ts` uploads the binaries `SHA256SUMS` lists, never a glob of `dist/`, which would take a dev build of the same version too. There's no install script: nothing is piped to a shell.
 
