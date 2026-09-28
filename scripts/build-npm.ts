@@ -29,9 +29,10 @@ writeFileSync(`${out}/package.json`, `${JSON.stringify({
   name: pkg.name,
   version,
   description: 'The Tether daemon: runs Claude Code sessions on a host for the Tether app, through the Claude Agent SDK.',
+  license: pkg.license,
   type: 'module',
   bin: { tether: 'cli.js' },
-  files: ['cli.js'],
+  files: ['cli.js', 'LICENSE'],
   engines: { node: '>=18' },
   repository: { type: 'git', url: 'git+https://github.com/AFRUITPIE/tether-server.git' },
   homepage: 'https://github.com/AFRUITPIE/tether-server#readme',
@@ -42,6 +43,7 @@ writeFileSync(`${out}/package.json`, `${JSON.stringify({
   publishConfig: { access: 'public', provenance: true },
 }, null, 2)}\n`);
 copyFileSync('README.md', `${out}/README.md`);
+copyFileSync('LICENSE', `${out}/LICENSE`);
 
 const size = (Bun.file(`${out}/cli.js`).size / 1e6).toFixed(1);
 console.log(`${out}/cli.js (${size} MB), ${pkg.name}@${version}`);

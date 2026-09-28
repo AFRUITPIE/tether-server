@@ -31,3 +31,7 @@ mise run gen           # regenerate JSON Schema + Swift
 mise run swift-test    # Swift decoding tests against recorded wire traffic
 mise run compile       # standalone binaries for darwin/linux × arm64/x64 → dist/
 ```
+
+## License
+
+MIT, in [LICENSE](LICENSE).
