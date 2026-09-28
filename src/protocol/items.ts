@@ -51,6 +51,10 @@ export const UserMessageItem = z.object({
   synthetic: z.boolean().optional(),
   /** Provenance for non-human messages, e.g. task-notification, peer, channel. */
   origin: z.string().optional(),
+  /** For a message from another session: the sender's display name, as it reported it. */
+  originName: z.string().optional(),
+  /** For a message from another session: the sending session's id, to link back to it. */
+  originSession: z.string().optional(),
 });
 
 export const AgentMessageItem = z.object({

@@ -43,7 +43,8 @@ mise run compile
 - `src/threads/itemizer.ts`: pure-ish SDK-message-to-Tether-item/event reducer.
 - `src/threads/pushQueue.ts`: async streaming-input queue.
 - `src/daemon/daemon.ts`: Unix-socket daemon, detached startup, stdio bridge, and graceful version handoff.
-- `src/server/fsApi.ts`: remote file and Git helpers exposed to clients.
+- `src/server/fsApi.ts`: remote file and Git helpers exposed to clients, including the worktrees `thread/start` can make under `<repo>/.claude/worktrees/` (excluded locally through `.git/info/exclude`) and their removal. A thread started in a subfolder works in the worktree's copy of it; one started inside a worktree gets a new one beside it in the main checkout, not nested; one that fails to start takes its worktree and branch with it. `git/removeWorktree` removes only a registered worktree at exactly `<checkout>/.claude/worktrees/tether-<8 hex>` (never Claude Desktop's), and never loses work unasked: uncommitted changes need `force` (error `worktreeDirty`), and a `claude/tether-…` branch with commits its upstream or the checkout's HEAD lacks needs `discardCommits` (error `worktreeUnmerged`, raised before anything is removed; the branch is deleted with `git branch -d` otherwise). Both errors' `data` is `{ branch, uncommittedChanges, unmergedCommits, worktreeRemoved? }`.
+- `src/threads/Scheduler.ts`: scheduled tasks, kept in `schedules.json` in the daemon's home and run from a one-minute timer as new threads. Only the daemon that owns the socket runs them (`serve --stdio` has none), so none runs twice; a run missed during sleep happens once on waking. A run takes the environment the last client to connect sent in `initialize` (held in memory only, as it can hold credentials). Nobody is there to answer a run, so a request it makes of a person is denied once it has waited `TETHER_SCHEDULED_REQUEST_TIMEOUT_MS` (10 minutes) with no client subscribed, ending the turn and recorded as the task's `lastError`; a subscribed client gets as long as it takes. No task starts once the daemon is draining for an upgrade or exiting, and the file is saved then. `schedule/save` replaces a task whole, keeping only what runs recorded; the file is checked entry by entry on load (`loadTasks`), so one bad entry is repaired or skipped rather than breaking `schedule/list`.
 - `src/claude.ts`: resolves and reports the host Claude CLI.
 - `scripts/gen-schema.ts`, `scripts/gen-swift.ts`: protocol code generation.
 - `scripts/compile.ts`: standalone binary matrix.
@@ -76,7 +77,7 @@ When a bundled binary version changes, `connect` requests a graceful daemon shut
 - A history snapshot's `historySeq` states exactly which event prefix it includes. Replay starts after that value so snapshots and live streams never overlap or leave a gap.
 - Unknown SDK messages are forwarded as raw events rather than crashing the session. Generated Swift discriminated unions likewise retain `.unknown` cases.
 - A server-to-client request remains pending until one subscribed client answers or the SDK cancels it. Re-subscribing clients must receive pending requests again. The first answer wins; other clients receive `serverRequest/resolved`.
-- A dropped client never owns a query. Running and action-required threads are not idle-eviction candidates, nor is one with background work (the CLI's latest `background_tasks_changed`, ambient watchers excluded): closing its query would kill that work. The same holds for an upgrade drain.
+- A dropped client never owns a query. Running and action-required threads are not idle-eviction candidates, nor is one with background work (the CLI's latest `background_tasks_changed`, ambient watchers excluded): closing its query would kill that work. The same holds for an upgrade drain. A scheduled run waiting on a person with no client subscribed doesn't hold up a drain: it would only be denied.
 - `turn/start` on an unloaded historical thread resumes it before sending. On a running thread, input respects the requested `now`/`next`/`later` priority.
 
 ## Claude Agent SDK boundary
@@ -88,6 +89,7 @@ When a bundled binary version changes, `connect` requests a graceful daemon shut
 - Merge client/thread environment overrides without dropping the host environment.
 - Stamp human input with its human origin so Claude Code features that depend on provenance keep working.
 - Keep partial-message streaming, file checkpointing, permission callbacks, elicitation, stderr, task events, and initialization data routed through the typed Tether protocol.
+- Session tools (`sessionTools` on `thread/start`/`thread/resume`) are an in-process MCP server named `tether`. Only its own tools (`SESSION_TOOL_NAMES`), and only on a thread that asked for them, skip the permission prompt; any other `mcp__tether__…` tool, such as one from a project's own server of that name, is asked about like every other tool.
 
 SDK types and events can change between Claude Code versions. Be defensive around optional fields, preserve raw unknown events, and cover newly observed shapes with recorded fixtures before tightening assumptions.
 

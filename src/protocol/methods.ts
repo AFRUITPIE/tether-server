@@ -8,6 +8,8 @@ import {
   McpServerStatus,
   ModelInfo,
   PermissionMode,
+  ScheduleCadence,
+  ScheduledTask,
   SlashCommand,
   ThinkingSetting,
   ThreadInfo,
@@ -17,6 +19,8 @@ import {
 import { Item, Turn } from './items.ts';
 
 const Empty = z.object({});
+/** The scopes `claude plugin` takes. Inlined, so each method's params keep a nested `Scope` in Swift. */
+const PluginScope = z.enum(['user', 'project', 'local']);
 const ThreadRef = z.object({ threadId: z.string() });
 
 /** Client → server requests. Each entry: params and result schema. */
@@ -139,6 +143,16 @@ export const Methods = {
       title: z.string().optional(),
       /** First user input, sent immediately after start. */
       input: z.array(UserInput).optional(),
+      /**
+       * Start in a new git worktree of `cwd`'s repository, under `<repo>/.claude/worktrees/`, on a
+       * branch of its own, so parallel sessions don't edit the same checkout. The thread's `cwd` is
+       * the worktree's copy of the folder asked for (its root if the checkout lacks that folder);
+       * from inside a worktree, the new one goes beside it in the main checkout, from its HEAD. A
+       * thread that fails to start removes the worktree again.
+       */
+      worktree: z.boolean().optional(),
+      /** Give Claude tools to list and read the host's other sessions and to suggest tasks. */
+      sessionTools: z.boolean().optional(),
     }),
     result: z.object({ thread: ThreadInfo }),
   },
@@ -146,6 +160,8 @@ export const Methods = {
   'thread/resume': {
     params: z.object({
       threadId: z.string(),
+      /** As thread/start's; applies when this resume loads the thread. */
+      sessionTools: z.boolean().optional(),
       cwd: z.string().optional(),
       /** Resume with history truncated after this message uuid (conversation rewind). */
       atMessageId: z.string().optional(),
@@ -290,6 +306,80 @@ export const Methods = {
     params: z.object({ cwd: z.string(), path: z.string().optional(), staged: z.boolean().optional() }),
     result: z.object({ diff: z.string() }),
   },
+
+  /**
+   * A question about the thread, answered with its context but kept out of its transcript and
+   * context (the CLI's /btw). `answer` is null when Claude Code gave none. Given up on (error
+   * `sdkError`) after 60 seconds without an answer.
+   */
+  'thread/sideQuestion': {
+    params: z.object({ threadId: z.string(), question: z.string() }),
+    result: z.object({ answer: z.string().nullable() }),
+  },
+
+  /**
+   * Removes a worktree `thread/start` made (`<checkout>/.claude/worktrees/tether-…`) and its
+   * `claude/…` branch; any other path is refused. Refuses one with uncommitted changes unless
+   * `force` (error `worktreeDirty`), and one whose branch has commits merged nowhere else unless
+   * `discardCommits` (error `worktreeUnmerged`, before anything is removed). Both errors' `data`
+   * says which of the two apply, so a client can ask once.
+   */
+  'git/removeWorktree': {
+    params: z.object({
+      path: z.string(),
+      /** Discard uncommitted changes in the worktree. */
+      force: z.boolean().optional(),
+      /** Delete the branch even though it has commits merged nowhere else. */
+      discardCommits: z.boolean().optional(),
+    }),
+    result: Empty,
+  },
+
+  // ---- plugins (the host's `claude plugin`); `scope` is the settings file the plugin is in ----
+  /** Installed plugins, and those the host's marketplaces offer, as `claude plugin list --json --available` reports them. */
+  'plugin/list': {
+    params: z.object({ cwd: z.string().optional() }),
+    result: z.object({ installed: z.array(JsonValue), available: z.array(JsonValue) }),
+  },
+  'plugin/install': {
+    params: z.object({ pluginId: z.string(), scope: PluginScope, cwd: z.string().optional() }),
+    result: Empty,
+  },
+  'plugin/uninstall': {
+    params: z.object({ pluginId: z.string(), scope: PluginScope.optional(), cwd: z.string().optional() }),
+    result: Empty,
+  },
+  'plugin/setEnabled': {
+    params: z.object({ pluginId: z.string(), enabled: z.boolean(), scope: PluginScope.optional(), cwd: z.string().optional() }),
+    result: Empty,
+  },
+
+  // ---- scheduled tasks (kept and run by the daemon) ----
+  'schedule/list': { params: Empty, result: z.object({ tasks: z.array(ScheduledTask) }) },
+  /**
+   * Creates the task when `id` is absent, else replaces it whole: an optional field left out is
+   * cleared. Only what runs recorded (`lastRunAt`, `lastThreadId`, `lastError`) is kept, and
+   * `nextRunAt` is worked out afresh. An enabled task needs a prompt that isn't blank.
+   */
+  'schedule/save': {
+    params: z.object({
+      id: z.string().optional(),
+      name: z.string(),
+      prompt: z.string(),
+      cwd: z.string(),
+      model: z.string().optional(),
+      permissionMode: PermissionMode.optional(),
+      cadence: ScheduleCadence,
+      hour: z.number().int().min(0).max(23),
+      minute: z.number().int().min(0).max(59),
+      weekday: z.number().int().min(1).max(7).optional(),
+      enabled: z.boolean(),
+    }),
+    result: z.object({ task: ScheduledTask }),
+  },
+  'schedule/delete': { params: z.object({ id: z.string() }), result: Empty },
+  /** Runs the task now, whatever its schedule; the new thread's id. */
+  'schedule/run': { params: z.object({ id: z.string() }), result: z.object({ threadId: z.string() }) },
 } as const;
 
 export type MethodName = keyof typeof Methods;

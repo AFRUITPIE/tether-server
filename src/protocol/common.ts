@@ -43,6 +43,13 @@ export const UserInput = z
       data: z.string().describe('base64'),
     }),
     z.object({ type: z.literal('fileRef'), path: z.string() }),
+    z.object({
+      type: z.literal('document'),
+      mediaType: z.enum(['application/pdf']),
+      /** base64. Left out of history, where only the name and type are needed. */
+      data: z.string().optional(),
+      name: z.string().optional(),
+    }),
   ])
   .meta({ id: 'UserInput' });
 export type UserInput = z.infer<typeof UserInput>;
@@ -168,3 +175,31 @@ export const ThreadInfo = z
   })
   .meta({ id: 'ThreadInfo' });
 export type ThreadInfo = z.infer<typeof ThreadInfo>;
+
+/** When a scheduled task runs. `manual` only runs when asked. Times are the host's local time. */
+export const ScheduleCadence = z.enum(['manual', 'hourly', 'daily', 'weekdays', 'weekly']).meta({ id: 'ScheduleCadence' });
+export type ScheduleCadence = z.infer<typeof ScheduleCadence>;
+
+/** A prompt the daemon sends on a schedule, each run starting a new thread in `cwd`. */
+export const ScheduledTask = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    prompt: z.string(),
+    cwd: z.string(),
+    model: z.string().optional(),
+    permissionMode: PermissionMode.optional(),
+    cadence: ScheduleCadence,
+    /** Hour and minute of the day (hourly uses the minute only). */
+    hour: z.number().int().min(0).max(23),
+    minute: z.number().int().min(0).max(59),
+    /** For weekly: 1 is Sunday, 7 Saturday. */
+    weekday: z.number().int().min(1).max(7).optional(),
+    enabled: z.boolean(),
+    lastRunAt: z.number().optional().describe('ms since epoch'),
+    lastThreadId: z.string().optional(),
+    nextRunAt: z.number().optional().describe('ms since epoch; absent for manual or disabled'),
+    lastError: z.string().optional(),
+  })
+  .meta({ id: 'ScheduledTask' });
+export type ScheduledTask = z.infer<typeof ScheduledTask>;

@@ -543,6 +543,12 @@
             "items": {
               "$ref": "#/$defs/UserInput"
             }
+          },
+          "worktree": {
+            "type": "boolean"
+          },
+          "sessionTools": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -569,6 +575,9 @@
         "properties": {
           "threadId": {
             "type": "string"
+          },
+          "sessionTools": {
+            "type": "boolean"
           },
           "cwd": {
             "type": "string"
@@ -1685,6 +1694,327 @@
         ],
         "additionalProperties": false
       }
+    },
+    "thread/sideQuestion": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "threadId": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId",
+          "question"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "git/removeWorktree": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "force": {
+            "type": "boolean"
+          },
+          "discardCommits": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    "plugin/list": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "installed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "available": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          }
+        },
+        "required": [
+          "installed",
+          "available"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "plugin/install": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "pluginId": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "user",
+              "project",
+              "local"
+            ]
+          },
+          "cwd": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pluginId",
+          "scope"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    "plugin/uninstall": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "pluginId": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "user",
+              "project",
+              "local"
+            ]
+          },
+          "cwd": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pluginId"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    "plugin/setEnabled": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "pluginId": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "user",
+              "project",
+              "local"
+            ]
+          },
+          "cwd": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pluginId",
+          "enabled"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    "schedule/list": {
+      "params": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/ScheduledTask"
+            }
+          }
+        },
+        "required": [
+          "tasks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "schedule/save": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "permissionMode": {
+            "$ref": "#/$defs/PermissionMode"
+          },
+          "cadence": {
+            "$ref": "#/$defs/ScheduleCadence"
+          },
+          "hour": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 23
+          },
+          "minute": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 59
+          },
+          "weekday": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "prompt",
+          "cwd",
+          "cadence",
+          "hour",
+          "minute",
+          "enabled"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "$ref": "#/$defs/ScheduledTask"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "schedule/delete": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    "schedule/run": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "notifications": {
@@ -2156,6 +2486,35 @@
         "threadId",
         "seq",
         "suggestion"
+      ],
+      "additionalProperties": false
+    },
+    "thread/taskSuggested": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "title": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "seq",
+        "title",
+        "prompt"
       ],
       "additionalProperties": false
     },
@@ -3124,6 +3483,32 @@
             "path"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "document"
+            },
+            "mediaType": {
+              "type": "string",
+              "enum": [
+                "application/pdf"
+              ]
+            },
+            "data": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "mediaType"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -3292,6 +3677,12 @@
               "type": "boolean"
             },
             "origin": {
+              "type": "string"
+            },
+            "originName": {
+              "type": "string"
+            },
+            "originSession": {
               "type": "string"
             }
           },
@@ -3802,6 +4193,85 @@
         "costUsd"
       ],
       "additionalProperties": false
+    },
+    "ScheduledTask": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "permissionMode": {
+          "$ref": "#/$defs/PermissionMode"
+        },
+        "cadence": {
+          "$ref": "#/$defs/ScheduleCadence"
+        },
+        "hour": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 23
+        },
+        "minute": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 59
+        },
+        "weekday": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "lastRunAt": {
+          "description": "ms since epoch",
+          "type": "number"
+        },
+        "lastThreadId": {
+          "type": "string"
+        },
+        "nextRunAt": {
+          "description": "ms since epoch; absent for manual or disabled",
+          "type": "number"
+        },
+        "lastError": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "prompt",
+        "cwd",
+        "cadence",
+        "hour",
+        "minute",
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "ScheduleCadence": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "hourly",
+        "daily",
+        "weekdays",
+        "weekly"
+      ]
     },
     "PermissionScope": {
       "type": "string",

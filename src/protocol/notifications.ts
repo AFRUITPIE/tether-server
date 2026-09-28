@@ -55,6 +55,8 @@ export const Notifications = {
 
   'thread/queuedInput': z.object({ ...T, messageId: z.string(), content: z.array(UserInput) }),
   'thread/promptSuggestion': z.object({ ...T, suggestion: z.string() }),
+  /** Claude suggested a separate task (session tools' suggest_task): a chip that starts it in a new thread. */
+  'thread/taskSuggested': z.object({ ...T, title: z.string(), prompt: z.string(), cwd: z.string().optional() }),
   'thread/commandsChanged': z.object({ ...T }),
 
   'thread/apiRetry': z.object({

@@ -1,5 +1,7 @@
 import {
+  createSdkMcpServer,
   query,
+  tool,
   type Options,
   type PermissionResult,
   type PermissionUpdate,
@@ -9,6 +11,7 @@ import {
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import type { ClaudeBinary } from '../claude.ts';
 import type {
   EffortLevel,
@@ -51,7 +54,26 @@ type PendingRequest = {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
   sentTo: Set<Subscriber>;
+  /** An unattended thread's deadline for an answer. */
+  timer?: ReturnType<typeof setTimeout>;
 };
+
+/**
+ * A thread no person started or is expected to be watching: a scheduled run. What it asks of a
+ * person is denied once it has waited `requestTimeoutMs` with no client subscribed, rather than
+ * holding the thread (and a daemon upgrade) forever. A client looking at it gets as long as it takes.
+ */
+export type Unattended = {
+  requestTimeoutMs: number;
+  /** Told why the run was held up: a request that went unanswered, or the daemon stopping. */
+  onUnanswered: (message: string) => void;
+};
+
+/** What the session tools need from the thread manager. */
+export interface SessionTools {
+  list(): Promise<{ threadId: string; title?: string; cwd?: string; updatedAt?: number; status?: string }[]>;
+  read(threadId: string, limit: number): Promise<string>;
+}
 
 export type LiveThreadOptions = {
   threadId: string;
@@ -80,10 +102,27 @@ export type LiveThreadOptions = {
   seqAfter?: number;
   /** Called when the thread's query process has exited and it can be unloaded. */
   onExit?: (t: LiveThread) => void;
+  /** Tools for the host's other sessions, when the client asked for them. */
+  sessionTools?: SessionTools;
+  /** Set for a scheduled run, which nobody is there to answer. */
+  unattended?: Unattended;
   stderr?: (text: string) => void;
 };
 
 const MAX_BUFFERED_EVENTS = 20_000;
+
+/** The in-process MCP server the session tools are served from, and the tools it registers. */
+const SESSION_TOOL_SERVER = 'tether';
+const SESSION_TOOLS = { list: 'list_sessions', read: 'read_session', suggest: 'suggest_task' } as const;
+
+/**
+ * The session tools as the CLI names them. These, and only on a thread that has them, run without
+ * asking: they read and suggest, never change anything. Any other `mcp__tether__…` tool, such as
+ * one from a project's own MCP server called `tether`, is asked about like every other tool.
+ */
+export const SESSION_TOOL_NAMES: ReadonlySet<string> = new Set(
+  Object.values(SESSION_TOOLS).map((name) => `mcp__${SESSION_TOOL_SERVER}__${name}`),
+);
 
 const SCOPE_DESTINATION = {
   session: 'session',
@@ -111,10 +150,13 @@ export class LiveThread {
   private exited = false;
   /** Background tasks that count as work (not ambient watchers), as the CLI last reported them. */
   private backgroundTasks = new Set<string>();
+  /** Whether the client asked for session tools on this thread; only then are they allowed. */
+  private readonly sessionToolsEnabled: boolean;
 
   constructor(private opts: LiveThreadOptions) {
     this.id = opts.threadId;
     this.cwd = opts.cwd;
+    this.sessionToolsEnabled = !!opts.sessionTools;
     this.seq = seqOrigin(opts.seqAfter);
     if (opts.model) this.info.model = opts.model;
     if (opts.effort) this.info.effort = opts.effort;
@@ -157,7 +199,14 @@ export class LiveThread {
       ...(o.additionalDirectories?.length ? { additionalDirectories: o.additionalDirectories } : {}),
       ...(o.allowedTools ? { allowedTools: o.allowedTools } : {}),
       ...(o.disallowedTools ? { disallowedTools: o.disallowedTools } : {}),
-      ...(o.mcpServers ? { mcpServers: o.mcpServers as Options['mcpServers'] } : {}),
+      ...(o.mcpServers || o.sessionTools
+        ? {
+            mcpServers: {
+              ...((o.mcpServers ?? {}) as Options['mcpServers']),
+              ...(o.sessionTools ? { [SESSION_TOOL_SERVER]: this.sessionToolServer(o.sessionTools) } : {}),
+            },
+          }
+        : {}),
       ...(o.agent ? { agent: o.agent } : {}),
       ...(o.maxTurns ? { maxTurns: o.maxTurns } : {}),
       ...(o.maxBudgetUsd ? { maxBudgetUsd: o.maxBudgetUsd } : {}),
@@ -198,6 +247,17 @@ export class LiveThread {
     return this.backgroundTasks.size > 0;
   }
 
+  /** An unattended thread waiting on a person, with no client subscribed to be that person. */
+  get waitingUnattended() {
+    return !!this.opts.unattended && this.pending.size > 0 && this.subscribers.size === 0;
+  }
+
+  /** Records on an unattended thread that it was stopped while it waited on a person. */
+  abandonUnattended(why: string) {
+    const p = this.pending.values().next().value;
+    if (this.opts.unattended && p) this.opts.unattended.onUnanswered(`${why} while it waited for ${describeRequest(p)}.`);
+  }
+
   close() {
     this.input.end();
     try {
@@ -222,7 +282,10 @@ export class LiveThread {
       this.backgroundTasks.clear();
       this.emitAll(this.itemizer.abandonAll());
       this.emit('task/backgroundChanged', { tasks: [] });
-      for (const p of this.pending.values()) p.reject(new RpcError(ErrorCodes.requestCancelled, 'thread closed'));
+      for (const p of this.pending.values()) {
+        clearTimeout(p.timer);
+        p.reject(new RpcError(ErrorCodes.requestCancelled, 'thread closed'));
+      }
       this.pending.clear();
       this.setStatus('closed');
       this.emit('thread/closed', {});
@@ -424,8 +487,25 @@ export class LiveThread {
       this.pending.set(requestId, p);
       this.setStatus('requiresAction');
       signal?.addEventListener('abort', () => this.resolvePending(p, null, 'cancelled'), { once: true });
+      if (this.opts.unattended) this.armDeadline(p, this.opts.unattended);
       for (const s of this.subscribers) this.sendPendingTo(p, s);
     });
+  }
+
+  /** Denies an unattended thread's request once it has waited its time with nobody subscribed. */
+  private armDeadline(p: PendingRequest, u: Unattended) {
+    p.timer = setTimeout(() => {
+      if (!this.pending.has(p.requestId)) return;
+      // Someone is looking at it: theirs to answer, however long they take.
+      if (this.subscribers.size > 0) return this.armDeadline(p, u);
+      u.onUnanswered(`No one answered its request for ${describeRequest(p)} within ${duration(u.requestTimeoutMs)}, so it was denied.`);
+      const denial =
+        p.method === 'permission/request'
+          ? { decision: 'deny', message: 'No one was there to answer: this is a scheduled run nobody is watching.', interrupt: true }
+          : null;
+      this.resolvePending(p, denial, 'cancelled');
+    }, u.requestTimeoutMs);
+    p.timer.unref?.();
   }
 
   private sendPendingTo(p: PendingRequest, sub: Subscriber) {
@@ -440,6 +520,7 @@ export class LiveThread {
   private resolvePending(p: PendingRequest, result: unknown, reason: 'answered' | 'cancelled') {
     if (!this.pending.has(p.requestId)) return;
     this.pending.delete(p.requestId);
+    clearTimeout(p.timer);
     for (const s of p.sentTo) s.cancelRequest(p.requestId);
     p.resolve(result);
     this.emit('serverRequest/resolved', { requestId: p.requestId, reason });
@@ -447,11 +528,42 @@ export class LiveThread {
       this.setStatus(this.itemizer.currentTurn ? 'running' : 'idle');
   }
 
+  /** The session tools as an in-process MCP server named `tether`. */
+  private sessionToolServer(tools: SessionTools) {
+    const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
+    return createSdkMcpServer({
+      name: SESSION_TOOL_SERVER,
+      instructions:
+        "Tools for the user's other Claude Code chats on this machine. Read another chat only when it helps with this one. Use suggest_task for work that belongs in a chat of its own; the user decides whether to start it.",
+      tools: [
+        tool(SESSION_TOOLS.list, "List the user's other chats on this machine, most recent first: id, title, folder, status.", {}, async () =>
+          text(JSON.stringify((await tools.list()).filter((s) => s.threadId !== this.id))),
+        ),
+        tool(
+          SESSION_TOOLS.read,
+          "Read another chat's recent messages, as text.",
+          { sessionId: z.string(), limit: z.number().int().min(1).max(100).optional() },
+          async (a) => text(await tools.read(a.sessionId, a.limit ?? 30)),
+        ),
+        tool(
+          SESSION_TOOLS.suggest,
+          'Suggest a separate task to the user. It appears as a button that starts it in a new chat with this prompt.',
+          { title: z.string(), prompt: z.string(), cwd: z.string().optional() },
+          async (a) => {
+            this.emit('thread/taskSuggested', { title: a.title, prompt: a.prompt, ...(a.cwd ? { cwd: a.cwd } : {}) });
+            return text('Suggested to the user.');
+          },
+        ),
+      ],
+    });
+  }
+
   private async canUseTool(
     toolName: string,
     input: Record<string, unknown>,
     ctx: Parameters<NonNullable<Options['canUseTool']>>[2],
   ): Promise<PermissionResult> {
+    if (this.sessionToolsEnabled && SESSION_TOOL_NAMES.has(toolName)) return { behavior: 'allow', updatedInput: input };
     const deny = (message: string, interrupt?: boolean): PermissionResult => {
       this.itemizer.noteDenied(ctx.toolUseID, message);
       return { behavior: 'deny', message, ...(interrupt ? { interrupt } : {}) };
@@ -540,6 +652,27 @@ export class LiveThread {
   }
 }
 
+/** What a request asks of a person, for an unattended run's record. */
+function describeRequest(p: Pick<PendingRequest, 'method' | 'params'>): string {
+  switch (p.method) {
+    case 'permission/request':
+      return `permission to use ${String(p.params.displayName ?? p.params.toolName)}`;
+    case 'question/request':
+      return 'an answer to a question';
+    case 'plan/approve':
+      return 'approval of its plan';
+    case 'elicitation/request':
+      return `input for ${String(p.params.serverName)}`;
+    default:
+      return 'a decision';
+  }
+}
+
+function duration(ms: number): string {
+  const unit = (n: number, what: string) => `${n} ${what}${n === 1 ? '' : 's'}`;
+  return ms >= 60_000 ? unit(Math.round(ms / 60_000), 'minute') : unit(Math.max(1, Math.round(ms / 1000)), 'second');
+}
+
 function toSdkThinking(t: ThinkingSetting): Options['thinking'] {
   if (t.type === 'disabled') return { type: 'disabled' };
   if (t.type === 'enabled') return { type: 'enabled', budgetTokens: t.budgetTokens, display: 'summarized' };
@@ -554,6 +687,8 @@ function toContentBlocks(content: UserInput[], cwd: string): any[] {
     if (c.type === 'text') text += (text ? '\n' : '') + c.text;
     else if (c.type === 'fileRef') text += `${text && !text.endsWith(' ') ? ' ' : ''}@${c.path}`;
     else if (c.type === 'image') blocks.push({ type: 'image', source: { type: 'base64', media_type: c.mediaType, data: c.data } });
+    else if (c.type === 'document' && c.data)
+      blocks.push({ type: 'document', source: { type: 'base64', media_type: c.mediaType, data: c.data }, ...(c.name ? { title: c.name } : {}) });
   }
   if (text) blocks.unshift({ type: 'text', text });
   return blocks;

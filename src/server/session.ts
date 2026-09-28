@@ -7,8 +7,38 @@ import type { Subscriber } from '../threads/LiveThread.ts';
 import { TETHER_VERSION } from '../threads/LiveThread.ts';
 import type { ThreadManager } from '../threads/ThreadManager.ts';
 import * as fsApi from './fsApi.ts';
+import * as plugins from './plugins.ts';
 
 type Handler<M extends MethodName> = (p: Params<M>) => Promise<Result<M>> | Result<M>;
+
+const SIDE_QUESTION_TIMEOUT_MS = 60_000;
+
+/**
+ * A side question (the CLI's /btw), given up on after `timeoutMs`: the request is cancelled in
+ * Claude Code and the client told, rather than left waiting on an answer that may never come.
+ */
+export async function askSideQuestion(query: unknown, question: string, timeoutMs = SIDE_QUESTION_TIMEOUT_MS): Promise<string | null> {
+  // Not in the SDK's published typings yet: asked for defensively.
+  const q = query as {
+    askSideQuestion?: (q: string, options?: { signal?: AbortSignal }) => Promise<{ response: string } | null>;
+  };
+  if (typeof q.askSideQuestion !== 'function') throw new RpcError(ErrorCodes.invalidRequest, 'Side questions need a newer Claude Code.');
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new RpcError(ErrorCodes.sdkError, `Claude Code didn't answer the side question within ${Math.round(timeoutMs / 1000)} seconds.`));
+    }, timeoutMs);
+  });
+  try {
+    // Raced as well as aborted, in case a Claude Code version ignores the signal.
+    const r = await Promise.race([q.askSideQuestion(question, { signal: controller.signal }), timedOut]);
+    return r?.response ?? null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** One client connection: handshake state, env overrides, thread subscriptions. */
 export class ClientSession implements Subscriber {
@@ -25,6 +55,12 @@ export class ClientSession implements Subscriber {
     private mode: 'stdio' | 'daemon',
     private log: (m: string) => void = () => {},
   ) {}
+
+  /** Scheduled tasks live in the daemon; a single-client server has none to offer. */
+  private scheduler() {
+    if (!this.mgr.scheduler) throw new RpcError(ErrorCodes.invalidRequest, 'scheduled tasks need the Tether daemon');
+    return this.mgr.scheduler;
+  }
 
   start() {
     this.conn.start({
@@ -95,6 +131,8 @@ export class ClientSession implements Subscriber {
       }
       this.initialized = true;
       this.env = p.env ?? {};
+      // Scheduled runs have no client, so they take the environment the last one asked for.
+      if (p.env) this.mgr.noteClientEnv(p.env);
       this.experimental = !!p.capabilities?.experimentalApi;
       for (const m of p.capabilities?.optOutNotificationMethods ?? []) this.optOut.add(m);
       this.log(`client ${this.id} initialized: ${p.clientInfo.name} ${p.clientInfo.version}`);
@@ -284,5 +322,32 @@ export class ClientSession implements Subscriber {
     'fs/search': (p) => fsApi.search(p.cwd, p.query, p.limit),
     'git/status': (p) => fsApi.gitStatus(p.cwd),
     'git/diff': (p) => fsApi.gitDiff(p.cwd, p.path, p.staged),
+    'thread/sideQuestion': async (p) => ({ answer: await askSideQuestion(this.mgr.get(p.threadId).query, p.question) }),
+    'git/removeWorktree': async (p) => {
+      await fsApi.removeWorktree(p.path, { force: p.force ?? false, discardCommits: p.discardCommits ?? false });
+      return {};
+    },
+
+    'plugin/list': (p) => plugins.listPlugins(this.mgr.claude.path, p.cwd, this.env),
+    'plugin/install': async (p) => {
+      await plugins.installPlugin(this.mgr.claude.path, p.pluginId, p.scope, p.cwd, this.env);
+      return {};
+    },
+    'plugin/uninstall': async (p) => {
+      await plugins.uninstallPlugin(this.mgr.claude.path, p.pluginId, p.scope, p.cwd, this.env);
+      return {};
+    },
+    'plugin/setEnabled': async (p) => {
+      await plugins.setPluginEnabled(this.mgr.claude.path, p.pluginId, p.enabled, p.scope, p.cwd, this.env);
+      return {};
+    },
+
+    'schedule/list': () => ({ tasks: this.scheduler().list() }),
+    'schedule/save': (p) => ({ task: this.scheduler().save(p) }),
+    'schedule/delete': (p) => {
+      this.scheduler().delete(p.id);
+      return {};
+    },
+    'schedule/run': async (p) => ({ threadId: await this.scheduler().run(p.id) }),
   };
 }
