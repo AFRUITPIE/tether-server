@@ -6,6 +6,13 @@ A JSON-RPC app server for Claude Code, built on the Claude Agent SDK. Modelled o
 tether connect         # what clients run: stdio ⇄ per-host daemon (starts it if needed)
 tether daemon          # the daemon: owns live Claude sessions; turns survive client disconnects
 tether serve --stdio   # single-client, in-process mode (tests)
+tether update          # install the latest release into ~/.tether/bin
+```
+
+A host installs a release with its `install.sh`, which checks the binary against the release's `SHA256SUMS`:
+
+```
+curl -fsSL https://github.com/AFRUITPIE/tether-server/releases/download/v<version>/install.sh | sh
 ```
 
 - **Wire format:** JSON-RPC 2.0 without the `"jsonrpc"` field, one JSON object per line (JSONL). The protocol is defined in `src/protocol` using zod.

@@ -5,6 +5,7 @@ import { ClientSession } from './server/session.ts';
 import { ThreadManager } from './threads/ThreadManager.ts';
 import { TETHER_VERSION } from './threads/LiveThread.ts';
 import { versionInfo } from './version.ts';
+import { runUpdate } from './install.ts';
 import { readDaemonMeta, runConnect, runDaemon, SOCKET_PATH } from './daemon/daemon.ts';
 
 const [cmd = 'help', ...args] = process.argv.slice(2);
@@ -42,6 +43,9 @@ switch (cmd) {
     console.log(meta ? JSON.stringify({ ...meta, socket: SOCKET_PATH }) : 'daemon not running');
     break;
   }
+  case 'update':
+    process.exitCode = await runUpdate(args);
+    break;
   case 'version':
   case '--version':
     // `--json` is what a client probes a host with before deciding to install or update.
@@ -55,5 +59,7 @@ usage:
   tether daemon            run the daemon in the foreground
   tether status            show the running daemon
   tether serve --stdio     JSON-RPC over stdio (single client, in-process threads; for tests)
+  tether update [--version <version>]
+                           install the latest release (or that one) into ~/.tether/bin
   tether version [--json]`);
 }
