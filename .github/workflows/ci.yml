@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Hosts run Tether on Linux and macOS.
+        os: [ubuntu-latest, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # Bun at the version mise.toml pins.
+      - uses: jdx/mise-action@v5
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: mise run typecheck
+
+      # Unit tests, including the check that the committed schema and Swift match src/protocol.
+      - name: Test
+        run: mise run test
+
+      # The standalone binary for this runner, driven through the same CLI and daemon tests.
+      - name: Compile this platform's binary
+        run: |
+          platform=$(bun -e 'console.log(`${process.platform}-${process.arch}`)')
+          version=$(bun -e 'console.log(require("./package.json").version)')
+          echo "TETHER_TEST_BINARY=dist/tether-$version-$platform" >> "$GITHUB_ENV"
+          TETHER_TARGETS=$platform mise run compile
+
+      - name: Test the compiled binary
+        run: bun test test/cli.test.ts
+
+  swift:
+    name: Swift protocol package
+    # Package.swift needs Swift 6.2, which Xcode 26 provides.
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Test
+        run: swift test
