@@ -142,10 +142,22 @@ Generated string enums are forward-compatible `RawRepresentable` Swift structs. 
 - `Tests/TetherProtocolTests/Fixtures/e2e-wire.jsonl` is shared wire traffic used to verify Swift decoding.
 - `test/reattach.test.ts` covers stream numbering, background work and eviction, background subagents, task notices and history merging without a CLI.
 - `test/install.test.ts` runs `install.sh` and `tether update` against a local `Bun.serve` fixture of releases; nothing leaves the machine.
+- `test/connection.test.ts` covers JSONL framing, request correlation, errors and closing; `test/session.test.ts` covers method routing, the handshake's refusals and capabilities.
+- `test/cli.test.ts` runs `tether version`, `serve --stdio`, `daemon` and `connect` as processes, each in a fresh `HOME` and `TETHER_HOME` with a stand-in `claude`, including `connect` starting a daemon and replacing one of another version. `TETHER_TEST_BINARY=<path>` runs it against a compiled binary instead of the source.
+- `test/generated.test.ts` regenerates the schema and Swift into a temporary directory and fails if the committed files differ: run `mise run gen` after changing `src/protocol`.
 - `scripts/e2e-background.ts` (in `mise run e2e`) runs background work across disconnects, a restarted thread's numbering, and eviction against the real CLI. `TETHER_E2E_MODEL`/`TETHER_E2E_EFFORT` choose the model the E2E scripts use.
 - `scripts/record-sdk.ts` and `mise run e2e` invoke a real Claude CLI and may write temporary project files or spend provider tokens. Run them only when explicitly useful.
 - Daemon tests must set `TETHER_HOME` to a fresh temporary directory. Never test destructive daemon behavior against the user's real `~/.tether`.
 - Prefer `serve --stdio` for deterministic local protocol debugging; use daemon E2E only for reconnect, replay, upgrade, or disconnect-survival behavior.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on pushes to `main` and on pull requests:
+
+- On Linux and macOS: `bun install --frozen-lockfile`, `mise run typecheck`, `mise run test`, then `mise run compile` for the runner's own platform and `test/cli.test.ts` against that binary.
+- On macOS 26 (Swift 6.2): `swift test`.
+
+CI never runs `mise run e2e` or `scripts/record-sdk.ts`, and has no Claude Code or provider credentials. A test that needs `claude` must use a stand-in, as `test/cli.test.ts` and `test/plugins.test.ts` do.
 
 ## Cross-repository contract
 
