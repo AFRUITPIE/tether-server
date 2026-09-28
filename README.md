@@ -14,7 +14,7 @@ A host runs it from npm, with Node 18 or later. The Tether app runs this, pinned
 npx -y tether-server@<version> connect
 ```
 
-`npm install -g tether-server` installs it instead. The package is one bundled file with no dependencies and no install scripts, published from this repository's workflow with npm provenance. Each GitHub release also carries standalone binaries (no Node needed) and their `SHA256SUMS`: the app copies one to a host without Node, after checking it against the checksum it carries.
+`npm install -g tether-server` installs it instead. The package is one bundled file with no dependencies and no install scripts, published from this repository's workflow with npm provenance.
 
 - **Wire format:** JSON-RPC 2.0 without the `"jsonrpc"` field, one JSON object per line (JSONL). The protocol is defined in `src/protocol` using zod.
 - **Schema:** `mise run gen` writes `schema/tether.schema.json` and `Sources/TetherProtocol/Generated.swift`, the Swift package the app consumes.

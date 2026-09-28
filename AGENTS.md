@@ -26,8 +26,8 @@ mise run compile
 - `mise run gen`: regenerate JSON Schema and committed Swift protocol code.
 - `mise run swift-test`: verify Swift decoding against recorded wire traffic.
 - `mise run build-npm`: the npm package under `npm/`: one bundled file for Node 18 or later, no dependencies (`--dev` stamps a dev version).
-- `mise run compile`: standalone darwin/linux × arm64/x64 binaries under `dist/`, with the `SHA256SUMS` a release carries.
-- `mise run release`: compile, then publish the binaries and `SHA256SUMS` as the GitHub release for `package.json`'s version. Publishing the release publishes the same version to npm (`.github/workflows/npm.yml`, by trusted publishing, with provenance; no token is stored anywhere).
+- `mise run compile`: standalone darwin/linux × arm64/x64 binaries under `dist/`, which CI runs the CLI tests against.
+- `mise run release`: tag `package.json`'s version and publish its GitHub release, which publishes the same version to npm (`.github/workflows/npm.yml`, by trusted publishing, with provenance; no token is stored anywhere).
 - `mise run e2e`: real Claude Code E2E tests. These use the configured account/provider and can incur cost; do not run casually.
 
 ## Repository map
@@ -50,7 +50,7 @@ mise run compile
 - `src/claude.ts`: resolves and reports the host Claude CLI.
 - `scripts/gen-schema.ts`, `scripts/gen-swift.ts`: protocol code generation.
 - `scripts/build-npm.ts`: the npm package, bundled with the Agent SDK and without its platform packages (each a Claude Code of its own; Tether runs the host's `claude`).
-- `scripts/compile.ts`: standalone binary matrix, and `SHA256SUMS` beside it (`scripts/assets.ts`).
+- `scripts/compile.ts`: standalone binary matrix, for tests.
 - `scripts/e2e*.ts`, `scripts/record-sdk.ts`: real-CLI test and fixture tools.
 - `Sources/TetherProtocol`: generated Swift types plus hand-written support types.
 - `Tests/TetherProtocolTests`: Swift fixture decoding.
@@ -67,13 +67,11 @@ tether serve --stdio   single-client in-process server for development/tests
 
 The daemon listens on `~/.tether/tether.sock` (or `TETHER_HOME` in isolated tests), with mode `0600`. `tether connect` starts it if needed and forwards JSONL between stdio and the socket. The daemon owns `ThreadManager` and every `LiveThread`, so a client disconnect must not interrupt running work or discard a pending permission/question.
 
-When a bundled binary version changes, `connect` requests a graceful daemon shutdown. Busy work is allowed to finish; replacement occurs after the manager drains.
+When the server's version changes, `connect` requests a graceful daemon shutdown. Busy work is allowed to finish; replacement occurs after the manager drains.
 
-## Installing and updating a host
+## How hosts run it
 
 Hosts run the npm package, which needs Node 18 or later: the app runs `npx --yes --prefer-offline tether-server@<version> connect` under the host's login shell, pinned to the version it was built against. Nothing is installed beside npm's cache, and an update is the app naming the next version: that `connect` finds a daemon of another version and replaces it as above. The package is one file (`scripts/build-npm.ts`): everything bundled, the Agent SDK included, without the SDK's platform packages, no dependencies and no install scripts, not minified. It's published from this repository's workflow when a GitHub release is published, by trusted publishing (npm's OIDC exchange, no token), which records provenance.
-
-A release also carries the standalone binaries (`tether-<version>-<platform>`) and `SHA256SUMS` (one `<sha256>  <file>` line per binary, as `sha256sum -c` reads it). They're for a host without Node: the app downloads one on the Mac, checks it against the checksum it carries for that release (not the release's own `SHA256SUMS`, which comes from the same place as the binary), and copies it to `~/.tether/bin/tether-<version>` itself. `release.ts` uploads the binaries `SHA256SUMS` lists, never a glob of `dist/`, which would take a dev build of the same version too. There's no install script: nothing is piped to a shell.
 
 ## Protocol invariants
 
@@ -136,7 +134,6 @@ Generated string enums are forward-compatible `RawRepresentable` Swift structs. 
 - `test/itemizer.test.ts` consumes recorded `test/fixtures/sdk/*.jsonl` messages and checks emitted items/events.
 - `Tests/TetherProtocolTests/Fixtures/e2e-wire.jsonl` is shared wire traffic used to verify Swift decoding.
 - `test/reattach.test.ts` covers stream numbering, background work and eviction, background subagents, task notices and history merging without a CLI.
-- `test/assets.test.ts` checks `SHA256SUMS` is what `sha256sum -c` reads.
 - `test/connection.test.ts` covers JSONL framing, request correlation, errors and closing; `test/session.test.ts` covers method routing, the handshake's refusals and capabilities.
 - `test/cli.test.ts` runs `tether version`, `serve --stdio`, `daemon` and `connect` as processes, each in a fresh `HOME` and `TETHER_HOME` with a stand-in `claude`, including `connect` starting a daemon and replacing one of another version. `TETHER_TEST_BINARY=<path>` runs it against a compiled binary instead of the source.
 - `test/generated.test.ts` regenerates the schema and Swift into a temporary directory and fails if the committed files differ: run `mise run gen` after changing `src/protocol`.
@@ -156,7 +153,7 @@ CI never runs `mise run e2e` or `scripts/record-sdk.ts`, and has no Claude Code 
 
 ## Cross-repository contract
 
-The app expects this repository at `../tether-server` and searches its `dist/` directory during development. A Tether app build can succeed without binaries but emits a warning and cannot bootstrap a fresh host.
+The app expects this repository at `../tether-server` and builds against its protocol package by path during development; to run this checkout's server, set a host's Server Command in the app to `<bun> run <path>/src/cli.ts connect`.
 
 When runtime behavior changes, consider all three consumers:
 
