@@ -1,0 +1,33 @@
+name: Publish to npm
+
+# A GitHub release (made by `mise run release`) publishes the same version to npm, from this
+# repository's workflow so npm records where it was built (provenance).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run scripts/build-npm.ts
+      # What npm will serve, run the way a host runs it.
+      - run: node npm/cli.js version --json
+      - run: npm publish ./npm --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
