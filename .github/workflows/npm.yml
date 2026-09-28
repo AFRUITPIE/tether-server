@@ -1,9 +1,10 @@
 name: Publish to npm
 
-# A GitHub release (made by `mise run release`) publishes the same version to npm by trusted
-# publishing: npm takes this workflow's OIDC token instead of a stored one, and records where the
-# package was built (provenance). The package's trusted publisher on npmjs.com names this repository
-# and this file.
+# A GitHub release (made by `mise run release`) stages the same version on npm by trusted publishing:
+# npm takes this workflow's OIDC token instead of a stored one, and records where the package was
+# built (provenance). The package's trusted publisher on npmjs.com names this repository and this
+# file, and may only stage: a maintainer approves the version with 2FA before it's published
+# (`npm stage approve <id>`, or Staged Packages on npmjs.com).
 on:
   release:
     types: [published]
@@ -25,11 +26,11 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      # Trusted publishing needs npm 11.5.1 or later; Node 22 comes with npm 10.
+      # Trusted publishing and staging need a recent npm; Node 22 comes with npm 10.
       - run: npm install -g npm@latest
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run scripts/build-npm.ts
       # What npm will serve, run the way a host runs it.
       - run: node npm/cli.js version --json
-      - run: npm publish ./npm --access public
+      - run: npm stage publish ./npm --access public
