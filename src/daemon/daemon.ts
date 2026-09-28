@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import { createConnection, createServer, type Socket } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { resolveClaude } from '../claude.ts';
 import { Connection } from '../rpc/connection.ts';
 import { ClientSession } from '../server/session.ts';
@@ -120,7 +121,7 @@ async function connectSocket(timeoutMs: number): Promise<Socket> {
         spawned = true;
       }
       if (Date.now() > deadline) throw e;
-      await Bun.sleep(100);
+      await sleep(100);
     }
   }
 }
@@ -156,7 +157,7 @@ async function tryUpgrade(meta: DaemonMeta) {
     conn.close();
     if (r.accepted) {
       process.stderr.write(`[tether] replacing daemon ${meta.version} with ${TETHER_VERSION}\n`);
-      for (let i = 0; i < 50 && existsSync(SOCKET_PATH); i++) await Bun.sleep(100);
+      for (let i = 0; i < 50 && existsSync(SOCKET_PATH); i++) await sleep(100);
     } else {
       process.stderr.write(`[tether] daemon ${meta.version} is busy; will upgrade when idle\n`);
     }
