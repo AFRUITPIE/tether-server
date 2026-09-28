@@ -1,7 +1,7 @@
 // The files a release carries beside its binaries: SHA256SUMS, and install.sh with the release's
 // version baked in. compile.ts writes them for what it built; release.ts uploads what they list.
-import { createHash } from 'node:crypto';
 import { basename, join } from 'node:path';
+import { sha256File } from '../src/install.ts';
 
 const PLACEHOLDER = '__TETHER_VERSION__';
 
@@ -15,13 +15,7 @@ export async function installScript(version: string): Promise<string> {
 
 /** One `<sha256>  <file name>` line per file, as `sha256sum` writes and `sha256sum -c` reads them. */
 export async function checksums(paths: string[]): Promise<string> {
-  const lines = await Promise.all(
-    paths.map(async (p) => {
-      const hash = createHash('sha256');
-      for await (const chunk of Bun.file(p).stream()) hash.update(chunk);
-      return `${hash.digest('hex')}  ${basename(p)}\n`;
-    }),
-  );
+  const lines = await Promise.all(paths.map(async (p) => `${await sha256File(p)}  ${basename(p)}\n`));
   return lines.join('');
 }
 

@@ -13,7 +13,8 @@
 #   TETHER_BINARY         a binary already on this machine to install instead; not downloaded or checked
 #
 # Progress is `tether-install: …` lines on stdout, the last `Installed Tether <version>`; a failure
-# is one `tether-install: error: …` line on stderr and exit status 1.
+# is one `tether-install: error: …` line on stderr and exit status 1. `tether update`
+# (src/install.ts) installs the same way in TypeScript: keep the two in step.
 #
 # POSIX sh only: it's piped to `sh`, whatever the login shell is.
 

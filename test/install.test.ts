@@ -3,8 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlink
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { checksums, installScript } from '../scripts/assets.ts';
+import { sha256File } from '../src/install.ts';
 
-// install.sh against a fixture of releases laid out as GitHub serves them,
+// install.sh and `tether update` against one fixture: releases laid out as GitHub serves them,
 // <base>/v<version>/<asset>, whose "binaries" are small scripts naming their version and platform.
 const PLATFORMS = ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64'];
 const binary = (version: string, platform: string) => `#!/bin/sh\necho tether ${version} ${platform}\n`;
@@ -22,13 +23,20 @@ for (const version of ['0.5.5', '0.5.6', '0.5.7']) {
   if (version === '0.5.7') sums = sums.replace(/^./gm, (c) => (c === '0' ? '1' : '0'));
   writeFileSync(join(releases, `v${version}`, 'SHA256SUMS'), sums);
 }
+// A binary near the size of a real one (about 70 MB): Bun.write(path, response) could hang on one.
+const big = join(releases, 'v0.6.0', 'tether-0.6.0-linux-x64');
+mkdirSync(join(releases, 'v0.6.0'));
+writeFileSync(big, new Uint8Array(64 * 1024 * 1024).map((_, i) => i % 251));
+writeFileSync(join(releases, 'v0.6.0', 'SHA256SUMS'), await checksums([big]));
 
+let latest = '0.5.6';
 const requests: string[] = [];
 const server = Bun.serve({
   port: 0,
   async fetch(req) {
     const path = new URL(req.url).pathname;
     requests.push(path);
+    if (path === '/releases/latest') return Response.json({ tag_name: `v${latest}` });
     const file = Bun.file(join(releases, path.replace(/^\/download\//, '')));
     return (await file.exists()) ? new Response(file) : new Response('Not Found', { status: 404 });
   },
@@ -37,6 +45,7 @@ afterAll(() => server.stop(true));
 const base = `${server.url.origin}/download`;
 beforeEach(() => {
   requests.length = 0;
+  latest = '0.5.6';
 });
 const downloads = () => requests.filter((r) => /\/tether-[^/]*$/.test(r));
 
@@ -66,6 +75,7 @@ function sandbox() {
     TETHER_INSTALL_DIR: dir,
     TETHER_DOWNLOAD_BASE: base,
     TETHER_PLATFORM: 'linux-x64',
+    TETHER_RELEASES_API: `${server.url.origin}/releases/latest`,
   };
   return { home, dir, env, files: () => readdirSync(dir).sort(), link: () => readlinkSync(join(dir, 'tether')) };
 }
@@ -81,6 +91,11 @@ const installers: Installer[] = [
     name: `install.sh (${basename(sh)})`,
     install: (version: string | undefined, env: Env) => run([sh, script], { TETHER_VERSION: version, ...env }),
   })),
+  {
+    name: 'tether update',
+    install: (version: string | undefined, env: Env) =>
+      run([process.execPath, cli, 'update', ...(version ? ['--version', version] : [])], env),
+  },
 ];
 
 describe.each(installers)('$name', (installer) => {
@@ -137,6 +152,12 @@ describe.each(installers)('$name', (installer) => {
     });
     expect(link()).toBe('tether-0.5.6');
     expect(files()).toEqual(['notes.txt', 'tether', 'tether-0.5.6', 'tether-9.9.9', 'tether-helper', 'tether.conf']);
+  });
+
+  test('a binary the size of a real one arrives whole', async () => {
+    const { dir, env } = sandbox();
+    expect((await install('0.6.0', env)).out.at(-1)).toBe('tether-install: Installed Tether 0.6.0');
+    expect(await sha256File(join(dir, 'tether-0.6.0'))).toBe(await sha256File(big));
   });
 
   test('a checksum mismatch installs nothing and leaves the link alone', async () => {
@@ -311,6 +332,55 @@ function toolsWithout(...missing: string[]) {
   }
   return bin;
 }
+
+describe('tether update', () => {
+  const update = (env: Env, ...args: string[]) => run([process.execPath, cli, 'update', ...args], env);
+
+  test('installs the latest release', async () => {
+    const { env, link } = sandbox();
+    latest = '0.5.5';
+    expect(await update(env)).toEqual({
+      code: 0,
+      out: say('Downloading Tether 0.5.5 for linux-x64', 'Verifying', 'Installed Tether 0.5.5'),
+      err: [],
+    });
+    expect(requests[0]).toBe('/releases/latest');
+    expect(link()).toBe('tether-0.5.5');
+  });
+
+  test('TETHER_VERSION names a version as --version does', async () => {
+    const { env, link } = sandbox();
+    expect((await update({ ...env, TETHER_VERSION: '0.5.5' })).out.at(-1)).toBe('tether-install: Installed Tether 0.5.5');
+    expect(requests).not.toContain('/releases/latest');
+    expect(link()).toBe('tether-0.5.5');
+  });
+
+  test('says when that version is already installed, and downloads nothing', async () => {
+    const { env } = sandbox();
+    await update(env, '--version', '0.5.6');
+    requests.length = 0;
+    expect(await update(env, '--version=v0.5.6')).toEqual({ code: 0, out: say('Tether 0.5.6 is already installed'), err: [] });
+    expect(requests).toEqual([]);
+    expect(await update(env)).toEqual({ code: 0, out: say('Tether 0.5.6 is already installed'), err: [] });
+    expect(requests).toEqual(['/releases/latest']);
+  });
+
+  test('says when the latest release cannot be found', async () => {
+    const { env } = sandbox();
+    const api = `${server.url.origin}/missing`;
+    expect(await update({ ...env, TETHER_RELEASES_API: api })).toEqual({
+      code: 1,
+      out: [],
+      err: say(`error: couldn't find the latest release at ${api}: HTTP 404`),
+    });
+  });
+
+  test('refuses arguments it does not know', async () => {
+    const { env } = sandbox();
+    expect(await update(env, '--version')).toEqual({ code: 1, out: [], err: say('error: usage: tether update [--version <version>]') });
+    expect(requests).toEqual([]);
+  });
+});
 
 describe('release files', () => {
   test('SHA256SUMS is what `sha256sum -c` reads', async () => {

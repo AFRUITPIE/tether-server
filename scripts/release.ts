@@ -1,6 +1,6 @@
 // Cuts a GitHub release for the current package.json version and attaches the compiled binaries,
 // with the SHA256SUMS and install.sh compile.ts writes beside them: a host installs or updates
-// from those (`curl -fsSL …/v<version>/install.sh | sh`).
+// from those (`curl -fsSL …/v<version>/install.sh | sh`, or `tether update`).
 //
 // The tag is the Tether version, not the Agent SDK version: the daemon decides whether to replace
 // itself by comparing version strings, so that number has to move whenever Tether changes, even
