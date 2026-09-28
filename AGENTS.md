@@ -25,8 +25,9 @@ mise run compile
 - `mise run typecheck`: strict TypeScript checking.
 - `mise run gen`: regenerate JSON Schema and committed Swift protocol code.
 - `mise run swift-test`: verify Swift decoding against recorded wire traffic.
-- `mise run compile`: standalone darwin/linux × arm64/x64 binaries under `dist/`, with the `SHA256SUMS` and `install.sh` a release carries.
-- `mise run release`: compile, then publish the binaries, `SHA256SUMS` and `install.sh` as the GitHub release for `package.json`'s version.
+- `mise run build-npm`: the npm package under `npm/`: one bundled file for Node 18 or later, no dependencies (`--dev` stamps a dev version).
+- `mise run compile`: standalone darwin/linux × arm64/x64 binaries under `dist/`, with the `SHA256SUMS` a release carries.
+- `mise run release`: compile, then publish the binaries and `SHA256SUMS` as the GitHub release for `package.json`'s version. Publishing the release publishes the same version to npm (`.github/workflows/npm.yml`, with provenance; it needs the `NPM_TOKEN` secret).
 - `mise run e2e`: real Claude Code E2E tests. These use the configured account/provider and can incur cost; do not run casually.
 
 ## Repository map
@@ -48,9 +49,8 @@ mise run compile
 - `src/threads/Scheduler.ts`: scheduled tasks, kept in `schedules.json` in the daemon's home and run from a one-minute timer as new threads. Only the daemon that owns the socket runs them (`serve --stdio` has none), so none runs twice; a run missed during sleep happens once on waking. A run takes the environment the last client to connect sent in `initialize` (held in memory only, as it can hold credentials). Nobody is there to answer a run, so a request it makes of a person is denied once it has waited `TETHER_SCHEDULED_REQUEST_TIMEOUT_MS` (10 minutes) with no client subscribed, ending the turn and recorded as the task's `lastError`; a subscribed client gets as long as it takes. No task starts once the daemon is draining for an upgrade or exiting, and the file is saved then. `schedule/save` replaces a task whole, keeping only what runs recorded; the file is checked entry by entry on load (`loadTasks`), so one bad entry is repaired or skipped rather than breaking `schedule/list`.
 - `src/claude.ts`: resolves and reports the host Claude CLI.
 - `scripts/gen-schema.ts`, `scripts/gen-swift.ts`: protocol code generation.
-- `src/install.ts`: `tether update`, which installs a release the way `install.sh` does.
-- `scripts/compile.ts`: standalone binary matrix, and the release files beside it (`scripts/assets.ts`).
-- `scripts/install.sh`: the host installer published with each release (`scripts/release.ts`).
+- `scripts/build-npm.ts`: the npm package, bundled with the Agent SDK and without its platform packages (each a Claude Code of its own; Tether runs the host's `claude`).
+- `scripts/compile.ts`: standalone binary matrix, and `SHA256SUMS` beside it (`scripts/assets.ts`).
 - `scripts/e2e*.ts`, `scripts/record-sdk.ts`: real-CLI test and fixture tools.
 - `Sources/TetherProtocol`: generated Swift types plus hand-written support types.
 - `Tests/TetherProtocolTests`: Swift fixture decoding.
@@ -71,14 +71,9 @@ When a bundled binary version changes, `connect` requests a graceful daemon shut
 
 ## Installing and updating a host
 
-A release carries the binaries (`tether-<version>-<platform>`), `SHA256SUMS` (one `<sha256>  <file>` line per binary, as `sha256sum -c` reads it) and `install.sh`, whose version `compile.ts` bakes in. `release.ts` uploads the binaries `SHA256SUMS` lists, never a glob of `dist/`, which would take a dev build of the same version too.
+Hosts run the npm package, which needs Node 18 or later: the app runs `npx -y tether-server@<version> connect` under the host's login shell, pinned to the version it was built against. Nothing is installed beside npm's cache, and an update is the app naming the next version: that `connect` finds a daemon of another version and replaces it as above. The package is one file (`scripts/build-npm.ts`): everything bundled, the Agent SDK included, without the SDK's platform packages, no dependencies and no install scripts, not minified. It's published with provenance from this repository's workflow when a GitHub release is published.
 
-- `curl -fsSL <releases>/download/v<version>/install.sh | sh`, or `sh -s < install.sh` over SSH, installs `~/.tether/bin/tether-<version>` and points `~/.tether/bin/tether` at it. POSIX `sh` only: it's piped to `sh` because the login shell may be fish (tests run it under `sh` and `dash`).
-- `tether update [--version <version>]` does the same in TypeScript, for GitHub's latest release unless told, and says so when `tether` already links to that version. Keep the two in step: `test/install.test.ts` runs both against one fixture.
-- The binary is checked against `SHA256SUMS` before it's moved into place: a mismatch, or no `sha256sum` or `shasum` to check with, installs nothing and leaves the link alone. One already there with the right checksum isn't downloaded again. The link is relative and renamed into place. Then other versioned binaries (`tether-<semver>`, dev builds, `.tmp` and `.tether-install.*` leftovers) are deleted, and nothing else; a daemon running one keeps its file.
-- Output is `tether-install: …` lines on stdout, the last `Installed Tether <version>` (`tether update`'s `Tether <version> is already installed` instead when there was nothing to do); a failure is one `tether-install: error: <reason>` line on stderr and exit status 1. The app reads these: change them together.
-- The environment steers both: `TETHER_VERSION`, `TETHER_INSTALL_DIR` (`~/.tether/bin`), `TETHER_DOWNLOAD_BASE` (`<base>/v<version>/<asset>`), `TETHER_PLATFORM` (else `uname -sm`, or the running binary's), `TETHER_RELEASES_API` (`tether update`'s latest release) and `TETHER_BINARY`, a file to install with no platform, download or checksum: the app's offline path, which checks the binary on the Mac and copies it over itself. A dev build's `install.sh` names its dev version, so it installs only that way.
-- Neither touches the daemon. The next `tether connect` through `~/.tether/bin/tether` is the new version, and replaces the daemon as above.
+A release also carries the standalone binaries (`tether-<version>-<platform>`) and `SHA256SUMS` (one `<sha256>  <file>` line per binary, as `sha256sum -c` reads it). They're for a host without Node: the app downloads one on the Mac, checks it against the checksum it carries for that release (not the release's own `SHA256SUMS`, which comes from the same place as the binary), and copies it to `~/.tether/bin/tether-<version>` itself. `release.ts` uploads the binaries `SHA256SUMS` lists, never a glob of `dist/`, which would take a dev build of the same version too. There's no install script: nothing is piped to a shell.
 
 ## Protocol invariants
 
@@ -141,7 +136,7 @@ Generated string enums are forward-compatible `RawRepresentable` Swift structs. 
 - `test/itemizer.test.ts` consumes recorded `test/fixtures/sdk/*.jsonl` messages and checks emitted items/events.
 - `Tests/TetherProtocolTests/Fixtures/e2e-wire.jsonl` is shared wire traffic used to verify Swift decoding.
 - `test/reattach.test.ts` covers stream numbering, background work and eviction, background subagents, task notices and history merging without a CLI.
-- `test/install.test.ts` runs `install.sh` and `tether update` against a local `Bun.serve` fixture of releases; nothing leaves the machine.
+- `test/assets.test.ts` checks `SHA256SUMS` is what `sha256sum -c` reads.
 - `scripts/e2e-background.ts` (in `mise run e2e`) runs background work across disconnects, a restarted thread's numbering, and eviction against the real CLI. `TETHER_E2E_MODEL`/`TETHER_E2E_EFFORT` choose the model the E2E scripts use.
 - `scripts/record-sdk.ts` and `mise run e2e` invoke a real Claude CLI and may write temporary project files or spend provider tokens. Run them only when explicitly useful.
 - Daemon tests must set `TETHER_HOME` to a fresh temporary directory. Never test destructive daemon behavior against the user's real `~/.tether`.

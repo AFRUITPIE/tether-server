@@ -6,14 +6,15 @@ A JSON-RPC app server for Claude Code, built on the Claude Agent SDK. Modelled o
 tether connect         # what clients run: stdio ⇄ per-host daemon (starts it if needed)
 tether daemon          # the daemon: owns live Claude sessions; turns survive client disconnects
 tether serve --stdio   # single-client, in-process mode (tests)
-tether update          # install the latest release into ~/.tether/bin
 ```
 
-A host installs a release with its `install.sh`, which checks the binary against the release's `SHA256SUMS`:
+A host runs it from npm, with Node 18 or later. The Tether app runs this, pinned to its version:
 
 ```
-curl -fsSL https://github.com/AFRUITPIE/tether-server/releases/download/v<version>/install.sh | sh
+npx -y tether-server@<version> connect
 ```
+
+`npm install -g tether-server` installs it instead. The package is one bundled file with no dependencies and no install scripts, published from this repository's workflow with npm provenance. Each GitHub release also carries standalone binaries (no Node needed) and their `SHA256SUMS`: the app copies one to a host without Node, after checking it against the checksum it carries.
 
 - **Wire format:** JSON-RPC 2.0 without the `"jsonrpc"` field, one JSON object per line (JSONL). The protocol is defined in `src/protocol` using zod.
 - **Schema:** `mise run gen` writes `schema/tether.schema.json` and `Sources/TetherProtocol/Generated.swift`, the Swift package the app consumes.

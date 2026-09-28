@@ -1,5 +1,6 @@
 // Builds standalone tether binaries (no Node/Bun needed on the host) into dist/, with the
-// SHA256SUMS and install.sh a release carries beside them (scripts/assets.ts).
+// SHA256SUMS a release carries beside them (scripts/assets.ts). Hosts with Node run the npm
+// package instead (scripts/build-npm.ts).
 //
 // `--dev` stamps the version as `<package.json version>-dev.<time>` and replaces any earlier dev
 // build. The daemon replaces itself only when a connecting client's version differs, so a local
@@ -23,7 +24,5 @@ for (const t of targets) {
   console.log(`${out} (${size} MB)`);
   built.push(out);
 }
-// A dev build's install.sh names its dev version, so it installs only with TETHER_BINARY: the app's
-// offline path, which copies the binary to the host itself.
-await writeReleaseFiles('dist', version, built);
-console.log('dist/SHA256SUMS, dist/install.sh');
+await writeReleaseFiles('dist', built);
+console.log('dist/SHA256SUMS');
