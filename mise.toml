@@ -23,6 +23,10 @@ run = "bun run scripts/release.ts"
 [tasks.compile]
 run = "bun run scripts/compile.ts"
 
+[tasks.build-npm]
+description = "Build the npm package into npm/: one bundled file for Node 18+, no dependencies (--dev stamps a dev version)"
+run = "bun run scripts/build-npm.ts"
+
 [tasks.e2e]
 description = "End-to-end tests against the real `claude` on PATH (a few cents on haiku; TETHER_E2E_MODEL/TETHER_E2E_EFFORT to change)"
 run = ["bun run scripts/e2e.ts", "bun run scripts/e2e-daemon.ts", "bun run scripts/e2e-background.ts"]

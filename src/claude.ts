@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import { accessSync, constants } from 'node:fs';
+import { delimiter, join } from 'node:path';
 
 export type ClaudeBinary = { path: string; version: string };
 
@@ -8,7 +10,7 @@ let cached: ClaudeBinary | undefined;
 export function resolveClaude(): ClaudeBinary {
   if (cached) return cached;
   const override = process.env.TETHER_CLAUDE_PATH;
-  const path = override || Bun.which('claude') || loginShellWhich();
+  const path = override || which('claude') || loginShellWhich();
   if (!path) throw new Error('`claude` not found on PATH. Install Claude Code on this host.');
   let version = 'unknown';
   try {
@@ -16,6 +18,19 @@ export function resolveClaude(): ClaudeBinary {
   } catch {}
   cached = { path, version };
   return cached;
+}
+
+/** The first executable of that name on PATH, as `which` finds it: the same under Bun and Node. */
+function which(name: string): string | undefined {
+  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {}
+  }
+  return undefined;
 }
 
 function loginShellWhich(): string | undefined {
