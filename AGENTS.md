@@ -71,7 +71,7 @@ When the server's version changes, `connect` requests a graceful daemon shutdown
 
 ## How hosts run it
 
-Hosts run the npm package, which needs Node 18 or later: the app runs `npx --yes --prefer-offline tether-server@<version> connect` under the host's login shell, pinned to the version it was built against. Nothing is installed beside npm's cache, and an update is the app naming the next version: that `connect` finds a daemon of another version and replaces it as above. The package is one file (`scripts/build-npm.ts`): everything bundled, the Agent SDK included, without the SDK's platform packages, no dependencies and no install scripts, not minified. It's staged from this repository's workflow when a GitHub release is published, by trusted publishing (npm's OIDC exchange, no token), which records provenance, and published when a maintainer approves it with 2FA.
+Hosts run the npm package, which needs Node 18 or later: the app runs `npx --yes tether-server@<version> connect` under the host's login shell, pinned to the version it was built against. Nothing is installed beside npm's cache, and an update is the app naming the next version: that `connect` finds a daemon of another version and replaces it as above. The package is one file (`scripts/build-npm.ts`): everything bundled, the Agent SDK included, without the SDK's platform packages, no dependencies and no install scripts, not minified. It's staged from this repository's workflow when a GitHub release is published, by trusted publishing (npm's OIDC exchange, no token), which records provenance, and published when a maintainer approves it with 2FA.
 
 ## Protocol invariants
 
