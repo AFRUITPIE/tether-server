@@ -1,36 +1,68 @@
-name: Publish to npm
+name: Release
 
-# A GitHub release (made by `mise run release`) stages the same version on npm by trusted publishing:
-# npm takes this workflow's OIDC token instead of a stored one, and records where the package was
-# built (provenance). The package's trusted publisher on npmjs.com names this repository and this
-# file, and may only stage: a maintainer approves the version with 2FA before it's published
-# (`npm stage approve <id>`, or Staged Packages on npmjs.com).
+# Merging a version bump releases it. On each push to main, if package.json's version has no tag
+# yet, this tests and builds the npm package, stages it on npm, then tags that commit and publishes
+# its GitHub release (which the app's Swift package pin reads). Any other push does nothing.
+#
+# Staged by trusted publishing: npm takes this workflow's OIDC token instead of a stored one, and
+# records where the package was built (provenance). The package's trusted publisher on npmjs.com
+# names this repository and this file, and may only stage: a maintainer approves the version with
+# 2FA before it's published (`npm stage approve <id>`, or Staged Packages on npmjs.com).
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
+concurrency: release
+
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v4
+      - id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sdk=$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-agent-sdk']")" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "v$version is already released."
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.version.outputs.new == 'true'
+        uses: oven-sh/setup-bun@v2
+      - if: steps.version.outputs.new == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
       # Trusted publishing and staging need a recent npm; Node 22 comes with npm 10.
-      - run: npm install -g npm@latest
-      - run: bun install --frozen-lockfile
-      - run: bun test
-      - run: bun run scripts/build-npm.ts
+      - if: steps.version.outputs.new == 'true'
+        run: npm install -g npm@latest
+      - if: steps.version.outputs.new == 'true'
+        run: bun install --frozen-lockfile
+      - if: steps.version.outputs.new == 'true'
+        run: bun test
+      - if: steps.version.outputs.new == 'true'
+        run: bun run scripts/build-npm.ts
       # What npm will serve, run the way a host runs it.
-      - run: node npm/cli.js version --json
-      - run: npm stage publish ./npm --access public
+      - if: steps.version.outputs.new == 'true'
+        run: node npm/cli.js version --json
+      - if: steps.version.outputs.new == 'true'
+        run: npm stage publish ./npm --access public
+      # Tagged only once npm has it, so a failed run leaves nothing half released and the next
+      # push tries again.
+      - if: steps.version.outputs.new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SDK: ${{ steps.version.outputs.sdk }}
+        run: |
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" \
+            --notes "Tether server $VERSION, built against Claude Agent SDK $SDK. Approve the staged npm version to publish it."
