@@ -117,6 +117,8 @@ export class ThreadManager {
     extra: Pick<LiveThreadOptions, 'unattended'> = {},
   ): Promise<LiveThread> {
     const threadId = randomUUID();
+    // Before the worktree, which a missing claude would otherwise leave behind.
+    const claude = await this.runnable({ ...env, ...(p.env ?? {}) });
     const worktree = p.worktree ? await createWorktree(p.cwd, worktreeName(threadId)) : undefined;
     const cwd = worktree?.cwd ?? p.cwd;
     const t = new LiveThread({
@@ -124,7 +126,7 @@ export class ThreadManager {
       cwd,
       sessionTools: p.sessionTools ? this.sessionTools : undefined,
       threadId,
-      claude: this.claudeFor({ ...env, ...(p.env ?? {}) }),
+      claude,
       env: { ...env, ...(p.env ?? {}) },
       mode: 'new',
       ...extra,
@@ -189,7 +191,7 @@ export class ThreadManager {
       const t = new LiveThread({
         threadId: p.threadId,
         cwd,
-        claude: this.claudeFor({ ...env, ...(p.env ?? {}) }),
+        claude: await this.runnable({ ...env, ...(p.env ?? {}) }),
         env: { ...env, ...(p.env ?? {}) },
         mode: 'resume',
         seqAfter: this.lastSeqs.get(p.threadId),
@@ -276,11 +278,11 @@ export class ThreadManager {
         this.close(t.id);
       }
     }
-    for (const [cwd, c] of this.catalogs) {
+    for (const [key, c] of this.catalogs) {
       if (now - c.lastUsed > CATALOG_TTL_MS) {
         c.input.end();
         c.q.close();
-        this.catalogs.delete(cwd);
+        this.catalogs.delete(key);
       }
     }
   }
@@ -299,23 +301,40 @@ export class ThreadManager {
    * `claude` for a client whose host sends `env` (Settings ▸ Hosts ▸ Environment): looked up again
    * only when that names it (`TETHER_CLAUDE_PATH`) or sets `PATH`, and otherwise the daemon's own.
    */
-  claudeFor(env: Record<string, string>): ClaudeBinary {
-    if (!env.TETHER_CLAUDE_PATH && !env.PATH) return this.claude;
+  claudeFor(env: Record<string, string>): Promise<ClaudeBinary> {
+    // The daemon's own, unless it had none when it started: installed since, it's found now.
+    if (!env.TETHER_CLAUDE_PATH && !env.PATH && this.claude.path) return Promise.resolve(this.claude);
     return resolveClaude({ ...process.env, ...env });
+  }
+
+  /** `claude` to run something with, or why there isn't one. */
+  async runnable(env: Record<string, string>): Promise<ClaudeBinary> {
+    const claude = await this.claudeFor(env);
+    if (claude.path) return claude;
+    throw new RpcError(
+      ErrorCodes.sdkError,
+      env.TETHER_CLAUDE_PATH
+        ? `TETHER_CLAUDE_PATH (${env.TETHER_CLAUDE_PATH}) isn't an executable file on this host.`
+        : "`claude` isn't on this host's PATH or its login shell's. Install Claude Code, or name it with TETHER_CLAUDE_PATH in the host's environment.",
+    );
   }
 
   // ---------- catalog (models, commands, account) without starting a turn ----------
 
   async catalog(cwd: string | undefined, env: Record<string, string>): Promise<{ init: SDKControlInitializeResponse; q: Query }> {
     const dir = cwd ?? process.env.HOME ?? '/';
-    for (const t of this.threads.values()) if (t.cwd === dir && t.init && !t.isExited) return { init: t.init, q: t.query };
-    let c = this.catalogs.get(dir);
+    const claude = await this.runnable(env);
+    for (const t of this.threads.values())
+      if (t.cwd === dir && t.claudePath === claude.path && t.init && !t.isExited) return { init: t.init, q: t.query };
+    // Per claude as well as directory: one client's host can name a different one.
+    const key = `${dir}\0${claude.path}`;
+    let c = this.catalogs.get(key);
     if (!c) {
       const input = new PushQueue<SDKUserMessage>();
       const q = query({
         prompt: input,
         options: {
-          pathToClaudeCodeExecutable: this.claudeFor(env).path,
+          pathToClaudeCodeExecutable: claude.path,
           cwd: dir,
           env: { ...process.env, ...env, CLAUDE_AGENT_SDK_CLIENT_APP: `tether/${TETHER_VERSION}` },
           settingSources: ['user', 'project', 'local'],
@@ -323,13 +342,13 @@ export class ThreadManager {
         },
       });
       c = { q, input, init: q.initializationResult(), lastUsed: Date.now() };
-      this.catalogs.set(dir, c);
-      c.init.catch(() => this.catalogs.delete(dir));
+      this.catalogs.set(key, c);
+      c.init.catch(() => this.catalogs.delete(key));
       void (async () => {
         try {
           for await (const _ of q);
         } catch {}
-        this.catalogs.delete(dir);
+        this.catalogs.delete(key);
       })();
     }
     c.lastUsed = Date.now();
