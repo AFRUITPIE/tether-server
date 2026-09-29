@@ -153,6 +153,11 @@ export class LiveThread {
   /** Whether the client asked for session tools on this thread; only then are they allowed. */
   private readonly sessionToolsEnabled: boolean;
 
+  /** The `claude` this thread runs, for a catalog that could share it. */
+  get claudePath(): string {
+    return this.opts.claude.path;
+  }
+
   constructor(private opts: LiveThreadOptions) {
     this.id = opts.threadId;
     this.cwd = opts.cwd;

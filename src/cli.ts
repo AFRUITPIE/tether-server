@@ -11,8 +11,8 @@ const [cmd = 'help', ...args] = process.argv.slice(2);
 const log = (m: string) => process.stderr.write(`[tether ${new Date().toISOString()}] ${m}\n`);
 
 async function serveStdio() {
-  const claude = resolveClaude();
-  log(`serving on stdio; claude ${claude.version} at ${claude.path}`);
+  const claude = await resolveClaude();
+  log(claude.path ? `serving on stdio; claude ${claude.version} at ${claude.path}` : 'serving on stdio; no claude on PATH');
   const mgr = new ThreadManager(claude, log);
   const conn = new Connection(process.stdin, process.stdout, 'stdio');
   const session = new ClientSession(conn, mgr, 'stdio', log);

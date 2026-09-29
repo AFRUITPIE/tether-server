@@ -118,7 +118,7 @@ export class ClientSession implements Subscriber {
   }
 
   private handlers: { [M in MethodName]?: Handler<M> } = {
-    initialize: (p) => {
+    initialize: async (p) => {
       if (this.initialized) throw new RpcError(ErrorCodes.alreadyInitialized, 'Already initialized');
       const clientProtocol = p.protocolVersion ?? 1;
       if (clientProtocol < MIN_CLIENT_PROTOCOL) {
@@ -141,14 +141,14 @@ export class ClientSession implements Subscriber {
         protocolVersion: PROTOCOL_VERSION,
         minClientProtocol: MIN_CLIENT_PROTOCOL,
         host: { hostname: hostname(), platform: platform(), arch: arch(), home: homedir(), pid: process.pid, mode: this.mode },
-        claude: this.mgr.claude,
+        claude: await this.mgr.claudeFor(this.env),
       };
     },
 
-    'host/info': () => ({
+    'host/info': async () => ({
       loadedThreads: this.mgr.threads.size,
       uptimeSeconds: (Date.now() - this.mgr.startedAt) / 1000,
-      claude: this.mgr.claude,
+      claude: await this.mgr.claudeFor(this.env),
     }),
 
     'host/requestShutdown': (p) => {
@@ -328,17 +328,17 @@ export class ClientSession implements Subscriber {
       return {};
     },
 
-    'plugin/list': (p) => plugins.listPlugins(this.mgr.claude.path, p.cwd, this.env),
+    'plugin/list': async (p) => plugins.listPlugins((await this.mgr.runnable(this.env)).path, p.cwd, this.env),
     'plugin/install': async (p) => {
-      await plugins.installPlugin(this.mgr.claude.path, p.pluginId, p.scope, p.cwd, this.env);
+      await plugins.installPlugin((await this.mgr.runnable(this.env)).path, p.pluginId, p.scope, p.cwd, this.env);
       return {};
     },
     'plugin/uninstall': async (p) => {
-      await plugins.uninstallPlugin(this.mgr.claude.path, p.pluginId, p.scope, p.cwd, this.env);
+      await plugins.uninstallPlugin((await this.mgr.runnable(this.env)).path, p.pluginId, p.scope, p.cwd, this.env);
       return {};
     },
     'plugin/setEnabled': async (p) => {
-      await plugins.setPluginEnabled(this.mgr.claude.path, p.pluginId, p.enabled, p.scope, p.cwd, this.env);
+      await plugins.setPluginEnabled((await this.mgr.runnable(this.env)).path, p.pluginId, p.enabled, p.scope, p.cwd, this.env);
       return {};
     },
 
