@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { PROTOCOL_VERSION } from '../src/protocol/index.ts';
 import { Connection, ErrorCodes } from '../src/rpc/connection.ts';
@@ -70,6 +73,18 @@ describe('method routing', () => {
     expect(r.loadedThreads).toBe(0);
     expect(r.claude).toEqual(claude);
     expect(r.uptimeSeconds).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('a host that names its claude', () => {
+  /** A company wrapper the daemon's PATH doesn't reach, named in Settings ▸ Hosts ▸ Environment. */
+  test('initialize reports that claude, not the daemon\'s', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tether-wrapper-'));
+    const wrapper = join(dir, 'claude');
+    writeFileSync(wrapper, '#!/bin/sh\necho "9.9.9 (Claude Code)"\n');
+    chmodSync(wrapper, 0o755);
+    const r = await connect().call('initialize', { clientInfo, protocolVersion: PROTOCOL_VERSION, env: { TETHER_CLAUDE_PATH: wrapper } });
+    expect(r.claude).toEqual({ path: wrapper, version: '9.9.9' });
   });
 });
 

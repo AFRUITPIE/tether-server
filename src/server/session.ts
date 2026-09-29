@@ -141,14 +141,14 @@ export class ClientSession implements Subscriber {
         protocolVersion: PROTOCOL_VERSION,
         minClientProtocol: MIN_CLIENT_PROTOCOL,
         host: { hostname: hostname(), platform: platform(), arch: arch(), home: homedir(), pid: process.pid, mode: this.mode },
-        claude: this.mgr.claude,
+        claude: this.mgr.claudeFor(this.env),
       };
     },
 
     'host/info': () => ({
       loadedThreads: this.mgr.threads.size,
       uptimeSeconds: (Date.now() - this.mgr.startedAt) / 1000,
-      claude: this.mgr.claude,
+      claude: this.mgr.claudeFor(this.env),
     }),
 
     'host/requestShutdown': (p) => {
@@ -328,17 +328,17 @@ export class ClientSession implements Subscriber {
       return {};
     },
 
-    'plugin/list': (p) => plugins.listPlugins(this.mgr.claude.path, p.cwd, this.env),
+    'plugin/list': (p) => plugins.listPlugins(this.mgr.claudeFor(this.env).path, p.cwd, this.env),
     'plugin/install': async (p) => {
-      await plugins.installPlugin(this.mgr.claude.path, p.pluginId, p.scope, p.cwd, this.env);
+      await plugins.installPlugin(this.mgr.claudeFor(this.env).path, p.pluginId, p.scope, p.cwd, this.env);
       return {};
     },
     'plugin/uninstall': async (p) => {
-      await plugins.uninstallPlugin(this.mgr.claude.path, p.pluginId, p.scope, p.cwd, this.env);
+      await plugins.uninstallPlugin(this.mgr.claudeFor(this.env).path, p.pluginId, p.scope, p.cwd, this.env);
       return {};
     },
     'plugin/setEnabled': async (p) => {
-      await plugins.setPluginEnabled(this.mgr.claude.path, p.pluginId, p.enabled, p.scope, p.cwd, this.env);
+      await plugins.setPluginEnabled(this.mgr.claudeFor(this.env).path, p.pluginId, p.enabled, p.scope, p.cwd, this.env);
       return {};
     },
 

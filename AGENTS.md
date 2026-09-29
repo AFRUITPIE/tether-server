@@ -73,6 +73,8 @@ When the server's version changes, `connect` requests a graceful daemon shutdown
 
 Hosts run the npm package, which needs Node 18 or later: the app runs `npx --yes tether-server@<version> connect` under the host's login shell, pinned to the version it was built against. Nothing is installed beside npm's cache, and an update is the app naming the next version: that `connect` finds a daemon of another version and replaces it as above. The package is one file (`scripts/build-npm.ts`): everything bundled, the Agent SDK included, without the SDK's platform packages, no dependencies and no install scripts, not minified. It's staged from this repository's workflow when a version bump is merged, by trusted publishing (npm's OIDC exchange, no token), which records provenance, and published when a maintainer approves it with 2FA.
 
+The daemon finds `claude` once, when it starts, on the PATH of the first `connect` (a login shell's, not an interactive one's), or at `TETHER_CLAUDE_PATH`. A client whose host's environment (Settings ▸ Hosts ▸ Environment in the app) sets `TETHER_CLAUDE_PATH` or `PATH` gets `claude` looked up there instead, for its chats, the catalog, plugins and what `initialize` reports (`ThreadManager.claudeFor`): a company wrapper that only an interactive shell's PATH reaches can be named there, without restarting the daemon. Either way the SDK runs the file as it is, so a wrapper's exports reach Claude Code.
+
 ## Protocol invariants
 
 - The wire format is JSON-RPC 2.0-shaped JSONL without a `"jsonrpc"` member: one object per line.

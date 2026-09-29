@@ -13,7 +13,7 @@ import {
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
-import type { ClaudeBinary } from '../claude.ts';
+import { type ClaudeBinary, resolveClaude } from '../claude.ts';
 import type { Item, Params, ScheduledTask, ThreadSummary, Turn } from '../protocol/index.ts';
 import type { Scheduler } from './Scheduler.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
@@ -124,7 +124,7 @@ export class ThreadManager {
       cwd,
       sessionTools: p.sessionTools ? this.sessionTools : undefined,
       threadId,
-      claude: this.claude,
+      claude: this.claudeFor({ ...env, ...(p.env ?? {}) }),
       env: { ...env, ...(p.env ?? {}) },
       mode: 'new',
       ...extra,
@@ -189,7 +189,7 @@ export class ThreadManager {
       const t = new LiveThread({
         threadId: p.threadId,
         cwd,
-        claude: this.claude,
+        claude: this.claudeFor({ ...env, ...(p.env ?? {}) }),
         env: { ...env, ...(p.env ?? {}) },
         mode: 'resume',
         seqAfter: this.lastSeqs.get(p.threadId),
@@ -295,6 +295,15 @@ export class ThreadManager {
     this.catalogs.clear();
   }
 
+  /**
+   * `claude` for a client whose host sends `env` (Settings ▸ Hosts ▸ Environment): looked up again
+   * only when that names it (`TETHER_CLAUDE_PATH`) or sets `PATH`, and otherwise the daemon's own.
+   */
+  claudeFor(env: Record<string, string>): ClaudeBinary {
+    if (!env.TETHER_CLAUDE_PATH && !env.PATH) return this.claude;
+    return resolveClaude({ ...process.env, ...env });
+  }
+
   // ---------- catalog (models, commands, account) without starting a turn ----------
 
   async catalog(cwd: string | undefined, env: Record<string, string>): Promise<{ init: SDKControlInitializeResponse; q: Query }> {
@@ -306,7 +315,7 @@ export class ThreadManager {
       const q = query({
         prompt: input,
         options: {
-          pathToClaudeCodeExecutable: this.claude.path,
+          pathToClaudeCodeExecutable: this.claudeFor(env).path,
           cwd: dir,
           env: { ...process.env, ...env, CLAUDE_AGENT_SDK_CLIENT_APP: `tether/${TETHER_VERSION}` },
           settingSources: ['user', 'project', 'local'],
