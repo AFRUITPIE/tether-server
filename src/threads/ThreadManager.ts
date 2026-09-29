@@ -2,7 +2,6 @@ import {
   deleteSession,
   forkSession,
   getSessionInfo,
-  getSessionMessages,
   listSessions,
   query,
   renameSession,
@@ -18,8 +17,9 @@ import type { Item, Params, ScheduledTask, ThreadSummary, Turn } from '../protoc
 import type { Scheduler } from './Scheduler.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { createWorktree, removeWorktree, worktreeName } from '../server/fsApi.ts';
-import { Itemizer } from './itemizer.ts';
+import { Itemizer, pageBounds, type Page } from './itemizer.ts';
 import { FollowedThread, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
+import { ingestAll, storedHistory } from './history.ts';
 import { LiveThread, TETHER_VERSION, type LiveThreadOptions } from './LiveThread.ts';
 import { PushQueue } from './pushQueue.ts';
 
@@ -80,13 +80,23 @@ export class ThreadManager {
   async follow(threadId: string, cwd?: string): Promise<FollowedThread | undefined> {
     if (this.loaded(threadId)) return undefined;
     const existing = this.followed.get(threadId);
-    if (existing) return existing;
+    if (existing) return existing.start().then(() => existing);
     const info = await sessionInfo(threadId, cwd);
     const dir = cwd ?? info?.cwd;
     if (!dir) return undefined;
+    // Another read may have started following it meanwhile. Either way, its history is read whole
+    // before anyone takes a snapshot of it: a long one takes a moment.
+    const raced = this.followed.get(threadId);
+    if (raced) return raced.start().then(() => raced);
     const follower = new FollowedThread(threadId, dir, this.lastSeqs.get(threadId));
     this.followed.set(threadId, follower);
-    await follower.start();
+    try {
+      await follower.start();
+    } catch (e) {
+      this.followed.delete(threadId);
+      follower.close();
+      throw e;
+    }
     this.log(`following ${threadId} in ${dir}`);
     return follower;
   }
@@ -408,11 +418,12 @@ export class ThreadManager {
     if (!live) {
       // Follow on read, not subscribe: the seq handed back has to come from the follower that
       // will replay to the client after it.
-      const follower = this.following(threadId) ?? (await this.follow(threadId, cwd));
+      const follower = await this.follow(threadId, cwd);
       if (follower) {
-        const snap = follower.history();
+        const snap = follower.history(page);
         return {
-          ...pageOf(snap.items, page),
+          items: snap.items,
+          hasMore: snap.hasMore,
           turns: snap.turns,
           historySeq: snap.seq,
           ...(summary ? { summary } : {}),
@@ -467,10 +478,11 @@ export class ThreadManager {
     },
   };
 
+  /** The whole stored history, through compactions (see `storedHistory`). */
   private async readStored(threadId: string, cwd?: string) {
-    const msgs = await getSessionMessages(threadId, { ...(cwd ? { dir: cwd } : {}), includeSystemMessages: true });
+    const { messages } = await storedHistory(threadId, cwd);
     const iz = new Itemizer(Date.now, true);
-    for (const m of msgs) iz.ingest(m as any);
+    await ingestAll(messages, (m) => iz.ingest(m as any));
     iz.closeTurn('completed');
     return iz.snapshot();
   }
@@ -512,17 +524,9 @@ export function mergeHistory(stored: Snapshot, live: Snapshot): Snapshot {
   return { items, turns };
 }
 
-/**
- * The requested window of a transcript, from the end. Pages are over items, not messages on
- * disk: itemizing a slice of messages alone would lose the turn each item belongs to.
- */
-function pageOf(items: Item[], page?: { limit?: number; before?: string }): { items: Item[]; hasMore: boolean } {
-  let end = items.length;
-  if (page?.before) {
-    const i = items.findIndex((x) => x.id === page.before);
-    if (i >= 0) end = i;
-  }
-  const start = page?.limit ? Math.max(0, end - page.limit) : 0;
+/** The requested window of a transcript, from the end (see `pageBounds`). */
+function pageOf(items: Item[], page?: Page): { items: Item[]; hasMore: boolean } {
+  const { start, end } = pageBounds(items.map((i) => i.id), page);
   return { items: items.slice(start, end), hasMore: start > 0 };
 }
 

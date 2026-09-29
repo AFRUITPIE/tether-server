@@ -244,7 +244,7 @@ export class Itemizer {
           id: msg.uuid ?? `compact_${++this.fallbackCounter}`,
           turnId: this.turn?.id ?? null,
           parentToolUseId: null,
-          createdAt: this.now(),
+          createdAt: msg.timestamp ? Date.parse(msg.timestamp) : this.now(),
           ...(md.trigger ? { trigger: md.trigger } : {}),
           ...(md.pre_tokens !== undefined ? { preTokens: md.pre_tokens } : {}),
           ...(md.post_tokens !== undefined ? { postTokens: md.post_tokens } : {}),
@@ -633,6 +633,8 @@ export class Itemizer {
     }
     if (msg.uuid && this.echoUuids.has(msg.uuid)) return out;
     if (msg.isReplay) return out;
+    // The summary a compaction hands the model, after its boundary; the boundary's item marks it.
+    if (msg.isCompactSummary) return out;
     let inputs = userContentToInputs(content);
     if (inputs.length === 0) return out;
     const id: string = msg.uuid ?? `user_${++this.fallbackCounter}`;
@@ -781,12 +783,31 @@ export class Itemizer {
     return out;
   }
 
-  snapshot(): { items: Item[]; turns: Turn[] } {
+  /** Copies of the items and turns; with `page`, of its items only, not of a whole long transcript. */
+  snapshot(page?: Page): { items: Item[]; turns: Turn[]; hasMore: boolean } {
+    const { start, end } = pageBounds(this.order, page);
     return {
-      items: this.order.map((id) => structuredClone(this.items.get(id)!)),
+      items: this.order.slice(start, end).map((id) => structuredClone(this.items.get(id)!)),
       turns: this.turns.map((t) => structuredClone(t)),
+      hasMore: start > 0,
     };
   }
+}
+
+export type Page = { limit?: number; before?: string };
+
+/**
+ * The window of a transcript a page asks for, from the end: `limit` items before `before`. Pages are
+ * over items, not messages on disk: itemizing a slice of messages alone would lose the turn each
+ * item belongs to.
+ */
+export function pageBounds(ids: readonly string[], page?: Page): { start: number; end: number } {
+  let end = ids.length;
+  if (page?.before) {
+    const i = ids.indexOf(page.before);
+    if (i >= 0) end = i;
+  }
+  return { start: page?.limit ? Math.max(0, end - page.limit) : 0, end };
 }
 
 /**
