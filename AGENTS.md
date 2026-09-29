@@ -27,7 +27,7 @@ mise run compile
 - `mise run swift-test`: verify Swift decoding against recorded wire traffic.
 - `mise run build-npm`: the npm package under `npm/`: one bundled file for Node 18 or later, no dependencies (`--dev` stamps a dev version).
 - `mise run compile`: standalone darwin/linux × arm64/x64 binaries under `dist/`, which CI runs the CLI tests against.
-- `mise run release`: tag `package.json`'s version and publish its GitHub release, which stages the same version on npm (`.github/workflows/npm.yml`, by trusted publishing, with provenance; no token is stored anywhere). It goes live once a maintainer approves it with 2FA: `npm stage approve <id>`, or Staged Packages on npmjs.com.
+- Releasing: bump `package.json`'s version and merge. On a push to main whose version has no tag, `.github/workflows/npm.yml` tests and builds the npm package, stages it on npm (trusted publishing, with provenance; no token is stored anywhere), then tags the commit and publishes its GitHub release, which the app's Swift package pin reads. It goes live once a maintainer approves it with 2FA: `npm stage approve <id>`, or Staged Packages on npmjs.com.
 - `mise run e2e`: real Claude Code E2E tests. These use the configured account/provider and can incur cost; do not run casually.
 
 ## Repository map
@@ -71,7 +71,7 @@ When the server's version changes, `connect` requests a graceful daemon shutdown
 
 ## How hosts run it
 
-Hosts run the npm package, which needs Node 18 or later: the app runs `npx --yes tether-server@<version> connect` under the host's login shell, pinned to the version it was built against. Nothing is installed beside npm's cache, and an update is the app naming the next version: that `connect` finds a daemon of another version and replaces it as above. The package is one file (`scripts/build-npm.ts`): everything bundled, the Agent SDK included, without the SDK's platform packages, no dependencies and no install scripts, not minified. It's staged from this repository's workflow when a GitHub release is published, by trusted publishing (npm's OIDC exchange, no token), which records provenance, and published when a maintainer approves it with 2FA.
+Hosts run the npm package, which needs Node 18 or later: the app runs `npx --yes tether-server@<version> connect` under the host's login shell, pinned to the version it was built against. Nothing is installed beside npm's cache, and an update is the app naming the next version: that `connect` finds a daemon of another version and replaces it as above. The package is one file (`scripts/build-npm.ts`): everything bundled, the Agent SDK included, without the SDK's platform packages, no dependencies and no install scripts, not minified. It's staged from this repository's workflow when a version bump is merged, by trusted publishing (npm's OIDC exchange, no token), which records provenance, and published when a maintainer approves it with 2FA.
 
 ## Protocol invariants
 
