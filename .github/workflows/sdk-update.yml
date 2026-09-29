@@ -1,0 +1,54 @@
+name: Agent SDK update
+
+# A new Claude Agent SDK becomes a pull request: the dependency, and the server's next patch version,
+# so merging it releases the server on the new SDK. Checked against the tests before it's opened.
+# Daily, and by hand.
+on:
+  schedule:
+    - cron: "7 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          latest=$(npm view @anthropic-ai/claude-agent-sdk version)
+          current=$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-agent-sdk']")
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          if [ "$latest" = "$current" ]; then
+            echo "Already on Agent SDK $current."
+          elif git ls-remote --exit-code --heads origin "agent-sdk-$latest" > /dev/null; then
+            echo "agent-sdk-$latest is already open."
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.check.outputs.new == 'true'
+        uses: oven-sh/setup-bun@v2
+      - if: steps.check.outputs.new == 'true'
+        env:
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          bun add --exact "@anthropic-ai/claude-agent-sdk@$LATEST"
+          npm version patch --no-git-tag-version
+          bunx tsc --noEmit
+          bun test
+      - if: steps.check.outputs.new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "agent-sdk-$LATEST"
+          git commit -am "Agent SDK $LATEST, as $version"
+          git push origin "agent-sdk-$LATEST"
+          gh pr create --head "agent-sdk-$LATEST" --title "Agent SDK $LATEST" \
+            --body "Claude Agent SDK $LATEST is out. This moves to it and makes the server $version; typecheck and tests passed in the run that opened this. Merging it releases $version (approve it on npm), and the app picks it up."
