@@ -1,13 +1,12 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import { createReadStream, watch, type FSWatcher } from 'node:fs';
-import { open, readdir, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { open, stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import type { EffortLevel, Item, PermissionMode, ThreadInfo, Turn } from '../protocol/index.ts';
 import { EffortLevel as EffortLevelSchema, PermissionMode as PermissionModeSchema } from '../protocol/common.ts';
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
-import { Itemizer, type Emission } from './itemizer.ts';
+import { boundariesIn, ingestAll, markCompaction, sessionFile, storedHistory } from './history.ts';
+import { Itemizer, type Emission, type Page } from './itemizer.ts';
 import type { Subscriber } from './LiveThread.ts';
 import { replayGap, seqOrigin } from './seq.ts';
 
@@ -26,8 +25,8 @@ export interface WatchableThread {
 
 /**
  * A session another client owns (the desktop app, a terminal), followed by watching its
- * transcript on disk. Read-only, so it stays `notLoaded`. Appends are read from the last ingested
- * message on, since a long session's transcript reaches tens of megabytes.
+ * transcript on disk. Read-only, so it stays `notLoaded`. Its whole history is read once; after
+ * that only the SDK's current chain is, and what it holds that hasn't been seen yet is appended.
  */
 export class FollowedThread implements WatchableThread {
   readonly id: string;
@@ -36,12 +35,17 @@ export class FollowedThread implements WatchableThread {
   private readonly subscribers = new Set<Subscriber>();
   private readonly buffer: { seq: number; method: string; params: unknown }[] = [];
   private seq: number;
-  private ingested = 0;
+  /** The messages ingested, by uuid: a new compaction's chain repeats the ones it kept. */
+  private readonly seen = new Set<string>();
+  /** Compaction boundaries in the file, to mark the ones the SDK's chain brings. */
+  private boundaries = new Map<string, Record<string, unknown>>();
+  private started?: Promise<void>;
+  private closed = false;
   private watcher?: FSWatcher;
   private path?: string;
   /** The owning client's model, effort and permission mode, for the attached client's controls. */
   private settings: SessionSettings = {};
-  /** How far into the file `settings` has been read. */
+  /** How far into the file has been read for `settings` and `boundaries`. */
   private settingsOffset = 0;
   private pending?: ReturnType<typeof setTimeout>;
   private reading = false;
@@ -53,19 +57,29 @@ export class FollowedThread implements WatchableThread {
     this.seq = seqOrigin(seqAfter);
   }
 
-  /** Reads what is already on disk without emitting: the snapshot `thread/read` hands back. */
-  async start(): Promise<void> {
-    const msgs = await getSessionMessages(this.id, { dir: this.cwd, includeSystemMessages: true });
-    for (const m of msgs) this.itemizer.ingest(m as never);
-    this.ingested = msgs.length;
-    this.path = await transcriptPath(this.id);
+  /** Reads what is already on disk without emitting: the snapshot `thread/read` hands back. Once. */
+  start(): Promise<void> {
+    return (this.started ??= this.load());
+  }
+
+  private async load(): Promise<void> {
+    const history = await storedHistory(this.id, this.cwd);
+    await ingestAll(history.messages, (m) => {
+      this.seen.add(m.uuid);
+      this.itemizer.ingest(m as never);
+    });
+    if (history.boundaries) this.boundaries = new Map(history.boundaries);
+    this.path = history.path ?? (await sessionFile(this.id, this.cwd));
     await this.readSettings();
+    // Lines written since the history's read are looked through again, for compactions (the
+    // settings come out the same).
+    if (history.end !== undefined) this.settingsOffset = Math.min(this.settingsOffset, history.end);
     await this.watchFile();
   }
 
   private async watchFile(): Promise<void> {
     const path = this.path;
-    if (!path) return; // Nothing to watch; the snapshot still stands.
+    if (!path || this.closed) return; // Nothing to watch (or no one to tell); the snapshot still stands.
     try {
       this.watcher = watch(path, () => this.schedule());
     } catch {
@@ -89,18 +103,17 @@ export class FollowedThread implements WatchableThread {
     }
     this.reading = true;
     try {
-      const msgs = await getSessionMessages(this.id, {
-        dir: this.cwd,
-        offset: this.ingested,
-        includeSystemMessages: true,
-      });
-      if (msgs.length) {
-        this.ingested += msgs.length;
-        for (const m of msgs) this.emitAll(this.itemizer.ingest(m as never));
-        if (await this.updateSettings()) this.emit('thread/updated', { thread: this.threadInfo() });
+      const msgs = await getSessionMessages(this.id, { dir: this.cwd, includeSystemMessages: true });
+      const fresh = msgs.filter((m) => !this.seen.has(m.uuid));
+      // After the SDK's read, so every line it saw has been looked through.
+      const changed = await this.readAppended();
+      for (const m of fresh) {
+        this.seen.add(m.uuid);
+        this.emitAll(this.itemizer.ingest(markCompaction(m, this.boundaries) as never));
       }
+      if (changed) this.emit('thread/updated', { thread: this.threadInfo() });
     } catch {
-      // The file may be mid-write or gone; the next change re-reads from the same offset.
+      // The file may be mid-write or gone; the next change reads it again.
     } finally {
       this.reading = false;
       if (this.again) {
@@ -136,8 +149,11 @@ export class FollowedThread implements WatchableThread {
     this.settingsOffset = read.end;
   }
 
-  /** Folds in lines appended since the last read. Returns whether the settings changed. */
-  private async updateSettings(): Promise<boolean> {
+  /**
+   * Folds in lines appended since the last read: settings, and compactions for `markCompaction`.
+   * Returns whether the settings changed.
+   */
+  private async readAppended(): Promise<boolean> {
     if (!this.path) return false;
     const before = JSON.stringify(this.settings);
     const { size } = await stat(this.path);
@@ -146,6 +162,7 @@ export class FollowedThread implements WatchableThread {
     } else {
       const added = await readFrom(this.path, this.settingsOffset);
       this.settingsOffset = added.end;
+      boundariesIn(added.lines, this.boundaries);
       const newer = settingsFrom(added.lines);
       const next = { ...this.settings };
       if (newer.model) {
@@ -159,8 +176,9 @@ export class FollowedThread implements WatchableThread {
     return JSON.stringify(this.settings) !== before;
   }
 
-  history(): { items: Item[]; turns: Turn[]; seq: number } {
-    return { ...this.itemizer.snapshot(), seq: this.seq };
+  /** The snapshot `thread/read` hands back, a page of it when asked, and the seq it goes up to. */
+  history(page?: Page): { items: Item[]; turns: Turn[]; hasMore: boolean; seq: number } {
+    return { ...this.itemizer.snapshot(page), seq: this.seq };
   }
 
   subscribe(sub: Subscriber, afterSeq?: number): { replayed: number; gap: boolean } {
@@ -188,6 +206,7 @@ export class FollowedThread implements WatchableThread {
   }
 
   close(): void {
+    this.closed = true;
     if (this.pending) clearTimeout(this.pending);
     this.pending = undefined;
     this.watcher?.close();
@@ -197,31 +216,11 @@ export class FollowedThread implements WatchableThread {
 }
 
 /**
- * Where Claude Code keeps a session's transcript. The project folder name is the CLI's own
- * flattening of the cwd, so the id is looked for rather than the path derived.
- */
-async function transcriptPath(threadId: string): Promise<string | undefined> {
-  const root = join(homedir(), '.claude', 'projects');
-  let dirs;
-  try {
-    dirs = await readdir(root, { withFileTypes: true });
-  } catch {
-    return undefined;
-  }
-  for (const dir of dirs) {
-    if (!dir.isDirectory()) continue;
-    const candidate = join(root, dir.name, `${threadId}.jsonl`);
-    if (await stat(candidate).then(() => true, () => false)) return candidate;
-  }
-  return undefined;
-}
-
-/**
  * The cwd a transcript records. The SDK looks for it only near the top of the file, which a first
  * message carrying images can push past, leaving the session without one.
  */
 export async function transcriptCwd(threadId: string): Promise<string | undefined> {
-  const path = await transcriptPath(threadId);
+  const path = await sessionFile(threadId);
   return path ? recordedCwd(path) : undefined;
 }
 
@@ -248,7 +247,7 @@ export async function recordedCwd(path: string): Promise<string | undefined> {
 
 /** The settings a session last ran with, as its transcript records them. */
 export async function transcriptSettings(threadId: string): Promise<SessionSettings> {
-  const path = await transcriptPath(threadId);
+  const path = await sessionFile(threadId);
   return path ? (await recordedSettings(path)).settings : {};
 }
 
