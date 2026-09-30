@@ -89,6 +89,22 @@ export const Methods = {
     result: z.object({ models: z.array(ModelInfo) }),
   },
 
+  /**
+   * What a new thread in `cwd` starts with when nothing is chosen, as Claude Code's own settings on
+   * the host decide: the model, the effort it sends that model (`model` when given, else the
+   * default one), and the permission mode an interactive session starts in (`permissions.
+   * defaultMode`, else auto where the model supports it, else default). `thread/start` without a
+   * permission mode starts in that mode.
+   */
+  'session/defaults': {
+    params: z.object({ cwd: z.string().optional(), model: z.string().optional() }),
+    result: z.object({
+      model: z.string().optional(),
+      effort: EffortLevel.nullable(),
+      permissionMode: PermissionMode,
+    }),
+  },
+
   'command/list': {
     params: z.object({ cwd: z.string().optional(), threadId: z.string().optional() }),
     result: z.object({ commands: z.array(SlashCommand) }),

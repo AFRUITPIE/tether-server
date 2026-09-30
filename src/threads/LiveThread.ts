@@ -232,6 +232,7 @@ export class LiveThread {
       this.info.fastModeDisabledReason = (this.init as any).fast_mode_disabled_reason;
     this.info.outputStyle = this.init.output_style;
     if (o.fastMode !== undefined) await this.q.applyFlagSettings({ fastMode: o.fastMode });
+    await this.readAppliedEffort();
     this.setStatus('idle');
   }
 
@@ -444,13 +445,27 @@ export class LiveThread {
   async setModel(model: string | null) {
     await this.q.setModel(model ?? undefined);
     this.info.model = model ?? undefined;
+    // Each model has its own default effort.
+    await this.readAppliedEffort();
     this.emit('thread/updated', { thread: this.threadInfo() });
   }
 
   async setEffort(effort: EffortLevel | null) {
     await this.q.applyFlagSettings({ effortLevel: effort });
     this.info.effort = effort;
+    await this.readAppliedEffort();
     this.emit('thread/updated', { thread: this.threadInfo() });
+  }
+
+  /**
+   * The effort Claude Code sends, chosen or its default for the model, as `appliedEffort`. Left
+   * unknown on a Claude Code without get_settings.
+   */
+  private async readAppliedEffort() {
+    try {
+      const applied = (await (this.q as any).getSettings?.())?.applied;
+      if (applied && 'effort' in applied) this.info.appliedEffort = applied.effort ?? null;
+    } catch {}
   }
 
   async setFastMode(enabled: boolean) {

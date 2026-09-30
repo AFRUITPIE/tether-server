@@ -173,6 +173,8 @@ export class ClientSession implements Subscriber {
       return { models: init.models as any };
     },
 
+    'session/defaults': (p) => this.mgr.defaults(p.cwd, this.env, p.model),
+
     'command/list': async (p) => {
       const q = p.threadId ? this.mgr.get(p.threadId).query : (await this.mgr.catalog(p.cwd, this.env)).q;
       const [cmds, init] = await Promise.all([q.supportedCommands(), q.initializationResult()]);
