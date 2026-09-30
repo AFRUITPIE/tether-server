@@ -286,6 +286,46 @@
         "additionalProperties": false
       }
     },
+    "session/defaults": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "effort": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EffortLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permissionMode": {
+            "$ref": "#/$defs/PermissionMode"
+          }
+        },
+        "required": [
+          "effort",
+          "permissionMode"
+        ],
+        "additionalProperties": false
+      }
+    },
     "command/list": {
       "params": {
         "type": "object",
@@ -3265,6 +3305,17 @@
         "max"
       ]
     },
+    "PermissionMode": {
+      "type": "string",
+      "enum": [
+        "default",
+        "acceptEdits",
+        "bypassPermissions",
+        "plan",
+        "dontAsk",
+        "auto"
+      ]
+    },
     "SlashCommand": {
       "type": "object",
       "properties": {
@@ -3359,17 +3410,6 @@
         "interrupted",
         "closed",
         "error"
-      ]
-    },
-    "PermissionMode": {
-      "type": "string",
-      "enum": [
-        "default",
-        "acceptEdits",
-        "bypassPermissions",
-        "plan",
-        "dontAsk",
-        "auto"
       ]
     },
     "ThinkingSetting": {
@@ -3531,6 +3571,16 @@
           "type": "string"
         },
         "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EffortLevel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "appliedEffort": {
           "anyOf": [
             {
               "$ref": "#/$defs/EffortLevel"

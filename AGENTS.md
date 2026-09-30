@@ -101,6 +101,8 @@ The daemon finds `claude` when it starts, on the PATH of the first `connect` (a 
 - Keep partial-message streaming, file checkpointing, permission callbacks, elicitation, stderr, task events, and initialization data routed through the typed Tether protocol.
 - Session tools (`sessionTools` on `thread/start`/`thread/resume`) are an in-process MCP server named `tether`. Only its own tools (`SESSION_TOOL_NAMES`), and only on a thread that asked for them, skip the permission prompt; any other `mcp__tether__…` tool, such as one from a project's own server of that name, is asked about like every other tool.
 
+- What a session starts with is Claude Code's, as an interactive session would have it. `session/defaults` asks a catalog session (never a thread's: it changes the session's model through flag settings to ask about another, one question at a time, and puts it back) for `getSettings().applied`: the model, and the effort Claude Code sends it (its per-model default when none is chosen). The permission mode is `startingPermissionMode`: the settings' `defaultMode` after `filterEscalatingDefaultMode`, else auto where the model supports it and `disableAutoMode` doesn't forbid it, else default. `thread/start` without a permission mode starts in that mode, since the SDK's own start is always default; a scheduled run keeps default. A live thread reports its applied effort as `appliedEffort`, read after it starts and after its model or effort changes. An older Claude Code without get_settings leaves both unknown.
+
 SDK types and events can change between Claude Code versions. Be defensive around optional fields, preserve raw unknown events, and cover newly observed shapes with recorded fixtures before tightening assumptions.
 
 ## Itemization and history

@@ -11,10 +11,11 @@ import {
   type SDKControlInitializeResponse,
   type SDKSessionInfo,
   type SDKUserMessage,
+  filterEscalatingDefaultMode,
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
 import { type ClaudeBinary, resolveClaude } from '../claude.ts';
-import type { Item, Params, ScheduledTask, ThreadSummary, Turn } from '../protocol/index.ts';
+import { PermissionMode, type Item, type Params, type Result, type ScheduledTask, type ThreadSummary, type Turn } from '../protocol/index.ts';
 import type { Scheduler } from './Scheduler.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { createWorktree, removeWorktree, worktreeName } from '../server/fsApi.ts';
@@ -34,6 +35,10 @@ export class ThreadManager {
   readonly threads = new Map<string, LiveThread>();
   private starting = new Map<string, Promise<LiveThread>>();
   private catalogs = new Map<string, Catalog>();
+  /** `defaults` changes a catalog session's model to ask about another, so it asks one at a time. */
+  private asking = new WeakMap<Query, Promise<unknown>>();
+  /** The model a catalog session started on, the host's own, to go back to after asking. */
+  private hostModels = new WeakMap<Query, string>();
   private sweeper: ReturnType<typeof setInterval>;
   readonly startedAt = Date.now();
   /** Set by the daemon; invoked once a requested shutdown can proceed without killing work. */
@@ -119,6 +124,12 @@ export class ThreadManager {
     const threadId = randomUUID();
     // Before the worktree, which a missing claude would otherwise leave behind.
     const claude = await this.runnable({ ...env, ...(p.env ?? {}) });
+    // Asked for no permission mode, a thread a person starts starts as an interactive session
+    // would: the SDK's own start is always `default`. A scheduled run keeps that.
+    if (!p.permissionMode && !extra.unattended) {
+      const d = await this.defaults(p.cwd, { ...env, ...(p.env ?? {}) }, p.model).catch(() => undefined);
+      if (d) p = { ...p, permissionMode: d.permissionMode };
+    }
     const worktree = p.worktree ? await createWorktree(p.cwd, worktreeName(threadId)) : undefined;
     const cwd = worktree?.cwd ?? p.cwd;
     const t = new LiveThread({
@@ -321,11 +332,17 @@ export class ThreadManager {
 
   // ---------- catalog (models, commands, account) without starting a turn ----------
 
-  async catalog(cwd: string | undefined, env: Record<string, string>): Promise<{ init: SDKControlInitializeResponse; q: Query }> {
+  /** `ownSession`: never a thread's session, for a question that changes the session it asks. */
+  async catalog(
+    cwd: string | undefined,
+    env: Record<string, string>,
+    opts: { ownSession?: boolean } = {},
+  ): Promise<{ init: SDKControlInitializeResponse; q: Query }> {
     const dir = cwd ?? process.env.HOME ?? '/';
     const claude = await this.runnable(env);
-    for (const t of this.threads.values())
-      if (t.cwd === dir && t.claudePath === claude.path && t.init && !t.isExited) return { init: t.init, q: t.query };
+    if (!opts.ownSession)
+      for (const t of this.threads.values())
+        if (t.cwd === dir && t.claudePath === claude.path && t.init && !t.isExited) return { init: t.init, q: t.query };
     // Per claude as well as directory: one client's host can name a different one.
     const key = `${dir}\0${claude.path}`;
     let c = this.catalogs.get(key);
@@ -353,6 +370,45 @@ export class ThreadManager {
     }
     c.lastUsed = Date.now();
     return { init: await c.init, q: c.q };
+  }
+
+  /**
+   * What a new thread in `cwd` starts with when nothing is chosen (`session/defaults`): the model
+   * and the effort Claude Code would send it, as its own settings on the host decide, and the
+   * permission mode an interactive session starts in. Asked of a catalog session, whose model is
+   * set to `model` for the question and put back after; never a thread's session.
+   */
+  async defaults(cwd: string | undefined, env: Record<string, string>, model?: string): Promise<Result<'session/defaults'>> {
+    const { q, init } = await this.catalog(cwd, env, { ownSession: true });
+    const ask = async (): Promise<Result<'session/defaults'>> => {
+      // An older Claude Code has no get_settings: nothing is known but the SDK's own start.
+      const getSettings = (q as any).getSettings?.bind(q);
+      if (!getSettings) return { effort: null, permissionMode: 'default' };
+      let host = this.hostModels.get(q);
+      if (host === undefined) {
+        host = ((await getSettings()).applied?.model as string | undefined) ?? '';
+        this.hostModels.set(q, host);
+      }
+      // Through the flag settings layer: setModel checks the model with a request to the provider.
+      const other = !!model && model !== host;
+      if (other) await q.applyFlagSettings({ model });
+      try {
+        const s = await getSettings();
+        const applied = (s.applied ?? {}) as { model?: string; effort?: Result<'session/defaults'>['effort'] };
+        const id = applied.model ?? model;
+        const info = init.models.find((m) => m.value === model || m.value === id || (m as any).resolvedModel === id);
+        return {
+          ...(applied.model ? { model: applied.model } : {}),
+          effort: applied.effort ?? null,
+          permissionMode: startingPermissionMode(filterEscalatingDefaultMode(s), info),
+        };
+      } finally {
+        if (other) await q.applyFlagSettings({ model: host || null });
+      }
+    };
+    const next = (this.asking.get(q) ?? Promise.resolve()).then(ask, ask);
+    this.asking.set(q, next.catch(() => {}));
+    return next;
   }
 
   // ---------- stored sessions ----------
@@ -551,4 +607,22 @@ export function resumeSettings(
   const effort = asked.effort ?? (model === recorded.model ? recorded.effort : undefined);
   const permissionMode = asked.permissionMode ?? recorded.permissionMode;
   return { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(permissionMode ? { permissionMode } : {}) };
+}
+
+/**
+ * The permission mode an interactive Claude Code session starts in: the settings'
+ * `permissions.defaultMode` (after the CLI's trust filter, so a repo-committed escalating mode
+ * doesn't count), else auto where the model supports it and no setting disables it, else default.
+ */
+export function startingPermissionMode(
+  settings: { permissions?: { defaultMode?: string }; disableAutoMode?: string },
+  model?: { supportsAutoMode?: boolean },
+): PermissionMode {
+  const mode = settings.permissions?.defaultMode;
+  // The CLI's alias for default.
+  if (mode === 'manual') return 'default';
+  const known = PermissionMode.safeParse(mode);
+  if (known.success) return known.data;
+  if (settings.disableAutoMode === 'disable') return 'default';
+  return model?.supportsAutoMode ? 'auto' : 'default';
 }

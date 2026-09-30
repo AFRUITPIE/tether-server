@@ -160,6 +160,11 @@ export const ThreadInfo = z
     title: z.string().optional(),
     model: z.string().optional(),
     effort: EffortLevel.nullable().optional(),
+    /**
+     * The effort Claude Code sends: `effort` when one is chosen, else the model's own default (or
+     * the host's `effortLevel`). Null when the model takes no effort; absent when not yet known.
+     */
+    appliedEffort: EffortLevel.nullable().optional(),
     permissionMode: PermissionMode.optional(),
     fastModeState: z.enum(['off', 'cooldown', 'on']).optional(),
     fastModeDisabledReason: z.string().optional(),

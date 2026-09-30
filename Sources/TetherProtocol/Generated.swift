@@ -132,6 +132,21 @@ public struct EffortLevel: RawRepresentable, Codable, Sendable, Hashable, CaseIt
     public static let allCases: [EffortLevel] = [.low, .medium, .high, .xhigh, .max]
 }
 
+public struct PermissionMode: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public init(stringLiteral value: String) { self.rawValue = value }
+    public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
+    public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
+    public static let `default` = PermissionMode(rawValue: "default")
+    public static let acceptEdits = PermissionMode(rawValue: "acceptEdits")
+    public static let bypassPermissions = PermissionMode(rawValue: "bypassPermissions")
+    public static let plan = PermissionMode(rawValue: "plan")
+    public static let dontAsk = PermissionMode(rawValue: "dontAsk")
+    public static let auto = PermissionMode(rawValue: "auto")
+    public static let allCases: [PermissionMode] = [.`default`, .acceptEdits, .bypassPermissions, .plan, .dontAsk, .auto]
+}
+
 public struct SlashCommand: Codable, Sendable, Hashable {
     public var name: String
     public var description: String
@@ -283,21 +298,6 @@ public struct ThreadStatus: RawRepresentable, Codable, Sendable, Hashable, CaseI
     public static let closed = ThreadStatus(rawValue: "closed")
     public static let error = ThreadStatus(rawValue: "error")
     public static let allCases: [ThreadStatus] = [.notLoaded, .starting, .idle, .running, .requiresAction, .interrupted, .closed, .error]
-}
-
-public struct PermissionMode: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
-    public let rawValue: String
-    public init(rawValue: String) { self.rawValue = rawValue }
-    public init(stringLiteral value: String) { self.rawValue = value }
-    public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
-    public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
-    public static let `default` = PermissionMode(rawValue: "default")
-    public static let acceptEdits = PermissionMode(rawValue: "acceptEdits")
-    public static let bypassPermissions = PermissionMode(rawValue: "bypassPermissions")
-    public static let plan = PermissionMode(rawValue: "plan")
-    public static let dontAsk = PermissionMode(rawValue: "dontAsk")
-    public static let auto = PermissionMode(rawValue: "auto")
-    public static let allCases: [PermissionMode] = [.`default`, .acceptEdits, .bypassPermissions, .plan, .dontAsk, .auto]
 }
 
 public enum ThinkingSetting: Codable, Sendable, Hashable {
@@ -596,6 +596,7 @@ public struct ThreadInfo: Codable, Sendable, Hashable {
     public var title: String?
     public var model: String?
     public var effort: EffortLevel?
+    public var appliedEffort: EffortLevel?
     public var permissionMode: PermissionMode?
     public var fastModeState: FastModeState?
     public var fastModeDisabledReason: String?
@@ -609,13 +610,14 @@ public struct ThreadInfo: Codable, Sendable, Hashable {
     public var capabilities: [String]?
     public var lastSeq: Int
 
-    public init(threadId: String, status: ThreadStatus, cwd: String, title: String? = nil, model: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastModeState: FastModeState? = nil, fastModeDisabledReason: String? = nil, tools: [String]? = nil, slashCommands: [String]? = nil, skills: [String]? = nil, agents: [String]? = nil, outputStyle: String? = nil, mcpServers: [McpServerStatus]? = nil, claudeCodeVersion: String? = nil, capabilities: [String]? = nil, lastSeq: Int) {
+    public init(threadId: String, status: ThreadStatus, cwd: String, title: String? = nil, model: String? = nil, effort: EffortLevel? = nil, appliedEffort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastModeState: FastModeState? = nil, fastModeDisabledReason: String? = nil, tools: [String]? = nil, slashCommands: [String]? = nil, skills: [String]? = nil, agents: [String]? = nil, outputStyle: String? = nil, mcpServers: [McpServerStatus]? = nil, claudeCodeVersion: String? = nil, capabilities: [String]? = nil, lastSeq: Int) {
         self.threadId = threadId
         self.status = status
         self.cwd = cwd
         self.title = title
         self.model = model
         self.effort = effort
+        self.appliedEffort = appliedEffort
         self.permissionMode = permissionMode
         self.fastModeState = fastModeState
         self.fastModeDisabledReason = fastModeDisabledReason
@@ -637,6 +639,7 @@ public struct ThreadInfo: Codable, Sendable, Hashable {
         case title = "title"
         case model = "model"
         case effort = "effort"
+        case appliedEffort = "appliedEffort"
         case permissionMode = "permissionMode"
         case fastModeState = "fastModeState"
         case fastModeDisabledReason = "fastModeDisabledReason"
@@ -659,6 +662,7 @@ public struct ThreadInfo: Codable, Sendable, Hashable {
         self.title = try c.decodeIfPresent(String.self, forKey: .title)
         self.model = try c.decodeIfPresent(String.self, forKey: .model)
         self.effort = try c.decodeIfPresent(EffortLevel.self, forKey: .effort)
+        self.appliedEffort = try c.decodeIfPresent(EffortLevel.self, forKey: .appliedEffort)
         self.permissionMode = try c.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
         self.fastModeState = try c.decodeIfPresent(FastModeState.self, forKey: .fastModeState)
         self.fastModeDisabledReason = try c.decodeIfPresent(String.self, forKey: .fastModeDisabledReason)
@@ -681,6 +685,7 @@ public struct ThreadInfo: Codable, Sendable, Hashable {
         try c.encodeIfPresent(title, forKey: .title)
         try c.encodeIfPresent(model, forKey: .model)
         try c.encodeIfPresent(effort, forKey: .effort)
+        try c.encodeIfPresent(appliedEffort, forKey: .appliedEffort)
         try c.encodeIfPresent(permissionMode, forKey: .permissionMode)
         try c.encodeIfPresent(fastModeState, forKey: .fastModeState)
         try c.encodeIfPresent(fastModeDisabledReason, forKey: .fastModeDisabledReason)
@@ -2138,6 +2143,65 @@ public struct ModelListResult: Codable, Sendable, Hashable {
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(models, forKey: .models)
+    }
+}
+
+public struct SessionDefaultsParams: Codable, Sendable, Hashable {
+    public var cwd: String?
+    public var model: String?
+
+    public init(cwd: String? = nil, model: String? = nil) {
+        self.cwd = cwd
+        self.model = model
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case cwd = "cwd"
+        case model = "model"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+        self.model = try c.decodeIfPresent(String.self, forKey: .model)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(cwd, forKey: .cwd)
+        try c.encodeIfPresent(model, forKey: .model)
+    }
+}
+
+public struct SessionDefaultsResult: Codable, Sendable, Hashable {
+    public var model: String?
+    public var effort: EffortLevel?
+    public var permissionMode: PermissionMode
+
+    public init(model: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode) {
+        self.model = model
+        self.effort = effort
+        self.permissionMode = permissionMode
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case model = "model"
+        case effort = "effort"
+        case permissionMode = "permissionMode"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.model = try c.decodeIfPresent(String.self, forKey: .model)
+        self.effort = try c.decodeIfPresent(EffortLevel.self, forKey: .effort)
+        self.permissionMode = try c.decode(PermissionMode.self, forKey: .permissionMode)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(model, forKey: .model)
+        try c.encode(effort, forKey: .effort)
+        try c.encode(permissionMode, forKey: .permissionMode)
     }
 }
 
@@ -4818,6 +4882,11 @@ public enum Methods {
         public static let name = "model/list"
         public typealias Params = ModelListParams
         public typealias Result = ModelListResult
+    }
+    public enum SessionDefaults: TetherMethod {
+        public static let name = "session/defaults"
+        public typealias Params = SessionDefaultsParams
+        public typealias Result = SessionDefaultsResult
     }
     public enum CommandList: TetherMethod {
         public static let name = "command/list"
