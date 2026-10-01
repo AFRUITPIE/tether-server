@@ -9,6 +9,7 @@ import {
   type SDKControlInitializeResponse,
   type SDKMessage,
   type SDKUserMessage,
+  getSessionInfo,
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -137,6 +138,7 @@ export class LiveThread {
   status: ThreadStatus = 'starting';
   activity: 'requesting' | 'compacting' | null = null;
   lastActivityAt = Date.now();
+  private titleCheck?: ReturnType<typeof setTimeout>;
   init?: SDKControlInitializeResponse;
 
   private q!: Query;
@@ -265,6 +267,7 @@ export class LiveThread {
   }
 
   close() {
+    clearTimeout(this.titleCheck);
     this.input.end();
     try {
       this.q?.close();
@@ -349,7 +352,30 @@ export class LiveThread {
     if (m.type === 'result') {
       this.activity = null;
       if (this.pending.size === 0) this.setStatus('idle');
+      this.lookForTitle();
     }
+  }
+
+  /**
+   * Claude Code names a session a moment after a turn ends, by writing an `ai-title` into its
+   * file, and tells no SDK client: so after each turn the title is looked for a few times, and
+   * sent with `thread/updated` once it's new. Its first prompt, which the SDK falls back to,
+   * isn't a title.
+   */
+  private lookForTitle(delays = [1000, 2500, 5000, 10000, 20000]) {
+    clearTimeout(this.titleCheck);
+    const [delay, ...rest] = delays;
+    if (delay === undefined) return;
+    this.titleCheck = setTimeout(async () => {
+      const s = await getSessionInfo(this.id, { dir: this.cwd }).catch(() => undefined);
+      const title = s?.customTitle ?? (s && s.summary !== s.firstPrompt ? s.summary : undefined);
+      if (title && title !== this.info.title) {
+        this.info.title = title;
+        this.emit('thread/updated', { thread: this.threadInfo() });
+      } else {
+        this.lookForTitle(rest);
+      }
+    }, delay);
   }
 
   // ---------- events / replay ----------
