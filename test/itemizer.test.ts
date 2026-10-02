@@ -64,3 +64,63 @@ describe('itemizer: transcript history', async () => {
     expect(writes.map((w) => w.type === 'toolCall' && w.status)).toEqual(['failed', 'completed']);
   });
 });
+
+describe('itemizer: a background agent hands back its report', () => {
+  const frame = (from: string, report: string) =>
+    `Another Claude session sent a message:\n<agent-message from="${from}">\n[Subagent hand-back] The text below is the final report of a subagent. The report follows:\n${report
+      .split('\n')
+      .map((l) => '  ' + l)
+      .join('\n')}\n</agent-message>\n\nThat "other Claude session" is an agent working inside this same session.`;
+  const launch = [
+    { type: 'user', uuid: 'p1', origin: { kind: 'human' }, message: { role: 'user', content: [{ type: 'text', text: 'Run an agent' }] } },
+    { type: 'assistant', uuid: 'a1', message: { id: 'm1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_A', name: 'Agent', input: { description: '5 second timer', prompt: 'sleep 5' } }] } },
+    {
+      type: 'user',
+      uuid: 'r1',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_A', content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: abc123 (internal ID)' }] }] },
+      tool_use_result: { isAsync: true, status: 'async_launched', agentId: 'abc123', description: '5 second timer' },
+    },
+  ];
+  const handback = {
+    type: 'user',
+    uuid: 'h1',
+    isMeta: true,
+    origin: { kind: 'peer', from: 'abc123', senderTaskId: 'abc123', name: 'general-purpose', handback: true },
+    message: { role: 'user', content: frame('abc123', 'hello world\n- second line') },
+  };
+  const notification = {
+    type: 'user',
+    uuid: 'n1',
+    origin: { kind: 'task-notification' },
+    message: {
+      role: 'user',
+      content: `<task-notification>\n<task-id>abc123</task-id>\n<tool-use-id>toolu_A</tool-use-id>\n<status>completed</status>\n<summary>Agent "5 second timer" finished</summary>\n<result>This agent's report was delivered to you as a message from "abc123" (its SubagentHandback call). Read it there; it is not repeated here.</result>\n</task-notification>`,
+    },
+  };
+
+  test('the report alone, from the agent, and no notice after it', () => {
+    const iz = new Itemizer(Date.now, true);
+    for (const m of [...launch, handback, notification]) iz.ingest(m);
+    const { items } = iz.snapshot();
+    const report = items.find((i) => i.type === 'userMessage' && i.id === 'h1');
+    expect(report).toMatchObject({ synthetic: true, origin: 'subagent', originName: '5 second timer', content: [{ type: 'text', text: 'hello world\n- second line' }] });
+    expect(items.some((i) => i.type === 'notice')).toBe(false);
+  });
+
+  test("a notice never shows the CLI's note to the model", () => {
+    const iz = new Itemizer(Date.now);
+    iz.beginUserTurn('p1', [{ type: 'text', text: 'Run an agent' }], false);
+    for (const m of launch.slice(1)) iz.ingest(m);
+    iz.ingest({
+      type: 'system',
+      subtype: 'task_notification',
+      uuid: 'n2',
+      task_id: 'abc123',
+      tool_use_id: 'toolu_A',
+      status: 'completed',
+      summary: 'This agent\'s report was delivered to you as a message from "abc123" (its SubagentHandback call).',
+    });
+    const notice = iz.snapshot().items.find((i) => i.type === 'notice');
+    expect(notice).toMatchObject({ kind: 'taskNotification', text: 'Agent "5 second timer" finished' });
+  });
+});
