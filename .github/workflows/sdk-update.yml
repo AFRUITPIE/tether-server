@@ -2,17 +2,27 @@ name: Agent SDK update
 
 # A new Claude Agent SDK becomes a pull request: the dependency, and the server's next patch version,
 # so merging it releases the server on the new SDK. Checked against the tests before it's opened.
-# Daily, and by hand. One pull request at a time, from the branch `agent-sdk`: the next SDK waits
-# until that one is merged or closed. It needs Settings ▸ Actions ▸ General ▸ "Allow GitHub Actions
-# to create and approve pull requests".
+# One pull request at a time, from the branch `agent-sdk`, kept current: whenever main moves or a
+# newer SDK is out, the branch is rebuilt on main's head (so its patch version stays one above main's)
+# and the open pull request is updated in place; once main has the SDK, it's closed. npm can't notify
+# us of another package's release, so npm is checked hourly, which costs one `npm view`.
+# It needs Settings ▸ Actions ▸ General ▸ "Allow GitHub Actions to create and approve pull requests".
 on:
   schedule:
-    - cron: "7 9 * * *"
+    - cron: "17 * * * *"
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
+  actions: write
+
+# Runs queue rather than race on the branch.
+concurrency:
+  group: sdk-update
+  cancel-in-progress: false
 
 jobs:
   update:
@@ -20,26 +30,39 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: main
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           latest=$(npm view @anthropic-ai/claude-agent-sdk version)
           current=$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-agent-sdk']")
+          pr=$(gh pr list --head agent-sdk --state open --json number -q '.[0].number')
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
           # Only forward: npm's latest moved back, or a pin ahead of it, isn't an update.
           newest=$(printf '%s\n' "$current" "$latest" | sort -V | tail -n1)
           if [ "$newest" = "$current" ]; then
             echo "Already on Agent SDK $current."
-          elif [ -n "$(gh pr list --head agent-sdk --state open --json number -q '.[].number')" ]; then
-            echo "An Agent SDK pull request is already open."
-          else
-            echo "new=true" >> "$GITHUB_OUTPUT"
+            if [ -n "$pr" ]; then
+              gh pr close "$pr" --delete-branch --comment "main is already on Agent SDK $current."
+            fi
+            exit 0
           fi
+          if [ -n "$pr" ] && git fetch --depth=2 origin agent-sdk; then
+            base=$(git rev-parse FETCH_HEAD^)
+            branch_sdk=$(git show FETCH_HEAD:package.json | node -p "JSON.parse(require('fs').readFileSync(0)).dependencies['@anthropic-ai/claude-agent-sdk']")
+            if [ "$base" = "$(git rev-parse HEAD)" ] && [ "$branch_sdk" = "$latest" ]; then
+              echo "Pull request #$pr is current: Agent SDK $latest on main's head."
+              exit 0
+            fi
+          fi
+          echo "build=true" >> "$GITHUB_OUTPUT"
       # Bun at the version mise.toml pins, as CI uses, so the lockfile is written the way CI reads it.
-      - if: steps.check.outputs.new == 'true'
+      - if: steps.check.outputs.build == 'true'
         uses: jdx/mise-action@v5
-      - if: steps.check.outputs.new == 'true'
+      - if: steps.check.outputs.build == 'true'
         env:
           LATEST: ${{ steps.check.outputs.latest }}
         run: |
@@ -47,10 +70,11 @@ jobs:
           npm version patch --no-git-tag-version
           mise run typecheck
           mise run test
-      - if: steps.check.outputs.new == 'true'
+      - if: steps.check.outputs.build == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           LATEST: ${{ steps.check.outputs.latest }}
+          PR: ${{ steps.check.outputs.pr }}
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           version=$(node -p "require('./package.json').version")
@@ -58,8 +82,15 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c agent-sdk
           git commit -am "Agent SDK $LATEST, as $version"
-          # No open pull request uses the branch (checked above), so whatever is left on it, from one
-          # merged or closed, or a run that couldn't open its pull request, is replaced.
+          # The branch is the bot's alone: one commit on main's head, replaced on every rebuild.
           git push --force origin agent-sdk
-          gh pr create --head agent-sdk --title "Agent SDK $LATEST" \
-            --body "Claude Agent SDK $LATEST is out. This moves to it and makes the server $version; typecheck and tests passed in [the run that opened this]($RUN). Merging it releases $version (approve it on npm), and the app picks it up."
+          title="Agent SDK $LATEST"
+          body="Claude Agent SDK $LATEST is out. This moves to it and makes the server $version; typecheck and tests passed in [the run that last rebuilt this]($RUN). Merging it releases $version (approve it on npm), and the app picks it up. The branch is rebuilt on main whenever main moves or a newer SDK is out."
+          if [ -n "$PR" ]; then
+            gh pr edit "$PR" --title "$title" --body "$body"
+          else
+            gh pr create --head agent-sdk --title "$title" --body "$body"
+          fi
+          # A push made with GITHUB_TOKEN starts no pull_request run, but a dispatch does; its checks
+          # land on the branch's head commit, so they show on the pull request.
+          gh workflow run ci.yml --ref agent-sdk
