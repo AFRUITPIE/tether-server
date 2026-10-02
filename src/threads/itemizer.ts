@@ -333,9 +333,22 @@ export class Itemizer {
       parentToolUseId: null,
       createdAt: this.now(),
       kind: 'taskNotification',
-      text: summary || `Background task ${status ?? 'finished'}`,
+      text: this.noticeText(taskId, status, summary),
       ...(status === 'failed' ? { level: 'warning' as const } : {}),
     });
+  }
+
+  /**
+   * What a settled task says: its summary, unless that is the CLI's note to the model (an agent's
+   * "report was delivered to you as a message"), which a reader shouldn't see.
+   */
+  private noticeText(taskId: string | undefined, status: string | undefined, summary: string | undefined): string {
+    if (summary && !/delivered to you as a message/.test(summary)) return summary;
+    const call = taskId ? this.toolItems.get(this.taskTools.get(taskId) ?? '') : undefined;
+    const description = (call?.input as AnyMsg)?.description;
+    const verb = status === 'failed' ? 'failed' : status === 'killed' || status === 'stopped' ? 'stopped' : 'finished';
+    if (call?.kind === 'subagent' && typeof description === 'string') return `Agent "${description}" ${verb}`;
+    return `Background task ${status ?? 'finished'}`;
   }
 
   /** A stopped or failed background agent leaves its own tool calls unfinished; close them. */
@@ -612,6 +625,9 @@ export class Itemizer {
     t.outputText = text;
     if (structured !== undefined) t.output = structured;
     if (isError) t.isError = true;
+    // A background agent's launch names the task its report and notification will come from.
+    const agentId = (structured as AnyMsg)?.agentId ?? /^agentId: (\w+)/m.exec(text)?.[1];
+    if (t.kind === 'subagent' && typeof agentId === 'string') this.taskTools.set(agentId, t.id);
     return this.addCompleted(t);
   }
 
@@ -654,7 +670,18 @@ export class Itemizer {
       const name = command[1]!.trim();
       inputs = [{ type: 'text', text: `${name.startsWith('/') ? name : '/' + name}${command[2]?.trim() ? ' ' + command[2].trim() : ''}` }];
     }
-    const originKind: string | undefined = msg.origin?.kind;
+    let originKind: string | undefined = msg.origin?.kind;
+    let originName: string | undefined = originKind === 'peer' && typeof msg.origin?.name === 'string' ? msg.origin.name : undefined;
+    const handback = originKind === 'peer' && msg.origin?.handback ? subagentReport(firstText) : undefined;
+    if (handback !== undefined) {
+      const taskId: string | undefined = msg.origin?.senderTaskId ?? msg.origin?.from;
+      const call = taskId ? this.toolItems.get(this.taskTools.get(taskId) ?? '') : undefined;
+      const description = (call?.input as AnyMsg)?.description;
+      originKind = 'subagent';
+      originName = typeof description === 'string' ? description : undefined;
+      inputs = [{ type: 'text', text: handback }];
+      if (taskId) this.notifiedTasks.add(taskId);
+    }
     const synthetic =
       parent !== null ||
       (originKind !== undefined
@@ -680,7 +707,7 @@ export class Itemizer {
         content: inputs,
         ...(synthetic ? { synthetic: true } : {}),
         ...(originKind && originKind !== 'human' ? { origin: originKind } : {}),
-        ...(originKind === 'peer' && typeof msg.origin?.name === 'string' ? { originName: msg.origin.name } : {}),
+        ...(originName ? { originName } : {}),
         ...(originKind === 'peer' && typeof msg.origin?.fromSession === 'string' ? { originSession: msg.origin.fromSession } : {}),
       }),
     );
@@ -787,6 +814,19 @@ export class Itemizer {
       turns: this.turns.map((t) => structuredClone(t)),
     };
   }
+}
+
+/**
+ * A subagent's report from the CLI's hand-back message, which wraps it in a frame for the model:
+ * the lines after "The report follows:", each indented two spaces, up to `</agent-message>`.
+ */
+export function subagentReport(text: string): string | undefined {
+  const start = text.indexOf('The report follows:\n');
+  if (start < 0) return undefined;
+  const rest = text.slice(start + 'The report follows:\n'.length);
+  const end = rest.lastIndexOf('\n</agent-message>');
+  const body = end < 0 ? rest : rest.slice(0, end);
+  return body.split('\n').map((l) => l.replace(/^ {2}/, '')).join('\n').trim();
 }
 
 /**
