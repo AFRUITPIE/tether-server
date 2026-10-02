@@ -121,7 +121,8 @@ export class ThreadManager {
     env: Record<string, string>,
     extra: Pick<LiveThreadOptions, 'unattended'> = {},
   ): Promise<LiveThread> {
-    const threadId = randomUUID();
+    // The client's choice when it made one, so it can show the chat before this answers.
+    const threadId = p.threadId && !this.threads.has(p.threadId) ? p.threadId : randomUUID();
     // Before the worktree, which a missing claude would otherwise leave behind.
     const claude = await this.runnable({ ...env, ...(p.env ?? {}) });
     // Asked for no permission mode, a thread a person starts starts as an interactive session

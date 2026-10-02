@@ -437,9 +437,9 @@ export class LiveThread {
 
   // ---------- input ----------
 
-  send(content: UserInput[], priority?: 'now' | 'next' | 'later'): { turnId: string; messageId: string; queued: boolean } {
+  send(content: UserInput[], priority?: 'now' | 'next' | 'later', id?: string): { turnId: string; messageId: string; queued: boolean } {
     if (this.exited) throw new RpcError(ErrorCodes.threadNotLoaded, 'thread process has exited; resume it first');
-    const messageId = randomUUID();
+    const messageId = id ?? randomUUID();
     const queued = this.itemizer.currentTurn !== null;
     const { turnId, out } = this.itemizer.beginUserTurn(messageId, content, queued);
     this.itemizer.noteSentUserMessage(messageId);

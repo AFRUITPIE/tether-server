@@ -210,7 +210,7 @@ export class ClientSession implements Subscriber {
     'thread/start': async (p) => {
       const t = await this.mgr.start(p, this.env);
       this.subscribe(t, 0);
-      if (p.input?.length) t.send(p.input);
+      if (p.input?.length) t.send(p.input, undefined, p.messageId);
       return { thread: t.threadInfo() };
     },
 

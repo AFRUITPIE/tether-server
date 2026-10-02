@@ -160,6 +160,13 @@ export const Methods = {
       /** First user input, sent immediately after start. */
       input: z.array(UserInput).optional(),
       /**
+       * The new thread's id, chosen by the client so it can show the chat before the host answers.
+       * A UUID; one already in use is ignored and the host picks, as it does when none is given.
+       */
+      threadId: z.string().uuid().optional(),
+      /** The id of `input`'s message, for the same reason: its echo then replaces the client's copy. */
+      messageId: z.string().uuid().optional(),
+      /**
        * Start in a new git worktree of `cwd`'s repository, under `<repo>/.claude/worktrees/`, on a
        * branch of its own, so parallel sessions don't edit the same checkout. The thread's `cwd` is
        * the worktree's copy of the folder asked for (its root if the checkout lacks that folder);

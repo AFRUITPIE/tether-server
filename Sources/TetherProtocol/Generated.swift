@@ -2507,10 +2507,12 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
     public var env: EnvOverrides?
     public var title: String?
     public var input: [UserInput]?
+    public var threadId: String?
+    public var messageId: String?
     public var worktree: Bool?
     public var sessionTools: Bool?
 
-    public init(cwd: String, model: String? = nil, fallbackModel: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastMode: Bool? = nil, thinking: ThinkingSetting? = nil, additionalDirectories: [String]? = nil, systemPromptAppend: String? = nil, allowedTools: [String]? = nil, disallowedTools: [String]? = nil, mcpServers: [String: JSONValue]? = nil, agent: String? = nil, maxTurns: Int? = nil, maxBudgetUsd: Double? = nil, betas: [String]? = nil, env: EnvOverrides? = nil, title: String? = nil, input: [UserInput]? = nil, worktree: Bool? = nil, sessionTools: Bool? = nil) {
+    public init(cwd: String, model: String? = nil, fallbackModel: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastMode: Bool? = nil, thinking: ThinkingSetting? = nil, additionalDirectories: [String]? = nil, systemPromptAppend: String? = nil, allowedTools: [String]? = nil, disallowedTools: [String]? = nil, mcpServers: [String: JSONValue]? = nil, agent: String? = nil, maxTurns: Int? = nil, maxBudgetUsd: Double? = nil, betas: [String]? = nil, env: EnvOverrides? = nil, title: String? = nil, input: [UserInput]? = nil, threadId: String? = nil, messageId: String? = nil, worktree: Bool? = nil, sessionTools: Bool? = nil) {
         self.cwd = cwd
         self.model = model
         self.fallbackModel = fallbackModel
@@ -2530,6 +2532,8 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         self.env = env
         self.title = title
         self.input = input
+        self.threadId = threadId
+        self.messageId = messageId
         self.worktree = worktree
         self.sessionTools = sessionTools
     }
@@ -2554,6 +2558,8 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         case env = "env"
         case title = "title"
         case input = "input"
+        case threadId = "threadId"
+        case messageId = "messageId"
         case worktree = "worktree"
         case sessionTools = "sessionTools"
     }
@@ -2579,6 +2585,8 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         self.env = try c.decodeIfPresent(EnvOverrides.self, forKey: .env)
         self.title = try c.decodeIfPresent(String.self, forKey: .title)
         self.input = try c.decodeIfPresent([UserInput].self, forKey: .input)
+        self.threadId = try c.decodeIfPresent(String.self, forKey: .threadId)
+        self.messageId = try c.decodeIfPresent(String.self, forKey: .messageId)
         self.worktree = try c.decodeIfPresent(Bool.self, forKey: .worktree)
         self.sessionTools = try c.decodeIfPresent(Bool.self, forKey: .sessionTools)
     }
@@ -2604,6 +2612,8 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         try c.encodeIfPresent(env, forKey: .env)
         try c.encodeIfPresent(title, forKey: .title)
         try c.encodeIfPresent(input, forKey: .input)
+        try c.encodeIfPresent(threadId, forKey: .threadId)
+        try c.encodeIfPresent(messageId, forKey: .messageId)
         try c.encodeIfPresent(worktree, forKey: .worktree)
         try c.encodeIfPresent(sessionTools, forKey: .sessionTools)
     }
