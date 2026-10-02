@@ -1,18 +1,28 @@
 name: Agent SDK update
 
-# A new Claude Agent SDK becomes a pull request: the dependency, and the server's next patch version,
-# so merging it releases the server on the new SDK. Checked against the tests before it's opened.
-# Daily, and by hand. One pull request at a time, from the branch `agent-sdk`: the next SDK waits
-# until that one is merged or closed. It needs Settings ▸ Actions ▸ General ▸ "Allow GitHub Actions
-# to create and approve pull requests".
+# Keeps one pull request, from the branch `agent-sdk`, that moves the server to the newest Claude
+# Agent SDK and to the next patch version, so merging it releases the server on that SDK.
+# The branch is rebuilt from main on every run: daily, by hand, and whenever main changes. So the
+# pull request never falls behind main or names a version another release already took, and a newer
+# SDK replaces an older one in the same pull request. When main already has the newest SDK, an open
+# one is closed. It needs Settings ▸ Actions ▸ General ▸ "Allow GitHub Actions to create and approve
+# pull requests".
 on:
   schedule:
     - cron: "7 9 * * *"
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
+
+# One run at a time, the latest winning: each rebuilds the branch from scratch.
+concurrency:
+  group: agent-sdk-update
+  cancel-in-progress: true
 
 jobs:
   update:
@@ -20,19 +30,24 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           latest=$(npm view @anthropic-ai/claude-agent-sdk version)
           current=$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-agent-sdk']")
+          pr=$(gh pr list --head agent-sdk --state open --json number -q '.[0].number')
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
           # Only forward: npm's latest moved back, or a pin ahead of it, isn't an update.
           newest=$(printf '%s\n' "$current" "$latest" | sort -V | tail -n1)
           if [ "$newest" = "$current" ]; then
-            echo "Already on Agent SDK $current."
-          elif [ -n "$(gh pr list --head agent-sdk --state open --json number -q '.[].number')" ]; then
-            echo "An Agent SDK pull request is already open."
+            echo "Main is on Agent SDK $current."
+            if [ -n "$pr" ]; then
+              gh pr close "$pr" --delete-branch --comment "Main already has Agent SDK $current."
+            fi
           else
             echo "new=true" >> "$GITHUB_OUTPUT"
           fi
@@ -51,15 +66,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LATEST: ${{ steps.check.outputs.latest }}
+          PR: ${{ steps.check.outputs.pr }}
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           version=$(node -p "require('./package.json').version")
+          base=$(git rev-parse --short HEAD)
+          title="Agent SDK $LATEST, as $version"
+          body="Moves the server to Claude Agent SDK $LATEST and makes it $version, on main as of $base; typecheck and tests passed in [this run]($RUN). Merging it releases $version (approve it on npm), and the app picks it up. This branch is rebuilt from main whenever main or the SDK changes, so it's always current."
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c agent-sdk
-          git commit -am "Agent SDK $LATEST, as $version"
-          # No open pull request uses the branch (checked above), so whatever is left on it, from one
-          # merged or closed, or a run that couldn't open its pull request, is replaced.
-          git push --force origin agent-sdk
-          gh pr create --head agent-sdk --title "Agent SDK $LATEST" \
-            --body "Claude Agent SDK $LATEST is out. This moves to it and makes the server $version; typecheck and tests passed in [the run that opened this]($RUN). Merging it releases $version (approve it on npm), and the app picks it up."
+          git commit -am "$title"
+          # Pushed only when the result differs from what the branch already holds, so a run with
+          # nothing new leaves the pull request (and its checks) alone.
+          if git fetch -q origin agent-sdk 2>/dev/null && git diff --quiet FETCH_HEAD HEAD && git merge-base --is-ancestor origin/main FETCH_HEAD; then
+            echo "agent-sdk is already current."
+          else
+            git push --force origin agent-sdk
+            # A push made with this workflow's token starts no workflows, so CI is started here,
+            # and its checks land on the pull request's commit.
+            gh workflow run ci.yml --ref agent-sdk
+          fi
+          if [ -n "$PR" ]; then
+            gh pr edit "$PR" --title "$title" --body "$body"
+          else
+            gh pr create --head agent-sdk --title "$title" --body "$body"
+          fi
