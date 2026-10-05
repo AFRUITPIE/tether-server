@@ -2509,8 +2509,9 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
     public var input: [UserInput]?
     public var worktree: Bool?
     public var sessionTools: Bool?
+    public var generateTitle: Bool?
 
-    public init(cwd: String, model: String? = nil, fallbackModel: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastMode: Bool? = nil, thinking: ThinkingSetting? = nil, additionalDirectories: [String]? = nil, systemPromptAppend: String? = nil, allowedTools: [String]? = nil, disallowedTools: [String]? = nil, mcpServers: [String: JSONValue]? = nil, agent: String? = nil, maxTurns: Int? = nil, maxBudgetUsd: Double? = nil, betas: [String]? = nil, env: EnvOverrides? = nil, title: String? = nil, input: [UserInput]? = nil, worktree: Bool? = nil, sessionTools: Bool? = nil) {
+    public init(cwd: String, model: String? = nil, fallbackModel: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastMode: Bool? = nil, thinking: ThinkingSetting? = nil, additionalDirectories: [String]? = nil, systemPromptAppend: String? = nil, allowedTools: [String]? = nil, disallowedTools: [String]? = nil, mcpServers: [String: JSONValue]? = nil, agent: String? = nil, maxTurns: Int? = nil, maxBudgetUsd: Double? = nil, betas: [String]? = nil, env: EnvOverrides? = nil, title: String? = nil, input: [UserInput]? = nil, worktree: Bool? = nil, sessionTools: Bool? = nil, generateTitle: Bool? = nil) {
         self.cwd = cwd
         self.model = model
         self.fallbackModel = fallbackModel
@@ -2532,6 +2533,7 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         self.input = input
         self.worktree = worktree
         self.sessionTools = sessionTools
+        self.generateTitle = generateTitle
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2556,6 +2558,7 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         case input = "input"
         case worktree = "worktree"
         case sessionTools = "sessionTools"
+        case generateTitle = "generateTitle"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -2581,6 +2584,7 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         self.input = try c.decodeIfPresent([UserInput].self, forKey: .input)
         self.worktree = try c.decodeIfPresent(Bool.self, forKey: .worktree)
         self.sessionTools = try c.decodeIfPresent(Bool.self, forKey: .sessionTools)
+        self.generateTitle = try c.decodeIfPresent(Bool.self, forKey: .generateTitle)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -2606,6 +2610,7 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
         try c.encodeIfPresent(input, forKey: .input)
         try c.encodeIfPresent(worktree, forKey: .worktree)
         try c.encodeIfPresent(sessionTools, forKey: .sessionTools)
+        try c.encodeIfPresent(generateTitle, forKey: .generateTitle)
     }
 }
 
@@ -2634,6 +2639,7 @@ public struct ThreadStartResult: Codable, Sendable, Hashable {
 public struct ThreadResumeParams: Codable, Sendable, Hashable {
     public var threadId: String
     public var sessionTools: Bool?
+    public var generateTitle: Bool?
     public var cwd: String?
     public var atMessageId: String?
     public var model: String?
@@ -2644,9 +2650,10 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
     public var includeHistory: Bool?
     public var limit: Int?
 
-    public init(threadId: String, sessionTools: Bool? = nil, cwd: String? = nil, atMessageId: String? = nil, model: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, env: EnvOverrides? = nil, afterSeq: Int? = nil, includeHistory: Bool? = nil, limit: Int? = nil) {
+    public init(threadId: String, sessionTools: Bool? = nil, generateTitle: Bool? = nil, cwd: String? = nil, atMessageId: String? = nil, model: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, env: EnvOverrides? = nil, afterSeq: Int? = nil, includeHistory: Bool? = nil, limit: Int? = nil) {
         self.threadId = threadId
         self.sessionTools = sessionTools
+        self.generateTitle = generateTitle
         self.cwd = cwd
         self.atMessageId = atMessageId
         self.model = model
@@ -2661,6 +2668,7 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case threadId = "threadId"
         case sessionTools = "sessionTools"
+        case generateTitle = "generateTitle"
         case cwd = "cwd"
         case atMessageId = "atMessageId"
         case model = "model"
@@ -2676,6 +2684,7 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.threadId = try c.decode(String.self, forKey: .threadId)
         self.sessionTools = try c.decodeIfPresent(Bool.self, forKey: .sessionTools)
+        self.generateTitle = try c.decodeIfPresent(Bool.self, forKey: .generateTitle)
         self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
         self.atMessageId = try c.decodeIfPresent(String.self, forKey: .atMessageId)
         self.model = try c.decodeIfPresent(String.self, forKey: .model)
@@ -2691,6 +2700,7 @@ public struct ThreadResumeParams: Codable, Sendable, Hashable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(threadId, forKey: .threadId)
         try c.encodeIfPresent(sessionTools, forKey: .sessionTools)
+        try c.encodeIfPresent(generateTitle, forKey: .generateTitle)
         try c.encodeIfPresent(cwd, forKey: .cwd)
         try c.encodeIfPresent(atMessageId, forKey: .atMessageId)
         try c.encodeIfPresent(model, forKey: .model)

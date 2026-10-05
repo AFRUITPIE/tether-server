@@ -99,6 +99,8 @@ export type LiveThreadOptions = {
   maxBudgetUsd?: number;
   betas?: string[];
   title?: string;
+  /** Have Claude Code name the chat when it has no title (`thread/start`'s `generateTitle`). */
+  generateTitle?: boolean;
   /** The last seq an earlier stream of this thread used; this one numbers above it. */
   seqAfter?: number;
   /** Called when the thread's query process has exited and it can be unloaded. */
@@ -139,6 +141,9 @@ export class LiveThread {
   activity: 'requesting' | 'compacting' | null = null;
   lastActivityAt = Date.now();
   private titleCheck?: ReturnType<typeof setTimeout>;
+  /** Whether to have Claude Code name the chat (`nameChat`), and whether it has been asked to while loaded. */
+  private generateTitle: boolean;
+  private titleAsked = false;
   init?: SDKControlInitializeResponse;
 
   private q!: Query;
@@ -164,6 +169,7 @@ export class LiveThread {
     this.id = opts.threadId;
     this.cwd = opts.cwd;
     this.sessionToolsEnabled = !!opts.sessionTools;
+    this.generateTitle = !!opts.generateTitle;
     this.seq = seqOrigin(opts.seqAfter);
     if (opts.model) this.info.model = opts.model;
     if (opts.effort) this.info.effort = opts.effort;
@@ -353,6 +359,34 @@ export class LiveThread {
       this.activity = null;
       if (this.pending.size === 0) this.setStatus('idle');
       this.lookForTitle();
+      if (this.generateTitle) void this.nameChat();
+    }
+  }
+
+  /**
+   * Has Claude Code name the chat from its first prompt (`prompt`, for one that hasn't reached
+   * its file yet) and keep the name in its file: once while loaded, as soon as there is a prompt.
+   * Claude Code answers with the title the chat already has, if it has one, without asking a model.
+   */
+  async nameChat(prompt?: string) {
+    if (this.titleAsked) return;
+    this.generateTitle = true;
+    prompt ||= (await getSessionInfo(this.id, { dir: this.cwd }).catch(() => undefined))?.firstPrompt;
+    // A chat started without a prompt is named once a turn has given it one.
+    if (!prompt || this.titleAsked) return;
+    this.titleAsked = true;
+    const title: string | null = await (this.q as any)
+      .generateSessionTitle(prompt, { persist: true })
+      .catch((e: Error) => {
+        const text = `couldn't name the chat: ${e.message}\n`;
+        this.opts.stderr?.(text);
+        this.emit('thread/stderr', { text });
+        return null;
+      });
+    if (title && title !== this.info.title) {
+      clearTimeout(this.titleCheck);
+      this.info.title = title;
+      this.emit('thread/updated', { thread: this.threadInfo() });
     }
   }
 

@@ -156,6 +156,8 @@ export class ThreadManager {
         );
       throw e;
     }
+    // Named while its first turn runs, as Claude Code names a chat it isn't told not to.
+    if (p.generateTitle) void t.nameChat(p.input?.flatMap((i) => (i.type === 'text' ? [i.text] : [])).join('\n'));
     this.log(`thread ${threadId} started in ${cwd}`);
     return t;
   }
@@ -183,7 +185,10 @@ export class ThreadManager {
     // A live thread supersedes the follower; both would report the same items.
     this.unfollow(p.threadId);
     const existing = this.loaded(p.threadId);
-    if (existing && !p.atMessageId) return existing;
+    if (existing && !p.atMessageId) {
+      if (p.generateTitle) void existing.nameChat();
+      return existing;
+    }
     if (existing && p.atMessageId) {
       if (existing.status === 'running' || existing.hasPendingRequests)
         throw new RpcError(ErrorCodes.invalidRequest, 'cannot rewind a running thread; interrupt it first');
@@ -208,6 +213,7 @@ export class ThreadManager {
         seqAfter: this.lastSeqs.get(p.threadId),
         ...(p.atMessageId ? { resumeAt: p.atMessageId } : {}),
         ...(p.sessionTools ? { sessionTools: this.sessionTools } : {}),
+        ...(p.generateTitle ? { generateTitle: true } : {}),
         ...settings,
         title: info.customTitle ?? info.summary,
         onExit: (lt) => this.onExit(lt),
@@ -221,6 +227,7 @@ export class ThreadManager {
         throw e;
       }
       this.log(`thread ${p.threadId} resumed in ${cwd}`);
+      if (p.generateTitle) void t.nameChat();
       return t;
     })();
     this.starting.set(p.threadId, promise);

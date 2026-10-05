@@ -589,6 +589,9 @@
           },
           "sessionTools": {
             "type": "boolean"
+          },
+          "generateTitle": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -617,6 +620,9 @@
             "type": "string"
           },
           "sessionTools": {
+            "type": "boolean"
+          },
+          "generateTitle": {
             "type": "boolean"
           },
           "cwd": {
