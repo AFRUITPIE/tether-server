@@ -169,6 +169,13 @@ export const Methods = {
       worktree: z.boolean().optional(),
       /** Give Claude tools to list and read the host's other sessions and to suggest tasks. */
       sessionTools: z.boolean().optional(),
+      /**
+       * Have Claude Code name the chat from its first prompt, as it starts (or loads), if it has no
+       * title: Claude Code doesn't name an SDK session itself while
+       * `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set. One small-model call per chat; none for
+       * a chat that has a title.
+       */
+      generateTitle: z.boolean().optional(),
     }),
     result: z.object({ thread: ThreadInfo }),
   },
@@ -178,6 +185,8 @@ export const Methods = {
       threadId: z.string(),
       /** As thread/start's; applies when this resume loads the thread. */
       sessionTools: z.boolean().optional(),
+      /** As thread/start's; also turns it on for a thread already loaded. */
+      generateTitle: z.boolean().optional(),
       cwd: z.string().optional(),
       /** Resume with history truncated after this message uuid (conversation rewind). */
       atMessageId: z.string().optional(),
