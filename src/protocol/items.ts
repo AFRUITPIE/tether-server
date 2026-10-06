@@ -134,7 +134,10 @@ export const WorkflowAgent = z
      * error, and whatever a later CLI adds. A skipped agent is `error` with `skipped`.
      */
     state: z.string(),
-    /** Skipped by the person (the CLI reports it as state `error`, "skipped by user"). */
+    /**
+     * Skipped by the person (the CLI reports it as state `error`, "skipped by user"), or never
+     * started: still waiting for a slot when its workflow completed.
+     */
     skipped: z.boolean().optional(),
     /** Replayed from an earlier run's cache rather than run again. */
     cached: z.boolean().optional(),
@@ -161,7 +164,8 @@ export const WorkflowSnapshot = z
     description: z.string().optional(),
     /**
      * running | completed | failed | stopped | paused, or unknown: a run found only by its journal,
-     * with no live task and no record, which may have been cut off.
+     * with no live task and no record, nothing of it written for a few minutes, which may have been
+     * cut off. A journal-only run written to recently is reported running.
      */
     status: z.string().optional(),
     /** the latest agent event, "Phase: label" */

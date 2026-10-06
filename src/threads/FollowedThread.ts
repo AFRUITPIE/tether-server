@@ -47,6 +47,7 @@ export class FollowedThread implements WatchableThread {
   private pending?: ReturnType<typeof setTimeout>;
   private reading = false;
   private again = false;
+  private readonly queued = new QueuedNotifications();
 
   constructor(id: string, cwd: string, seqAfter?: number) {
     this.id = id;
@@ -57,10 +58,12 @@ export class FollowedThread implements WatchableThread {
 
   /** Reads what is already on disk without emitting: the snapshot `thread/read` hands back. */
   async start(): Promise<void> {
-    const msgs = await getSessionMessages(this.id, { dir: this.cwd, includeSystemMessages: true });
-    for (const m of msgs) this.itemizer.ingest(m as never);
-    this.ingested = msgs.length;
     this.path = await transcriptPath(this.id);
+    // The file first: a notification it holds is read with the message it follows.
+    if (this.path) await this.queued.readFile(this.path);
+    const msgs = await getSessionMessages(this.id, { dir: this.cwd, includeSystemMessages: true });
+    ingestHistory(this.itemizer, msgs, this.queued);
+    this.ingested = msgs.length;
     await this.readSettings();
     await this.watchFile();
   }
@@ -91,16 +94,15 @@ export class FollowedThread implements WatchableThread {
     }
     this.reading = true;
     try {
+      if (this.path) await this.queued.readFile(this.path);
       const msgs = await getSessionMessages(this.id, {
         dir: this.cwd,
         offset: this.ingested,
         includeSystemMessages: true,
       });
-      if (msgs.length) {
-        this.ingested += msgs.length;
-        for (const m of msgs) this.emitAll(this.itemizer.ingest(m as never));
-        if (await this.updateSettings()) this.emit('thread/updated', { thread: this.threadInfo() });
-      }
+      this.ingested += msgs.length;
+      this.emitAll(ingestHistory(this.itemizer, msgs, this.queued));
+      if (msgs.length && (await this.updateSettings())) this.emit('thread/updated', { thread: this.threadInfo() });
     } catch {
       // The file may be mid-write or gone; the next change re-reads from the same offset.
     } finally {
@@ -329,6 +331,92 @@ function settingsFrom(lines: string[]): SessionSettings {
       out.permissionMode = o.permissionMode as PermissionMode;
     }
     if (out.model && out.permissionMode) break;
+  }
+  return out;
+}
+
+/**
+ * The `<task-notification>`s the CLI queued mid-turn, from the raw transcript: it writes each as an
+ * `attachment` (`queued_command`) after the message it followed (a tool result, or another
+ * attachment after one), and getSessionMessages drops attachments. Each is held under the message
+ * it follows, to be read right after that message (`ingestHistory`), so a workflow's finish lands
+ * in history where it did live.
+ */
+export class QueuedNotifications {
+  /** An attachment's parent, to find the message a run of attachments follows. */
+  private parentOf = new Map<string, string>();
+  private waiting = new Map<string, Record<string, any>[]>();
+  /** Messages already read, for a notification written after its message was. */
+  private read = new Set<string>();
+  /** How far into the file has been read. */
+  offset = 0;
+
+  /** Reads what the file holds from `offset` on. */
+  async readFile(path: string): Promise<void> {
+    try {
+      const { size } = await stat(path);
+      if (size < this.offset) this.offset = 0; // rewritten, not appended
+      const added = await readFrom(path, this.offset);
+      this.offset = added.end;
+      this.add(added.lines);
+    } catch {
+      // unreadable: no notifications
+    }
+  }
+
+  add(lines: string[]): void {
+    for (const line of lines) {
+      if (!line.includes('"attachment"')) continue;
+      let o: any;
+      try {
+        o = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (o?.type !== 'attachment' || o.isSidechain || typeof o.uuid !== 'string' || typeof o.parentUuid !== 'string') continue;
+      this.parentOf.set(o.uuid, o.parentUuid);
+      const a = o.attachment;
+      if (a?.type !== 'queued_command' || typeof a.prompt !== 'string' || !/^\s*<task-notification>/.test(a.prompt)) continue;
+      const anchor = this.anchor(o.parentUuid);
+      this.waiting.set(anchor, [...(this.waiting.get(anchor) ?? []), { uuid: o.uuid, timestamp: o.timestamp ?? a.timestamp, attachment: a }]);
+    }
+  }
+
+  /** The message a run of attachments follows. */
+  private anchor(uuid: string): string {
+    let at = uuid;
+    for (let i = 0; i < 1000 && this.parentOf.has(at); i++) at = this.parentOf.get(at)!;
+    return at;
+  }
+
+  /** The notifications that follow a message, once, as it is read. */
+  after(uuid: unknown): Record<string, any>[] {
+    if (typeof uuid !== 'string') return [];
+    this.read.add(uuid);
+    const found = this.waiting.get(uuid) ?? [];
+    this.waiting.delete(uuid);
+    return found;
+  }
+
+  /** Notifications written after the message they follow had already been read. */
+  late(): Record<string, any>[] {
+    const out: Record<string, any>[] = [];
+    for (const [uuid, found] of this.waiting) {
+      if (!this.read.has(uuid)) continue;
+      out.push(...found);
+      this.waiting.delete(uuid);
+    }
+    return out;
+  }
+}
+
+/** History's messages into an itemizer, each followed by the queued notifications written after it. */
+export function ingestHistory(iz: Itemizer, msgs: readonly unknown[], queued?: QueuedNotifications): Emission[] {
+  const out: Emission[] = [];
+  if (queued) for (const r of queued.late()) out.push(...iz.ingestQueued(r));
+  for (const m of msgs as Record<string, any>[]) {
+    out.push(...iz.ingest(m));
+    if (queued) for (const r of queued.after(m.uuid)) out.push(...iz.ingestQueued(r));
   }
   return out;
 }

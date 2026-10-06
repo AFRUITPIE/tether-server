@@ -20,7 +20,7 @@ import type { Scheduler } from './Scheduler.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { createWorktree, removeWorktree, worktreeName } from '../server/fsApi.ts';
 import { Itemizer } from './itemizer.ts';
-import { FollowedThread, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
+import { FollowedThread, ingestHistory, QueuedNotifications, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
 import { LiveThread, TETHER_VERSION, type LiveThreadOptions } from './LiveThread.ts';
 import { PushQueue } from './pushQueue.ts';
 import { isSafeId, readAgentItems, readRunJournal, readRunRecord, sessionDirSync, workflowAgentLocator } from './workflows.ts';
@@ -539,7 +539,10 @@ export class ThreadManager {
     const msgs = await getSessionMessages(threadId, { ...(cwd ? { dir: cwd } : {}), includeSystemMessages: true });
     const iz = new Itemizer(Date.now, true);
     iz.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(threadId));
-    for (const m of msgs) iz.ingest(m as any);
+    const dir = sessionDirSync(threadId);
+    const queued = new QueuedNotifications();
+    if (dir) await queued.readFile(`${dir}.jsonl`);
+    ingestHistory(iz, msgs, queued);
     iz.closeTurn('completed');
     return iz.snapshot();
   }

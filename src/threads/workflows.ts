@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import type { Item, WorkflowAgent, WorkflowPhase, WorkflowSnapshot } from '../protocol/index.ts';
 import { Itemizer } from './itemizer.ts';
@@ -40,12 +40,18 @@ export function agentState(state: unknown): string {
 }
 
 /**
- * A completed run's snapshot with every agent still starting or in progress marked done: the CLI
- * sends progress at most every few seconds, so the last agents are often never seen finishing.
+ * A completed run's snapshot with every agent still running marked done: the CLI sends progress
+ * at most every few seconds, so the last agents are often never seen finishing. An agent still
+ * waiting for a slot (`start` with no `startedAt`) never ran, so it is skipped, not done.
  */
 export function settleAgents(snapshot: WorkflowSnapshot): WorkflowSnapshot {
-  if (!snapshot.agents.some((a) => a.state === 'start' || a.state === 'progress')) return snapshot;
-  return { ...snapshot, agents: snapshot.agents.map((a) => (a.state === 'start' || a.state === 'progress' ? { ...a, state: 'done' } : a)) };
+  const settled = (a: WorkflowAgent): WorkflowAgent | undefined => {
+    if (a.state === 'progress' || (a.state === 'start' && a.startedAt !== undefined)) return { ...a, state: 'done' };
+    if (a.state === 'start') return { ...a, state: 'error', skipped: true };
+    return undefined;
+  };
+  if (!snapshot.agents.some((a) => settled(a))) return snapshot;
+  return { ...snapshot, agents: snapshot.agents.map((a) => settled(a) ?? a) };
 }
 
 /** A task's status as a workflow's: running | completed | failed | stopped | paused. */
@@ -316,13 +322,17 @@ export async function readRunRecord(sessionDir: string, runId: string): Promise<
   };
 }
 
+/** How recently a journal-only run must have been written to for it to count as still running. */
+export const RECENT_RUN_MS = 5 * 60_000;
+
 /**
  * A run with no record yet: its agents from the journal's `started` and `result` lines and each
- * agent's `.meta.json`, its name and phases from the saved script. Its status is `unknown`: the
- * journal can't say whether the run is still going or was cut off (a live run is the live
- * thread's, and a finished one has a record), so it isn't reported as running.
+ * agent's `.meta.json`, its name and phases from the saved script. The journal can't say whether
+ * the run is still going or was cut off (a live run is the live thread's, and a finished one has a
+ * record), so it is `running` only while the session or the run is still being written (its
+ * transcript, journal or an agent's transcript changed in the last few minutes), else `unknown`.
  */
-export async function readRunJournal(sessionDir: string, runId: string): Promise<WorkflowSnapshot | undefined> {
+export async function readRunJournal(sessionDir: string, runId: string, now: number = Date.now()): Promise<WorkflowSnapshot | undefined> {
   if (!isSafeId(runId)) return undefined;
   const dir = runDir(sessionDir, runId);
   const lines = await readLines(join(dir, 'journal.jsonl'));
@@ -368,10 +378,34 @@ export async function readRunJournal(sessionDir: string, runId: string): Promise
     runId,
     ...(meta.name ? { name: meta.name } : {}),
     ...(meta.description ? { description: meta.description } : {}),
-    status: 'unknown',
+    status: (await lastWritten([`${sessionDir}.jsonl`, dir])) > now - RECENT_RUN_MS ? 'running' : 'unknown',
     phases,
     agents,
   };
+}
+
+/** The latest modification time of these files, and of the files directly in these directories; 0 for none. */
+async function lastWritten(paths: string[]): Promise<number> {
+  let latest = 0;
+  const seen = async (path: string) => {
+    try {
+      const { mtimeMs } = await stat(path);
+      latest = Math.max(latest, mtimeMs);
+    } catch {
+      // gone, or never written
+    }
+  };
+  for (const path of paths) {
+    let entries: string[] | undefined;
+    try {
+      entries = await readdir(path);
+    } catch {
+      await seen(path);
+      continue;
+    }
+    await Promise.all(entries.map((e) => seen(join(path, e))));
+  }
+  return latest;
 }
 
 /** The meta of the script the CLI saved for a run (`workflows/scripts/<name>-<runId>.js`). */

@@ -134,6 +134,13 @@ export class Itemizer {
    * `tool_use`): a transcript has no result messages, so this is how history knows a turn is over.
    */
   private replyEnded = false;
+  /**
+   * Live, a workflow's finish whose event came while a turn ran, by item id: the CLI hands the
+   * model its `<task-notification>` at the turn's next step (written as a `queued_command`
+   * attachment after the tool result it follows), so it is said there, or after the turn if the
+   * turn ends first.
+   */
+  private pendingFinishes = new Map<string, { taskId?: string; toolUseId?: string; status?: string; summary?: string }>();
   /** In history mode, the message being read's time, and the last one read's. */
   private messageTime?: number;
   private lastMessageTime?: number;
@@ -197,6 +204,25 @@ export class Itemizer {
       if (this.messageTime !== undefined) this.lastMessageTime = this.messageTime;
       this.messageTime = undefined;
     }
+  }
+
+  /**
+   * A `<task-notification>` the CLI queued mid-turn and handed the model at the turn's next step:
+   * written to the transcript as an `attachment` (`queued_command`) after the message it followed,
+   * which getSessionMessages drops, so history reads it from the file (`QueuedNotifications`).
+   * Only a workflow's is read, for its finish to land where it did live.
+   */
+  ingestQueued(record: AnyMsg): Emission[] {
+    const prompt = record.attachment?.prompt;
+    const n = typeof prompt === 'string' ? parseTaskNotification(prompt) : undefined;
+    if (!n || !this.isWorkflowTask(n.taskId, n.toolUseId)) return [];
+    return this.ingest({
+      type: 'user',
+      uuid: record.uuid,
+      ...(typeof record.timestamp === 'string' ? { timestamp: record.timestamp } : {}),
+      message: { role: 'user', content: prompt },
+      parent_tool_use_id: null,
+    });
   }
 
   /**
@@ -627,6 +653,7 @@ export class Itemizer {
     const out: Emission[] = [];
     switch (ev.type) {
       case 'message_start': {
+        if (parent === null) out.push(...this.flushFinishes());
         const id = ev.message?.id ?? `msg_${++this.fallbackCounter}`;
         this.currentStreamMsgId.set(parent, id);
         if (!this.streams.has(id)) this.streams.set(id, []);
@@ -704,8 +731,9 @@ export class Itemizer {
     const m = msg.message ?? {};
     const msgId: string = m.id ?? msg.uuid ?? `msg_${++this.fallbackCounter}`;
     const parent: string | null = msg.parent_tool_use_id ?? null;
+    const out: Emission[] = parent === null && !this.streams.has(msgId) ? this.flushFinishes() : [];
     const placed = this.turnFor(parent, msgId);
-    const out: Emission[] = [...placed.out];
+    out.push(...placed.out);
     const turnId = placed.turnId;
     if (this.historyMode && parent === null && typeof m.stop_reason === 'string') this.replyEnded = m.stop_reason !== 'tool_use';
     if (msg.error) {
@@ -821,6 +849,7 @@ export class Itemizer {
         const structured = results.length === 1 ? msg.tool_use_result : undefined;
         out.push(...this.completeTool(t, contentToText(r.content), structured, !!r.is_error));
       }
+      if (parent === null) out.push(...this.flushFinishes());
       return out;
     }
     if (msg.uuid && this.echoUuids.has(msg.uuid)) return out;
@@ -839,7 +868,11 @@ export class Itemizer {
       return this.taskNotice(notification.taskId, notification.status, notification.summary, id);
     }
     if (firstText.startsWith('[Request interrupted')) {
-      if (this.historyMode) this.interruptRequested = true;
+      // Nothing more of the turn follows an interrupt: live, its result comes next and ends it.
+      if (this.historyMode) {
+        this.interruptRequested = true;
+        this.replyEnded = true;
+      }
       return this.notice({ uuid: id }, 'interrupted', firstText);
     }
     const stdout = /^<local-command-(stdout|stderr)>([\s\S]*)<\/local-command-\1>\s*$/.exec(firstText);
@@ -922,15 +955,19 @@ export class Itemizer {
    *
    * Where it goes is decided once, by one rule, live and in history: in the running turn if there
    * is one, else opening the turn that answers it. Live, the event usually comes first, while no
-   * turn runs; mid-turn it leaves the placing to the message, which the CLI may hand over in that
-   * turn or only after it, as history has it. A stopped workflow gets no message and no answering
-   * turn, so its event says it at once, in the running turn or in none.
+   * turn runs. Mid-turn, the CLI hands the model the message at the turn's next step, after the
+   * next tool result (history has it there, as a `queued_command` attachment: `ingestQueued`), and
+   * never as a message of that turn; so the event waits for that step (`flushFinishes`): the next
+   * top-level tool result or reply, in the running turn, or, once the turn has ended without
+   * one, opening the turn that answers it, where history's message goes. A stopped workflow gets
+   * no message and no answering turn, so its event says it at once, in the running turn or in none.
    */
   private workflowFinished(
     n: { taskId?: string; toolUseId?: string; status?: string; summary?: string; result?: string },
     source: 'event' | 'message',
     messageId?: string,
     writtenAt?: number,
+    flushing = false,
   ): Emission[] {
     const id = n.taskId ? `workflow_${n.taskId}_finished` : (messageId ?? `workflow_${++this.fallbackCounter}_finished`);
     const status = workflowStatus(n.status);
@@ -952,7 +989,11 @@ export class Itemizer {
       return this.addCompleted({ ...existing, content: [{ type: 'text', text }] });
     }
     const answered = status !== 'stopped';
-    if (source === 'event' && answered && this.turnRunning()) return [];
+    if (source === 'event' && answered && this.turnRunning() && !flushing) {
+      this.pendingFinishes.set(id, { taskId: n.taskId, toolUseId: n.toolUseId, status: n.status, summary: n.summary });
+      return [];
+    }
+    this.pendingFinishes.delete(id);
     const out: Emission[] = [];
     let turnId: string | null;
     if (this.turnRunning()) turnId = this.turn!.id;
@@ -979,6 +1020,14 @@ export class Itemizer {
       }),
     );
     return out;
+  }
+
+  /** Says the workflow finishes whose events came mid-turn, at the turn's next step (see `workflowFinished`). */
+  private flushFinishes(): Emission[] {
+    if (this.pendingFinishes.size === 0) return [];
+    const pending = [...this.pendingFinishes.values()];
+    this.pendingFinishes.clear();
+    return pending.flatMap((n) => this.workflowFinished(n, 'event', undefined, undefined, true));
   }
 
   // ---- result: end of turn ----
@@ -1036,6 +1085,8 @@ export class Itemizer {
     });
     this.turn = null;
     this.interruptRequested = false;
+    // A finish still waiting for a step of the turn comes after it, as the turn that answers it.
+    out.push(...this.flushFinishes());
     return out;
   }
 
@@ -1061,11 +1112,13 @@ export class Itemizer {
 
   abandonTurn(status: 'completed' | 'interrupted' | 'failed' = 'interrupted'): Emission[] {
     if (!this.turn) return [];
+    // The process may be gone: a finish waiting for the turn's next step goes in it now.
+    const flushed = this.flushFinishes();
     const turn = this.turn;
     turn.status = status === 'completed' && this.interruptRequested ? 'interrupted' : status;
     turn.completedAt = this.endStamp();
     this.interruptRequested = false;
-    const out: Emission[] = [];
+    const out: Emission[] = flushed;
     for (const t of this.cutShort(turn.id)) {
       t.status = 'interrupted';
       out.push(...this.addCompleted(t));

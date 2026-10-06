@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Item } from '../src/protocol/index.ts';
@@ -11,6 +11,8 @@ import {
   readAgentItems,
   readRunJournal,
   readRunRecord,
+  RECENT_RUN_MS,
+  settleAgents,
   scriptMeta,
   workflowAgentLocator,
   workflowCallName,
@@ -66,6 +68,27 @@ describe('workflow scripts', () => {
     expect(w.agents.map((a) => [a.state, a.skipped, a.cached])).toEqual([
       ['error', true, undefined],
       ['done', undefined, true],
+    ]);
+  });
+
+  test('a completed run settles its running agents as done, and those never started as skipped', () => {
+    const agent = (index: number, state: string, more: object = {}) => ({ index, label: `a${index}`, state, ...more });
+    const w = settleAgents({
+      phases: [],
+      agents: [
+        agent(1, 'progress', { startedAt: 1 }),
+        agent(2, 'start', { queuedAt: 1, startedAt: 2 }),
+        agent(3, 'start', { queuedAt: 1 }),
+        agent(4, 'done'),
+        agent(5, 'error', { error: 'boom' }),
+      ],
+    });
+    expect(w.agents.map((a) => [a.state, a.skipped ?? false])).toEqual([
+      ['done', false],
+      ['done', false],
+      ['error', true],
+      ['done', false],
+      ['error', false],
     ]);
   });
 
@@ -273,8 +296,8 @@ describe('workflow runs on disk', () => {
 
   test('a run with only a journal, its status unknown', async () => {
     expect(await readRunRecord(SESSION, 'wf_journalonly-1')).toBeUndefined();
-    const w = (await readRunJournal(SESSION, 'wf_journalonly-1'))!;
-    // Still going, or cut off: the journal can't say, so it isn't reported as running.
+    // Read a day on: still going, or cut off? The journal can't say, so it isn't reported as running.
+    const w = (await readRunJournal(SESSION, 'wf_journalonly-1', Date.now() + 86_400_000))!;
     expect(w.status).toBe('unknown');
     expect(w.name).toBe('ls-consensus');
     expect(w.agents.map((a) => [a.label, a.state, a.model])).toEqual([
@@ -324,8 +347,19 @@ describe('workflow methods', () => {
 
   test('workflow/read finds the record, then the journal, else nothing', async () => {
     expect((await mgr.readWorkflow(sid, RUN))?.status).toBe('completed');
-    expect((await mgr.readWorkflow(sid, 'wf_journalonly-1'))?.status).toBe('unknown');
+    // Just written (copied here), a journal-only run is still going.
+    expect((await mgr.readWorkflow(sid, 'wf_journalonly-1'))?.status).toBe('running');
     expect(await mgr.readWorkflow(sid, 'wf_missing')).toBeNull();
+  });
+
+  test('a journal-only run nothing has written to for a while is unknown', async () => {
+    const old = new Date(Date.now() - 2 * RECENT_RUN_MS);
+    const run = join(project, sid, 'subagents', 'workflows', 'wf_journalonly-1');
+    for (const f of [join(project, `${sid}.jsonl`), ...readdirSync(run).map((f) => join(run, f))]) utimesSync(f, old, old);
+    expect((await mgr.readWorkflow(sid, 'wf_journalonly-1'))?.status).toBe('unknown');
+    // A line in an agent's transcript and it is running again.
+    utimesSync(join(run, 'journal.jsonl'), new Date(), new Date());
+    expect((await mgr.readWorkflow(sid, 'wf_journalonly-1'))?.status).toBe('running');
   });
 
   test('workflow/agentItems reads an agent', async () => {

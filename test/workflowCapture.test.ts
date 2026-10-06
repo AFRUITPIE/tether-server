@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Item, Turn } from '../src/protocol/index.ts';
 import { Itemizer, type Emission } from '../src/threads/itemizer.ts';
+import { ingestHistory, QueuedNotifications } from '../src/threads/FollowedThread.ts';
 import { readAgentItems, readRunRecord, unframeAgentPrompt, workflowAgentLocator } from '../src/threads/workflows.ts';
 
 /**
@@ -16,6 +17,12 @@ import { readAgentItems, readRunRecord, unframeAgentPrompt, workflowAgentLocator
  *
  * The task_notification event and the `<task-notification>` message both arrived at 21:39:38.4,
  * the event first, after the launching turn had ended.
+ *
+ * The finish landing mid-turn is this run as the launching turn would have had it had it waited
+ * (`midturn.jsonl`: a `sleep` call and its result), in the shape real transcripts give it: the CLI
+ * hands the model a mid-turn `<task-notification>` at the turn's next step, written as a
+ * `queued_command` attachment after that step's tool result (`midturn-raw.jsonl`, the raw line),
+ * never as a user message of that turn; getSessionMessages drops it.
  */
 const DIR = `${import.meta.dir}/fixtures/workflows/typo-check`;
 const SESSION = `${DIR}/session`;
@@ -32,6 +39,8 @@ const lines = async (name: string): Promise<any[]> =>
 
 const stream = await lines('stream.jsonl');
 const history = await lines('history.jsonl');
+const [waitCall, waitResult] = await lines('midturn.jsonl');
+const queuedLines = (await Bun.file(`${DIR}/midturn-raw.jsonl`).text()).trim().split('\n');
 
 const completedItems = (out: Emission[]) => out.flatMap((e) => (e.method === 'item/completed' ? [e.body.item as Item] : []));
 const lastWorkflow = (out: Emission[]) => out.flatMap((e) => (e.method === 'task/event' && (e.body as any).workflow ? [(e.body as any).workflow] : [])).at(-1);
@@ -39,7 +48,11 @@ const lastWorkflow = (out: Emission[]) => out.flatMap((e) => (e.method === 'task
 const [prompt, launch, launchResult, waiting, , finishMessage, reply] = history;
 const ended = (uuid: string) => ({ type: 'result', subtype: 'success', uuid });
 
-/** The live stream as the daemon saw it: the transcript's messages, the task events between them, and the results. */
+/**
+ * The live stream as the daemon saw it: the transcript's messages, the task events between them,
+ * and the results. Mid-turn, the turn waits on a call while the workflow runs and finishes, and the
+ * CLI sends no message for the finish in that turn.
+ */
 function live(opts: { tasks?: any[]; midTurn?: boolean } = {}) {
   const tasks = opts.tasks ?? stream;
   const [started, ...rest] = tasks;
@@ -50,10 +63,17 @@ function live(opts: { tasks?: any[]; midTurn?: boolean } = {}) {
   step(launch);
   step(started);
   step(launchResult);
-  if (!opts.midTurn) {
-    step(waiting);
+  if (opts.midTurn) {
+    step(waitCall);
+    for (const m of rest) step(m);
+    const atFinish = out.length;
+    step(waitResult);
+    step(reply);
     step(ended('r1'));
+    return { iz, out, atFinish };
   }
+  step(waiting);
+  step(ended('r1'));
   for (const m of rest) step(m);
   const atFinish = out.length;
   step(finishMessage);
@@ -62,10 +82,12 @@ function live(opts: { tasks?: any[]; midTurn?: boolean } = {}) {
   return { iz, out, atFinish };
 }
 
-function read(messages: any[]) {
+function read(messages: any[], raw: string[] = []) {
   const iz = new Itemizer(() => 1, true);
   iz.locateWorkflowAgent = workflowAgentLocator(SESSION);
-  for (const m of messages) iz.ingest(m);
+  const queued = new QueuedNotifications();
+  queued.add(raw);
+  ingestHistory(iz, messages, queued);
   iz.closeTurn('completed');
   return iz.snapshot();
 }
@@ -141,11 +163,10 @@ describe('typo-check, read from history', () => {
 });
 
 describe('typo-check, the finish landing mid-turn', () => {
-  // The same run, had the launching turn still been going: the notification follows the
-  // launch's result directly, before the turn's reply ends it.
-  const midTurnHistory = history.filter((m) => m !== waiting && m.type !== 'system');
+  const midTurnHistory = [prompt, launch, launchResult, waitCall, waitResult, reply];
+  const order = (items: Item[]) => items.map((i) => i.id);
 
-  test('live, the event waits and the message joins the running turn', () => {
+  test('live, the event waits for the turn\'s next step and says it there, in the running turn', () => {
     const { iz, out, atFinish } = live({ midTurn: true });
     expect(finishOf(completedItems(out.slice(0, atFinish)))).toEqual([]);
     const items = iz.snapshot().items;
@@ -153,14 +174,78 @@ describe('typo-check, the finish landing mid-turn', () => {
     expect(finish).toHaveLength(1);
     expect(finish[0].id).toBe(FINISH);
     expect(finish[0].turnId).toBe(turnOf(items, CALL));
+    expect(finish[0].content[0].text).toBe('Dynamic workflow "List files, review each for typos/bugs, verify findings" completed');
+    // Right after the step's tool result, before the reply.
+    const ids = order(items);
+    expect(ids.indexOf(FINISH)).toBe(ids.indexOf('toolu_midturn_wait') + 1);
+    expect(iz.snapshot().turns).toHaveLength(1);
   });
 
-  test('history places it in the same turn', () => {
-    const { items } = read(midTurnHistory);
+  test('history reads the attachment, the same item in the same place', () => {
+    const { items, turns } = read(midTurnHistory, queuedLines);
     const finish = finishOf(items);
     expect(finish).toHaveLength(1);
+    expect(finish[0].id).toBe(FINISH);
     expect(finish[0].turnId).toBe(turnOf(items, CALL));
-    expect(finish[0].turnId).toBe(finishOf(live({ midTurn: true }).iz.snapshot().items)[0].turnId);
+    expect(JSON.parse(finish[0].content[0].text).all).toHaveLength(7);
+    expect(turns).toHaveLength(1);
+    const liveItems = live({ midTurn: true }).iz.snapshot().items;
+    expect(finishOf(liveItems)[0].turnId).toBe(finish[0].turnId);
+    expect(order(items)).toEqual(order(liveItems));
+  });
+
+  test('without the attachment (getSessionMessages alone) history has no finish', () => {
+    expect(finishOf(read(midTurnHistory).items)).toEqual([]);
+  });
+
+  test("an attachment written after its message was read is read on the next pass", () => {
+    const iz = new Itemizer(() => 1, true);
+    const queued = new QueuedNotifications();
+    ingestHistory(iz, [prompt, launch, launchResult, waitCall, waitResult], queued);
+    queued.add(queuedLines);
+    const out = ingestHistory(iz, [reply], queued);
+    const ids = order(iz.snapshot().items);
+    expect(finishOf(completedItems(out))).toHaveLength(1);
+    expect(ids.indexOf(FINISH)).toBe(ids.indexOf('toolu_midturn_wait') + 1);
+  });
+
+  test('a finish whose event came at the turn\'s last step comes after it, as the turn that answers it', () => {
+    const iz = new Itemizer(() => 1);
+    const [started, ...rest] = stream;
+    iz.beginUserTurn(prompt.uuid, [{ type: 'text', text: 'go' }], false);
+    for (const m of [launch, started, launchResult, waiting, ...rest]) iz.ingest(m);
+    expect(finishOf(iz.snapshot().items)).toEqual([]);
+    const out = iz.ingest(ended('r1'));
+    const finish = finishOf(completedItems(out));
+    expect(finish).toHaveLength(1);
+    expect(finish[0].turnId).toBe(`turn_${FINISH}`);
+    // As history has it: the message after the reply that ended the turn opens the turn that answers it.
+    expect(finishOf(read([prompt, launch, launchResult, waiting, finishMessage]).items)[0].turnId).toBe(`turn_${FINISH}`);
+  });
+
+  test('an interrupted turn: history and live put the finish in the turn after it', () => {
+    const interrupt = {
+      type: 'user',
+      uuid: '9f1d6c1e-0000-4000-8000-00000000a004',
+      session_id: prompt.session_id,
+      message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] },
+      parent_tool_use_id: null,
+      timestamp: '2026-10-06T21:39:20.000Z',
+    };
+    const fromHistory = read([prompt, launch, launchResult, waitCall, interrupt, finishMessage]);
+    expect(finishOf(fromHistory.items)[0].turnId).toBe(`turn_${FINISH}`);
+    expect(fromHistory.turns.find((t: Turn) => t.id === prompt.uuid)?.status).toBe('interrupted');
+
+    const iz = new Itemizer(() => 1);
+    const [started, ...rest] = stream;
+    iz.beginUserTurn(prompt.uuid, [{ type: 'text', text: 'go' }], false);
+    for (const m of [launch, started, launchResult, waitCall]) iz.ingest(m);
+    iz.noteInterruptRequested();
+    iz.ingest(interrupt);
+    iz.ingest({ type: 'result', subtype: 'error_during_execution', uuid: 'r1' });
+    for (const m of rest) iz.ingest(m);
+    iz.ingest(finishMessage);
+    expect(finishOf(iz.snapshot().items)[0].turnId).toBe(`turn_${FINISH}`);
   });
 });
 
