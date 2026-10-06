@@ -2135,6 +2135,11 @@
               "type": "null"
             }
           ]
+        },
+        "backgroundTasks": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -3395,6 +3400,11 @@
         },
         "status": {
           "$ref": "#/$defs/ThreadStatus"
+        },
+        "backgroundTasks": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
         }
       },
       "required": [

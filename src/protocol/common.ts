@@ -136,6 +136,8 @@ export const ThreadSummary = z
     createdAt: z.number().optional(),
     updatedAt: z.number(),
     status: ThreadStatus,
+    /** Background commands and agents still running after the turn that started them, when loaded. */
+    backgroundTasks: z.number().int().optional(),
   })
   .meta({ id: 'ThreadSummary' });
 export type ThreadSummary = z.infer<typeof ThreadSummary>;

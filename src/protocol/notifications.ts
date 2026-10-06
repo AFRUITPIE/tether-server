@@ -13,6 +13,8 @@ export const Notifications = {
     status: ThreadStatus,
     /** Finer-grained activity from SDK `status` messages. */
     activity: z.enum(['requesting', 'compacting']).nullable().optional(),
+    /** Background commands and agents still running, though the turn may have ended. */
+    backgroundTasks: z.number().int().optional(),
   }),
   'thread/closed': z.object({ ...T, reason: z.string().optional() }),
   'thread/tokenUsage/updated': z.object({

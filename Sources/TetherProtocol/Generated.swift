@@ -227,8 +227,9 @@ public struct ThreadSummary: Codable, Sendable, Hashable {
     public var createdAt: Double?
     public var updatedAt: Double
     public var status: ThreadStatus
+    public var backgroundTasks: Int?
 
-    public init(threadId: String, title: String, customTitle: String? = nil, firstPrompt: String? = nil, cwd: String? = nil, gitBranch: String? = nil, tag: String? = nil, createdAt: Double? = nil, updatedAt: Double, status: ThreadStatus) {
+    public init(threadId: String, title: String, customTitle: String? = nil, firstPrompt: String? = nil, cwd: String? = nil, gitBranch: String? = nil, tag: String? = nil, createdAt: Double? = nil, updatedAt: Double, status: ThreadStatus, backgroundTasks: Int? = nil) {
         self.threadId = threadId
         self.title = title
         self.customTitle = customTitle
@@ -239,6 +240,7 @@ public struct ThreadSummary: Codable, Sendable, Hashable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.status = status
+        self.backgroundTasks = backgroundTasks
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -252,6 +254,7 @@ public struct ThreadSummary: Codable, Sendable, Hashable {
         case createdAt = "createdAt"
         case updatedAt = "updatedAt"
         case status = "status"
+        case backgroundTasks = "backgroundTasks"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -266,6 +269,7 @@ public struct ThreadSummary: Codable, Sendable, Hashable {
         self.createdAt = try c.decodeIfPresent(Double.self, forKey: .createdAt)
         self.updatedAt = try c.decode(Double.self, forKey: .updatedAt)
         self.status = try c.decode(ThreadStatus.self, forKey: .status)
+        self.backgroundTasks = try c.decodeIfPresent(Int.self, forKey: .backgroundTasks)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -280,6 +284,7 @@ public struct ThreadSummary: Codable, Sendable, Hashable {
         try c.encodeIfPresent(createdAt, forKey: .createdAt)
         try c.encode(updatedAt, forKey: .updatedAt)
         try c.encode(status, forKey: .status)
+        try c.encodeIfPresent(backgroundTasks, forKey: .backgroundTasks)
     }
 }
 
@@ -5224,12 +5229,14 @@ public struct ThreadStatusChangedNotification: Codable, Sendable, Hashable {
     public var seq: Int
     public var status: ThreadStatus
     public var activity: Activity?
+    public var backgroundTasks: Int?
 
-    public init(threadId: String, seq: Int, status: ThreadStatus, activity: Activity? = nil) {
+    public init(threadId: String, seq: Int, status: ThreadStatus, activity: Activity? = nil, backgroundTasks: Int? = nil) {
         self.threadId = threadId
         self.seq = seq
         self.status = status
         self.activity = activity
+        self.backgroundTasks = backgroundTasks
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -5237,6 +5244,7 @@ public struct ThreadStatusChangedNotification: Codable, Sendable, Hashable {
         case seq = "seq"
         case status = "status"
         case activity = "activity"
+        case backgroundTasks = "backgroundTasks"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -5245,6 +5253,7 @@ public struct ThreadStatusChangedNotification: Codable, Sendable, Hashable {
         self.seq = try c.decode(Int.self, forKey: .seq)
         self.status = try c.decode(ThreadStatus.self, forKey: .status)
         self.activity = try c.decodeIfPresent(Activity.self, forKey: .activity)
+        self.backgroundTasks = try c.decodeIfPresent(Int.self, forKey: .backgroundTasks)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -5253,6 +5262,7 @@ public struct ThreadStatusChangedNotification: Codable, Sendable, Hashable {
         try c.encode(seq, forKey: .seq)
         try c.encode(status, forKey: .status)
         try c.encodeIfPresent(activity, forKey: .activity)
+        try c.encodeIfPresent(backgroundTasks, forKey: .backgroundTasks)
     }
 
     public struct Activity: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
