@@ -1551,8 +1551,9 @@ public struct WorkflowSnapshot: Codable, Sendable, Hashable {
     public var toolUses: Double?
     public var durationMs: Double?
     public var result: String?
+    public var error: String?
 
-    public init(runId: String? = nil, name: String? = nil, description: String? = nil, status: String? = nil, activity: String? = nil, phases: [WorkflowPhase], agents: [WorkflowAgent], totalTokens: Double? = nil, toolUses: Double? = nil, durationMs: Double? = nil, result: String? = nil) {
+    public init(runId: String? = nil, name: String? = nil, description: String? = nil, status: String? = nil, activity: String? = nil, phases: [WorkflowPhase], agents: [WorkflowAgent], totalTokens: Double? = nil, toolUses: Double? = nil, durationMs: Double? = nil, result: String? = nil, error: String? = nil) {
         self.runId = runId
         self.name = name
         self.description = description
@@ -1564,6 +1565,7 @@ public struct WorkflowSnapshot: Codable, Sendable, Hashable {
         self.toolUses = toolUses
         self.durationMs = durationMs
         self.result = result
+        self.error = error
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1578,6 +1580,7 @@ public struct WorkflowSnapshot: Codable, Sendable, Hashable {
         case toolUses = "toolUses"
         case durationMs = "durationMs"
         case result = "result"
+        case error = "error"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -1593,6 +1596,7 @@ public struct WorkflowSnapshot: Codable, Sendable, Hashable {
         self.toolUses = try c.decodeIfPresent(Double.self, forKey: .toolUses)
         self.durationMs = try c.decodeIfPresent(Double.self, forKey: .durationMs)
         self.result = try c.decodeIfPresent(String.self, forKey: .result)
+        self.error = try c.decodeIfPresent(String.self, forKey: .error)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -1608,6 +1612,7 @@ public struct WorkflowSnapshot: Codable, Sendable, Hashable {
         try c.encodeIfPresent(toolUses, forKey: .toolUses)
         try c.encodeIfPresent(durationMs, forKey: .durationMs)
         try c.encodeIfPresent(result, forKey: .result)
+        try c.encodeIfPresent(error, forKey: .error)
     }
 }
 
@@ -1651,6 +1656,9 @@ public struct WorkflowAgent: Codable, Sendable, Hashable {
     public var agentId: String?
     public var model: String?
     public var state: String
+    public var skipped: Bool?
+    public var cached: Bool?
+    public var blocked: Bool?
     public var queuedAt: Double?
     public var startedAt: Double?
     public var durationMs: Double?
@@ -1662,7 +1670,7 @@ public struct WorkflowAgent: Codable, Sendable, Hashable {
     public var resultPreview: String?
     public var error: String?
 
-    public init(index: Double, label: String, phaseIndex: Double? = nil, phaseTitle: String? = nil, agentId: String? = nil, model: String? = nil, state: String, queuedAt: Double? = nil, startedAt: Double? = nil, durationMs: Double? = nil, tokens: Double? = nil, toolCalls: Double? = nil, lastToolName: String? = nil, lastToolSummary: String? = nil, promptPreview: String? = nil, resultPreview: String? = nil, error: String? = nil) {
+    public init(index: Double, label: String, phaseIndex: Double? = nil, phaseTitle: String? = nil, agentId: String? = nil, model: String? = nil, state: String, skipped: Bool? = nil, cached: Bool? = nil, blocked: Bool? = nil, queuedAt: Double? = nil, startedAt: Double? = nil, durationMs: Double? = nil, tokens: Double? = nil, toolCalls: Double? = nil, lastToolName: String? = nil, lastToolSummary: String? = nil, promptPreview: String? = nil, resultPreview: String? = nil, error: String? = nil) {
         self.index = index
         self.label = label
         self.phaseIndex = phaseIndex
@@ -1670,6 +1678,9 @@ public struct WorkflowAgent: Codable, Sendable, Hashable {
         self.agentId = agentId
         self.model = model
         self.state = state
+        self.skipped = skipped
+        self.cached = cached
+        self.blocked = blocked
         self.queuedAt = queuedAt
         self.startedAt = startedAt
         self.durationMs = durationMs
@@ -1690,6 +1701,9 @@ public struct WorkflowAgent: Codable, Sendable, Hashable {
         case agentId = "agentId"
         case model = "model"
         case state = "state"
+        case skipped = "skipped"
+        case cached = "cached"
+        case blocked = "blocked"
         case queuedAt = "queuedAt"
         case startedAt = "startedAt"
         case durationMs = "durationMs"
@@ -1711,6 +1725,9 @@ public struct WorkflowAgent: Codable, Sendable, Hashable {
         self.agentId = try c.decodeIfPresent(String.self, forKey: .agentId)
         self.model = try c.decodeIfPresent(String.self, forKey: .model)
         self.state = try c.decode(String.self, forKey: .state)
+        self.skipped = try c.decodeIfPresent(Bool.self, forKey: .skipped)
+        self.cached = try c.decodeIfPresent(Bool.self, forKey: .cached)
+        self.blocked = try c.decodeIfPresent(Bool.self, forKey: .blocked)
         self.queuedAt = try c.decodeIfPresent(Double.self, forKey: .queuedAt)
         self.startedAt = try c.decodeIfPresent(Double.self, forKey: .startedAt)
         self.durationMs = try c.decodeIfPresent(Double.self, forKey: .durationMs)
@@ -1732,6 +1749,9 @@ public struct WorkflowAgent: Codable, Sendable, Hashable {
         try c.encodeIfPresent(agentId, forKey: .agentId)
         try c.encodeIfPresent(model, forKey: .model)
         try c.encode(state, forKey: .state)
+        try c.encodeIfPresent(skipped, forKey: .skipped)
+        try c.encodeIfPresent(cached, forKey: .cached)
+        try c.encodeIfPresent(blocked, forKey: .blocked)
         try c.encodeIfPresent(queuedAt, forKey: .queuedAt)
         try c.encodeIfPresent(startedAt, forKey: .startedAt)
         try c.encodeIfPresent(durationMs, forKey: .durationMs)

@@ -56,16 +56,16 @@ describe('workflow scripts', () => {
     expect(workflowCallName({ scriptPath: `/x/workflows/scripts/ls-consensus-${RUN}.js` })).toBe('ls-consensus');
   });
 
-  test('agent states are normalized, unknown ones kept', () => {
-    expect(['start', 'progress', 'done', 'error', 'skipped', 'completed', 'failed', 'thinking'].map(agentState)).toEqual([
-      'start',
-      'progress',
-      'done',
-      'error',
-      'skipped',
-      'done',
-      'error',
-      'thinking',
+  test("agent states go through as the CLI sent them", () => {
+    expect(['start', 'progress', 'done', 'error', 'queued', 'thinking'].map(agentState)).toEqual(['start', 'progress', 'done', 'error', 'queued', 'thinking']);
+    // A skipped agent is an error with `skipped`, as the CLI reports it.
+    const w = mergeWorkflowProgress({ phases: [], agents: [] }, [
+      { type: 'workflow_agent', index: 1, label: 'a', state: 'error', error: 'skipped by user', skipped: true },
+      { type: 'workflow_agent', index: 2, label: 'b', state: 'done', cached: true },
+    ]);
+    expect(w.agents.map((a) => [a.state, a.skipped, a.cached])).toEqual([
+      ['error', true, undefined],
+      ['done', undefined, true],
     ]);
   });
 
@@ -188,9 +188,12 @@ describe('a workflow streamed live', async () => {
     expect(msgs[0].originName).toBe('ls-consensus');
     expect(msgs[0].synthetic).toBe(true);
     expect(JSON.parse(msgs[0].content[0].text).verdict.agree).toBe(true);
-    // It opens the turn that answers it; the launching turn has ended.
+    // The event said it first, opening the turn that answers it; the message filled in the result.
+    expect(msgs[0].id).toBe(`workflow_${TASK}_finished`);
+    expect(msgs[0].turnId).toBe(`turn_workflow_${TASK}_finished`);
     expect(msgs[0].turnId).not.toBe(first);
-    expect(finished.some((e) => e.method === 'turn/started')).toBe(true);
+    expect(done.some((e) => e.method === 'turn/started')).toBe(true);
+    expect(finished.some((e) => e.method === 'turn/started' || e.method === 'item/started')).toBe(false);
   });
 
   test('the snapshot is kept, with the result, by run id', () => {
@@ -215,6 +218,8 @@ describe('a workflow read from history', async () => {
     expect(finish[0].originName).toBe('ls-consensus');
     expect(finish[0].content[0].text).toContain('"agree": true');
     const call = items.find((i) => i.id === CALL)!;
+    expect(finish[0].id).toBe(`workflow_${TASK}_finished`);
+    expect(finish[0].turnId).toBe(`turn_workflow_${TASK}_finished`);
     expect(finish[0].turnId).not.toBe(call.turnId);
     expect(items.filter((i) => i.type === 'notice' && i.kind === 'taskNotification')).toEqual([]);
   });
@@ -263,12 +268,14 @@ describe('workflow runs on disk', () => {
     expect(w.toolUses).toBe(23);
     expect(JSON.parse(w.result!).verdict.agree).toBe(true);
     expect(w.result).toContain('\n  "counts"');
+    expect(w.error).toBeUndefined();
   });
 
-  test('a run still going, from its journal', async () => {
+  test('a run with only a journal, its status unknown', async () => {
     expect(await readRunRecord(SESSION, 'wf_journalonly-1')).toBeUndefined();
     const w = (await readRunJournal(SESSION, 'wf_journalonly-1'))!;
-    expect(w.status).toBe('running');
+    // Still going, or cut off: the journal can't say, so it isn't reported as running.
+    expect(w.status).toBe('unknown');
     expect(w.name).toBe('ls-consensus');
     expect(w.agents.map((a) => [a.label, a.state, a.model])).toEqual([
       ['ls-0', 'progress', 'haiku'],
@@ -317,7 +324,7 @@ describe('workflow methods', () => {
 
   test('workflow/read finds the record, then the journal, else nothing', async () => {
     expect((await mgr.readWorkflow(sid, RUN))?.status).toBe('completed');
-    expect((await mgr.readWorkflow(sid, 'wf_journalonly-1'))?.status).toBe('running');
+    expect((await mgr.readWorkflow(sid, 'wf_journalonly-1'))?.status).toBe('unknown');
     expect(await mgr.readWorkflow(sid, 'wf_missing')).toBeNull();
   });
 

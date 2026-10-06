@@ -51,8 +51,9 @@ export const UserMessageItem = z.object({
   synthetic: z.boolean().optional(),
   /**
    * Provenance for non-human messages, e.g. task-notification, peer, channel, subagent, or
-   * `workflow`: a dynamic workflow's finish, whose content is its result (or, failed or stopped,
-   * what happened) and whose `originName` is the workflow's name.
+   * `workflow`: a dynamic workflow's finish, `workflow_<taskId>_finished`, whose content is its
+   * result (or, failed or stopped, what happened) and whose `originName` is the workflow's name. It
+   * may first come with the CLI's summary and then again, the same id, with the result.
    */
   origin: z.string().optional(),
   /** For a message from another session: the sender's display name, as it reported it. */
@@ -128,8 +129,17 @@ export const WorkflowAgent = z
     phaseTitle: z.string().optional(),
     agentId: z.string().optional(),
     model: z.string().optional(),
-    /** start | progress | done | error | skipped; unknown values kept */
+    /**
+     * The CLI's own state, passed through as it came: start (queued or starting), progress, done,
+     * error, and whatever a later CLI adds. A skipped agent is `error` with `skipped`.
+     */
     state: z.string(),
+    /** Skipped by the person (the CLI reports it as state `error`, "skipped by user"). */
+    skipped: z.boolean().optional(),
+    /** Replayed from an earlier run's cache rather than run again. */
+    cached: z.boolean().optional(),
+    /** Stopped by the safety classifier before it ran. */
+    blocked: z.boolean().optional(),
     queuedAt: z.number().optional(),
     startedAt: z.number().optional(),
     durationMs: z.number().optional(),
@@ -149,7 +159,10 @@ export const WorkflowSnapshot = z
     runId: z.string().optional(),
     name: z.string().optional(),
     description: z.string().optional(),
-    /** running | completed | failed | stopped */
+    /**
+     * running | completed | failed | stopped | paused, or unknown: a run found only by its journal,
+     * with no live task and no record, which may have been cut off.
+     */
     status: z.string().optional(),
     /** the latest agent event, "Phase: label" */
     activity: z.string().optional(),
@@ -158,8 +171,10 @@ export const WorkflowSnapshot = z
     totalTokens: z.number().optional(),
     toolUses: z.number().optional(),
     durationMs: z.number().optional(),
-    /** the workflow's return value as text, once finished */
+    /** the workflow's return value as text, once it has completed */
     result: z.string().optional(),
+    /** why it failed */
+    error: z.string().optional(),
   })
   .meta({ id: 'WorkflowSnapshot' });
 export type WorkflowSnapshot = z.infer<typeof WorkflowSnapshot>;

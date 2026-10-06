@@ -548,14 +548,20 @@ export class ThreadManager {
 
   /**
    * A workflow run of the thread: the live thread's own snapshot while it has one (with the run
-   * record's result once there is one), else the CLI's run record, else its journal.
+   * record's result or error once there is one), else the CLI's run record, else its journal,
+   * whose status is unknown.
    */
   async readWorkflow(threadId: string, runId: string): Promise<WorkflowSnapshot | null> {
     if (!isSafeId(threadId) || !isSafeId(runId)) throw new RpcError(ErrorCodes.invalidParams, 'invalid thread or run id');
     const live = this.loaded(threadId)?.workflowByRun(runId);
     const dir = sessionDirSync(threadId);
     const record = dir ? await readRunRecord(dir, runId) : undefined;
-    if (live) return record?.result && !live.result ? { ...live, result: record.result } : live;
+    if (live)
+      return {
+        ...live,
+        ...(record?.result && !live.result ? { result: record.result } : {}),
+        ...(record?.error && !live.error ? { error: record.error } : {}),
+      };
     if (record) return record;
     return (dir ? await readRunJournal(dir, runId) : undefined) ?? null;
   }

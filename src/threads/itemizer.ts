@@ -7,6 +7,7 @@ import {
   mergeWorkflowProgress,
   notificationResult,
   scriptMeta,
+  settleAgents,
   workflowCallName,
   workflowStatus,
 } from './workflows.ts';
@@ -128,6 +129,11 @@ export class Itemizer {
   private workflowAgents = new Map<string, string>();
   /** Which Workflow call launched each run, from its launch's `Run ID`. */
   private workflowRuns = new Map<string, string>();
+  /**
+   * In history mode, whether the open turn's last reply ended it (a stop reason other than
+   * `tool_use`): a transcript has no result messages, so this is how history knows a turn is over.
+   */
+  private replyEnded = false;
   /** In history mode, the message being read's time, and the last one read's. */
   private messageTime?: number;
   private lastMessageTime?: number;
@@ -332,20 +338,24 @@ export class Itemizer {
             },
           },
         ];
-      case 'task_notification':
-        return [
-          ...this.taskEvent(msg),
-          ...this.settleTask(msg.tool_use_id, msg.status),
-          // A workflow's finish is said once, by its `<task-notification>` message, which has its result.
-          ...(this.worthANotice(msg) && !this.isWorkflowTask(msg.task_id, msg.tool_use_id)
-            ? this.taskNotice(msg.task_id, msg.status, msg.summary, msg.uuid)
-            : []),
-        ];
+      case 'task_notification': {
+        const workflow = this.isWorkflowTask(msg.task_id, msg.tool_use_id);
+        const events = [...this.taskEvent(msg), ...this.settleTask(msg.tool_use_id, msg.status)];
+        if (!this.worthANotice(msg)) return events;
+        if (workflow)
+          return [...events, ...this.workflowFinished({ taskId: msg.task_id, toolUseId: msg.tool_use_id, status: msg.status, summary: msg.summary }, 'event')];
+        return [...events, ...this.taskNotice(msg.task_id, msg.status, msg.summary, msg.uuid)];
+      }
       case 'task_started':
       case 'task_progress':
-      case 'task_updated':
+      case 'task_updated': {
         if (msg.task_id && msg.tool_use_id) this.taskTools.set(msg.task_id, msg.tool_use_id);
-        return this.taskEvent(msg);
+        const events = this.taskEvent(msg);
+        // A workflow stopped may say so only here: the CLI hands the model no message for it.
+        const stopped = msg.subtype === 'task_updated' && workflowStatus(msg.patch?.status) === 'stopped';
+        if (!stopped || !this.isWorkflowTask(msg.task_id, msg.tool_use_id)) return events;
+        return [...events, ...this.workflowFinished({ taskId: msg.task_id, status: msg.patch.status }, 'event')];
+      }
       case 'background_tasks_changed':
         if (Array.isArray(msg.tasks)) this.backgroundTaskIds = new Set(msg.tasks.map((t: AnyMsg) => String(t.task_id)));
         return [{ method: 'task/backgroundChanged', body: { tasks: msg.tasks ?? msg } }];
@@ -444,6 +454,8 @@ export class Itemizer {
         send = true;
         break;
     }
+    const error = failureOf(msg.patch?.error ?? msg.error, msg.subtype === 'task_notification' && w.status === 'failed' ? msg.summary : undefined);
+    if (error) w.error = error;
     const u = msg.usage;
     if (u && typeof u === 'object') {
       if (typeof u.total_tokens === 'number') w.totalTokens = u.total_tokens;
@@ -454,6 +466,7 @@ export class Itemizer {
       w = mergeWorkflowProgress(w, msg.workflow_progress);
       send = true;
     }
+    if (msg.subtype === 'task_notification' && w.status === 'completed') w = settleAgents(w);
     if (!w.description && call?.input) {
       const d = scriptMeta((call.input as AnyMsg).script).description;
       if (d) w.description = d;
@@ -569,6 +582,7 @@ export class Itemizer {
 
   private startTurn(id: string): Emission[] {
     this.interruptRequested = false;
+    this.replyEnded = false;
     this.turn = { id, status: 'inProgress', startedAt: this.stamp() };
     this.turns.push(this.turn);
     return [{ method: 'turn/started', body: { turn: { ...this.turn } } }];
@@ -693,6 +707,7 @@ export class Itemizer {
     const placed = this.turnFor(parent, msgId);
     const out: Emission[] = [...placed.out];
     const turnId = placed.turnId;
+    if (this.historyMode && parent === null && typeof m.stop_reason === 'string') this.replyEnded = m.stop_reason !== 'tool_use';
     if (msg.error) {
       out.push(
         ...this.addCompleted({
@@ -818,7 +833,8 @@ export class Itemizer {
     const notification = parseTaskNotification(firstText);
     if (notification) {
       if (parent !== null) return out;
-      if (this.isWorkflowTask(notification.taskId, notification.toolUseId)) return this.workflowFinished(notification, id, msg);
+      if (this.isWorkflowTask(notification.taskId, notification.toolUseId))
+        return this.workflowFinished(notification, 'message', id, msg.timestamp ? Date.parse(msg.timestamp) : undefined);
       if (!this.worthANotice({ tool_use_id: notification.toolUseId })) return out;
       return this.taskNotice(notification.taskId, notification.status, notification.summary, id);
     }
@@ -890,37 +906,72 @@ export class Itemizer {
   }
 
   /**
-   * A workflow's finish, as the message the CLI hands the model: from the workflow, named for it,
-   * holding its result, or what happened when it failed or was stopped. It begins the turn that
-   * answers it, as a prompt would, so that turn isn't counted as part of the one that launched it.
+   * Whether a turn is running: live, until its result; in history, until a reply ends it, since a
+   * transcript has no results.
    */
-  private workflowFinished(n: NonNullable<ReturnType<typeof parseTaskNotification>>, id: string, msg: AnyMsg): Emission[] {
-    if (n.taskId) {
-      if (this.notifiedTasks.has(n.taskId)) return [];
-      this.notifiedTasks.add(n.taskId);
+  private turnRunning(): boolean {
+    return this.turn !== null && !(this.historyMode && this.replyEnded);
+  }
+
+  /**
+   * A workflow's finish: a message from the workflow, named for it, holding its result, or what
+   * happened when it failed or was stopped. It is one item, `workflow_<taskId>_finished`, said by
+   * whichever comes first of the `task_notification` event (live only) and the `<task-notification>`
+   * message the CLI hands the model (live and history); the message, coming second, puts its
+   * `<result>` in the same item.
+   *
+   * Where it goes is decided once, by one rule, live and in history: in the running turn if there
+   * is one, else opening the turn that answers it. Live, the event usually comes first, while no
+   * turn runs; mid-turn it leaves the placing to the message, which the CLI may hand over in that
+   * turn or only after it, as history has it. A stopped workflow gets no message and no answering
+   * turn, so its event says it at once, in the running turn or in none.
+   */
+  private workflowFinished(
+    n: { taskId?: string; toolUseId?: string; status?: string; summary?: string; result?: string },
+    source: 'event' | 'message',
+    messageId?: string,
+    writtenAt?: number,
+  ): Emission[] {
+    const id = n.taskId ? `workflow_${n.taskId}_finished` : (messageId ?? `workflow_${++this.fallbackCounter}_finished`);
+    const status = workflowStatus(n.status);
+    const w = n.taskId ? this.workflows.get(n.taskId) : undefined;
+    if (w && n.result && status === 'completed') w.result = notificationResult(n.result);
+    if (w && !w.error && status === 'failed') {
+      const error = failureOf(undefined, n.summary);
+      if (error) w.error = error;
     }
-    const callId = n.toolUseId ?? (n.taskId ? this.taskTools.get(n.taskId) : undefined);
-    const call = callId ? this.toolItems.get(callId) : undefined;
-    const name = (n.taskId ? this.workflows.get(n.taskId)?.name : undefined) ?? workflowCallName(call?.input);
     const text =
       n.result !== undefined && n.result !== ''
         ? notificationResult(n.result)
-        : (n.summary ?? '').replace(/<recovery>[\s\S]*?<\/recovery>/g, '').trim() || `Workflow ${workflowStatus(n.status) ?? 'finished'}`;
-    if (n.taskId) {
-      const w = this.workflows.get(n.taskId);
-      if (w && n.result) w.result = notificationResult(n.result);
+        : (n.summary ?? '').replace(/<recovery>[\s\S]*?<\/recovery>/g, '').trim() || `Workflow ${status ?? 'finished'}`;
+    const existing = this.items.get(id);
+    if (existing?.type === 'userMessage') {
+      // Said already: the message's result replaces the event's summary; the item stays where it was.
+      const prev = existing.content[0]?.type === 'text' ? existing.content[0].text : undefined;
+      if (n.result === undefined || prev === text) return [];
+      return this.addCompleted({ ...existing, content: [{ type: 'text', text }] });
     }
+    const answered = status !== 'stopped';
+    if (source === 'event' && answered && this.turnRunning()) return [];
     const out: Emission[] = [];
-    if (this.historyMode && this.turn) out.push(...this.closeTurn('completed'));
-    const placed = this.turnFor(null, id);
-    out.push(...placed.out);
+    let turnId: string | null;
+    if (this.turnRunning()) turnId = this.turn!.id;
+    else {
+      // History's last turn is still open after its reply has ended.
+      if (this.turn) out.push(...this.closeTurn('completed'));
+      if (answered) out.push(...this.startTurn(`turn_${id}`));
+      turnId = this.turn?.id ?? null;
+    }
+    const callId = n.toolUseId ?? (n.taskId ? this.taskTools.get(n.taskId) : undefined);
+    const call = callId ? this.toolItems.get(callId) : undefined;
+    const name = w?.name ?? workflowCallName(call?.input);
     out.push(
       ...this.addCompleted({
         type: 'userMessage',
         id,
-        turnId: placed.turnId,
+        turnId,
         parentToolUseId: null,
-        createdAt: msg.timestamp ? Date.parse(msg.timestamp) : this.stamp(),
+        createdAt: writtenAt ?? this.stamp(),
         content: [{ type: 'text', text }],
         synthetic: true,
         origin: 'workflow',
@@ -1043,6 +1094,17 @@ export function subagentReport(text: string): string | undefined {
   const end = rest.lastIndexOf('\n</agent-message>');
   const body = end < 0 ? rest : rest.slice(0, end);
   return body.split('\n').map((l) => l.replace(/^ {2}/, '')).join('\n').trim();
+}
+
+/**
+ * Why a workflow failed: the error the CLI reported, else what its summary says after "failed:"
+ * (`Dynamic workflow "<description>" failed: <error>`).
+ */
+function failureOf(error: unknown, summary: string | undefined): string | undefined {
+  if (typeof error === 'string' && error) return error;
+  const message = (error as AnyMsg)?.message;
+  if (typeof message === 'string' && message) return message;
+  return summary ? /\bfailed: ([\s\S]+)$/.exec(summary)?.[1]?.trim() : undefined;
 }
 
 /**

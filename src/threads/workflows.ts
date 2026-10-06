@@ -30,38 +30,31 @@ export function isSafeId(id: unknown): id is string {
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 
-/** The CLI's agent states, as the protocol names them; one it doesn't know is kept as it came. */
+/**
+ * An agent's state as the CLI reported it. Seen: `start` (queued, or waiting out a rate limit),
+ * `progress`, `done`, and `error` (with `skipped` or `blocked` when the person skipped it or the
+ * classifier stopped it). It goes through unchanged, for the app to interpret.
+ */
 export function agentState(state: unknown): string {
-  switch (state) {
-    case 'start':
-    case 'queued':
-    case 'pending':
-      return 'start';
-    case 'progress':
-    case 'running':
-      return 'progress';
-    case 'done':
-    case 'completed':
-    case 'cached':
-      return 'done';
-    case 'error':
-    case 'failed':
-      return 'error';
-    case 'skipped':
-      return 'skipped';
-    default:
-      return typeof state === 'string' && state ? state : 'progress';
-  }
+  return typeof state === 'string' && state ? state : 'progress';
 }
 
-/** A task's status as a workflow's: running | completed | failed | stopped. */
+/**
+ * A completed run's snapshot with every agent still starting or in progress marked done: the CLI
+ * sends progress at most every few seconds, so the last agents are often never seen finishing.
+ */
+export function settleAgents(snapshot: WorkflowSnapshot): WorkflowSnapshot {
+  if (!snapshot.agents.some((a) => a.state === 'start' || a.state === 'progress')) return snapshot;
+  return { ...snapshot, agents: snapshot.agents.map((a) => (a.state === 'start' || a.state === 'progress' ? { ...a, state: 'done' } : a)) };
+}
+
+/** A task's status as a workflow's: running | completed | failed | stopped | paused. */
 export function workflowStatus(status: unknown): string | undefined {
   switch (status) {
     case 'killed':
     case 'stopped':
       return 'stopped';
     case 'pending':
-    case 'paused':
       return 'running';
     default:
       return str(status);
@@ -88,6 +81,7 @@ function agentFrom(e: AnyObj): WorkflowAgent | undefined {
   }
   const error = str(e.error) ?? str(e.error?.message);
   if (error) a.error = error;
+  for (const k of ['skipped', 'cached', 'blocked'] as const) if (e[k] === true) a[k] = true;
   return a;
 }
 
@@ -307,7 +301,8 @@ export async function readRunRecord(sessionDir: string, runId: string): Promise<
   const name = str(r.workflowName) ?? meta.name;
   const description = str(r.summary) ?? meta.description;
   const status = workflowStatus(r.status);
-  const result = resultText(r.result) ?? str(r.error) ?? str(r.error?.message);
+  const result = resultText(r.result);
+  const error = str(r.error) ?? str(r.error?.message);
   return {
     ...snap,
     ...(name ? { name } : {}),
@@ -317,12 +312,15 @@ export async function readRunRecord(sessionDir: string, runId: string): Promise<
     ...(num(r.totalToolCalls) !== undefined ? { toolUses: r.totalToolCalls } : {}),
     ...(num(r.durationMs) !== undefined ? { durationMs: r.durationMs } : {}),
     ...(result ? { result } : {}),
+    ...(error ? { error } : {}),
   };
 }
 
 /**
- * A run with no record yet (still going, or cut off): its agents from the journal's `started` and
- * `result` lines and each agent's `.meta.json`, its name and phases from the saved script.
+ * A run with no record yet: its agents from the journal's `started` and `result` lines and each
+ * agent's `.meta.json`, its name and phases from the saved script. Its status is `unknown`: the
+ * journal can't say whether the run is still going or was cut off (a live run is the live
+ * thread's, and a finished one has a record), so it isn't reported as running.
  */
 export async function readRunJournal(sessionDir: string, runId: string): Promise<WorkflowSnapshot | undefined> {
   if (!isSafeId(runId)) return undefined;
@@ -370,7 +368,7 @@ export async function readRunJournal(sessionDir: string, runId: string): Promise
     runId,
     ...(meta.name ? { name: meta.name } : {}),
     ...(meta.description ? { description: meta.description } : {}),
-    status: 'running',
+    status: 'unknown',
     phases,
     agents,
   };
@@ -396,9 +394,37 @@ async function savedScriptMeta(sessionDir: string, runId: string): Promise<{ nam
 }
 
 /**
+ * What a workflow agent was asked, without the harness's framing. The CLI hands each agent two
+ * messages: "[Workflow harness — user request] …:" relaying the session's request, and
+ * "[Workflow harness — computed task] … The computed task text follows:" before the script's
+ * prompt, every line of each indented by two spaces. The request isn't the agent's task (it is
+ * dropped: `null`); the task is its prompt, de-indented. Any other text is `undefined`: unchanged.
+ */
+export function unframeAgentPrompt(text: string): string | null | undefined {
+  if (text.startsWith('[Workflow harness — user request]')) return null;
+  if (!text.startsWith('[Workflow harness — computed task]')) return undefined;
+  const marker = 'The computed task text follows:\n';
+  const at = text.indexOf(marker);
+  if (at < 0) return undefined;
+  return text
+    .slice(at + marker.length)
+    .split('\n')
+    .map((l) => l.replace(/^ {1,2}/, ''))
+    .join('\n');
+}
+
+/** A transcript record's text, when its content is text alone. */
+function soleText(content: unknown): string | undefined {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content) && content.length === 1 && content[0]?.type === 'text' && typeof content[0].text === 'string') return content[0].text;
+  return undefined;
+}
+
+/**
  * A workflow agent's transcript as items, itemized as history is. Its lines are the CLI's own
- * transcript records; those that aren't messages (attachments, metadata) are skipped. A file not
- * written yet is no items.
+ * transcript records; those that aren't messages (attachments, metadata) are skipped, and its
+ * prompt is served without the harness's framing (`unframeAgentPrompt`). A file not written yet
+ * is no items.
  */
 export async function readAgentItems(sessionDir: string, runId: string, agentId: string): Promise<Item[]> {
   if (!isSafeId(runId) || !isSafeId(agentId)) return [];
@@ -407,11 +433,18 @@ export async function readAgentItems(sessionDir: string, runId: string, agentId:
   const iz = new Itemizer(Date.now, true);
   for (const l of lines) {
     if (l.type !== 'user' && l.type !== 'assistant') continue;
+    let message = l.message;
+    const text = l.type === 'user' ? soleText(message?.content) : undefined;
+    if (text !== undefined) {
+      const prompt = unframeAgentPrompt(text);
+      if (prompt === null) continue;
+      if (prompt !== undefined) message = { ...message, content: prompt };
+    }
     iz.ingest({
       type: l.type,
       uuid: l.uuid,
       session_id: l.sessionId,
-      message: l.message,
+      message,
       parent_tool_use_id: null,
       ...(l.timestamp ? { timestamp: l.timestamp } : {}),
       ...(l.toolUseResult !== undefined ? { tool_use_result: l.toolUseResult } : {}),

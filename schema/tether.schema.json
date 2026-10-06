@@ -4381,6 +4381,9 @@
         },
         "result": {
           "type": "string"
+        },
+        "error": {
+          "type": "string"
         }
       },
       "required": [
@@ -4431,6 +4434,15 @@
         },
         "state": {
           "type": "string"
+        },
+        "skipped": {
+          "type": "boolean"
+        },
+        "cached": {
+          "type": "boolean"
+        },
+        "blocked": {
+          "type": "boolean"
         },
         "queuedAt": {
           "type": "number"
