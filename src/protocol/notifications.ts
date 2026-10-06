@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { JsonValue, ThreadInfo, ThreadStatus, UserInput } from './common.ts';
-import { Item, Turn } from './items.ts';
+import { Item, Turn, WorkflowSnapshot } from './items.ts';
 
 /** Every thread-scoped notification carries these. `seq` is monotonic per thread, for replay. */
 const T = { threadId: z.string(), seq: z.number().int() };
@@ -51,6 +51,13 @@ export const Notifications = {
     description: z.string().optional(),
     status: z.string().optional(),
     summary: z.string().optional(),
+    /** Why the task failed, from a `task_updated` patch. */
+    error: z.string().optional(),
+    /**
+     * A dynamic workflow's phases and agents, the merged whole each time: sent when the CLI
+     * reported its progress, and when it starts and settles. When absent, the last one still holds.
+     */
+    workflow: WorkflowSnapshot.optional(),
     data: JsonValue,
   }),
   'task/backgroundChanged': z.object({ ...T, tasks: JsonValue }),

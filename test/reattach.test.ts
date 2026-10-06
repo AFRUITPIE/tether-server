@@ -246,6 +246,7 @@ describe('task notifications in history', () => {
       toolUseId: 'toolu_1',
       status: 'completed',
       summary: 'Background command "Sleep then echo" completed (exit code 0)',
+      outputFile: '/tmp/x.output',
     });
     expect(parseTaskNotification('hello')).toBeUndefined();
   });

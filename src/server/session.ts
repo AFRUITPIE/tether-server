@@ -297,6 +297,9 @@ export class ClientSession implements Subscriber {
     'task/stop': async (p) => (await this.mgr.get(p.threadId).query.stopTask(p.taskId), {}),
     'task/background': async (p) => ({ backgrounded: await this.mgr.get(p.threadId).query.backgroundTasks(p.toolUseId) }),
 
+    'workflow/read': async (p) => ({ workflow: await this.mgr.readWorkflow(p.threadId, p.runId) }),
+    'workflow/agentItems': async (p) => ({ items: await this.mgr.workflowAgentItems(p.threadId, p.runId, p.agentId) }),
+
     'mcp/status': async (p) => ({
       servers: (await this.mgr.get(p.threadId).query.mcpServerStatus()).map((s: any) => ({
         name: s.name,

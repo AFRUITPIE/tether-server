@@ -1539,6 +1539,212 @@ public struct ModelUsage: Codable, Sendable, Hashable {
     }
 }
 
+public struct WorkflowSnapshot: Codable, Sendable, Hashable {
+    public var runId: String?
+    public var name: String?
+    public var description: String?
+    public var status: String?
+    public var activity: String?
+    public var phases: [WorkflowPhase]
+    public var agents: [WorkflowAgent]
+    public var totalTokens: Double?
+    public var toolUses: Double?
+    public var durationMs: Double?
+    public var result: String?
+
+    public init(runId: String? = nil, name: String? = nil, description: String? = nil, status: String? = nil, activity: String? = nil, phases: [WorkflowPhase], agents: [WorkflowAgent], totalTokens: Double? = nil, toolUses: Double? = nil, durationMs: Double? = nil, result: String? = nil) {
+        self.runId = runId
+        self.name = name
+        self.description = description
+        self.status = status
+        self.activity = activity
+        self.phases = phases
+        self.agents = agents
+        self.totalTokens = totalTokens
+        self.toolUses = toolUses
+        self.durationMs = durationMs
+        self.result = result
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case runId = "runId"
+        case name = "name"
+        case description = "description"
+        case status = "status"
+        case activity = "activity"
+        case phases = "phases"
+        case agents = "agents"
+        case totalTokens = "totalTokens"
+        case toolUses = "toolUses"
+        case durationMs = "durationMs"
+        case result = "result"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.runId = try c.decodeIfPresent(String.self, forKey: .runId)
+        self.name = try c.decodeIfPresent(String.self, forKey: .name)
+        self.description = try c.decodeIfPresent(String.self, forKey: .description)
+        self.status = try c.decodeIfPresent(String.self, forKey: .status)
+        self.activity = try c.decodeIfPresent(String.self, forKey: .activity)
+        self.phases = try c.decode([WorkflowPhase].self, forKey: .phases)
+        self.agents = try c.decode([WorkflowAgent].self, forKey: .agents)
+        self.totalTokens = try c.decodeIfPresent(Double.self, forKey: .totalTokens)
+        self.toolUses = try c.decodeIfPresent(Double.self, forKey: .toolUses)
+        self.durationMs = try c.decodeIfPresent(Double.self, forKey: .durationMs)
+        self.result = try c.decodeIfPresent(String.self, forKey: .result)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(runId, forKey: .runId)
+        try c.encodeIfPresent(name, forKey: .name)
+        try c.encodeIfPresent(description, forKey: .description)
+        try c.encodeIfPresent(status, forKey: .status)
+        try c.encodeIfPresent(activity, forKey: .activity)
+        try c.encode(phases, forKey: .phases)
+        try c.encode(agents, forKey: .agents)
+        try c.encodeIfPresent(totalTokens, forKey: .totalTokens)
+        try c.encodeIfPresent(toolUses, forKey: .toolUses)
+        try c.encodeIfPresent(durationMs, forKey: .durationMs)
+        try c.encodeIfPresent(result, forKey: .result)
+    }
+}
+
+public struct WorkflowPhase: Codable, Sendable, Hashable {
+    public var index: Double
+    public var title: String
+    public var detail: String?
+
+    public init(index: Double, title: String, detail: String? = nil) {
+        self.index = index
+        self.title = title
+        self.detail = detail
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case index = "index"
+        case title = "title"
+        case detail = "detail"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.index = try c.decode(Double.self, forKey: .index)
+        self.title = try c.decode(String.self, forKey: .title)
+        self.detail = try c.decodeIfPresent(String.self, forKey: .detail)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(index, forKey: .index)
+        try c.encode(title, forKey: .title)
+        try c.encodeIfPresent(detail, forKey: .detail)
+    }
+}
+
+public struct WorkflowAgent: Codable, Sendable, Hashable {
+    public var index: Double
+    public var label: String
+    public var phaseIndex: Double?
+    public var phaseTitle: String?
+    public var agentId: String?
+    public var model: String?
+    public var state: String
+    public var queuedAt: Double?
+    public var startedAt: Double?
+    public var durationMs: Double?
+    public var tokens: Double?
+    public var toolCalls: Double?
+    public var lastToolName: String?
+    public var lastToolSummary: String?
+    public var promptPreview: String?
+    public var resultPreview: String?
+    public var error: String?
+
+    public init(index: Double, label: String, phaseIndex: Double? = nil, phaseTitle: String? = nil, agentId: String? = nil, model: String? = nil, state: String, queuedAt: Double? = nil, startedAt: Double? = nil, durationMs: Double? = nil, tokens: Double? = nil, toolCalls: Double? = nil, lastToolName: String? = nil, lastToolSummary: String? = nil, promptPreview: String? = nil, resultPreview: String? = nil, error: String? = nil) {
+        self.index = index
+        self.label = label
+        self.phaseIndex = phaseIndex
+        self.phaseTitle = phaseTitle
+        self.agentId = agentId
+        self.model = model
+        self.state = state
+        self.queuedAt = queuedAt
+        self.startedAt = startedAt
+        self.durationMs = durationMs
+        self.tokens = tokens
+        self.toolCalls = toolCalls
+        self.lastToolName = lastToolName
+        self.lastToolSummary = lastToolSummary
+        self.promptPreview = promptPreview
+        self.resultPreview = resultPreview
+        self.error = error
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case index = "index"
+        case label = "label"
+        case phaseIndex = "phaseIndex"
+        case phaseTitle = "phaseTitle"
+        case agentId = "agentId"
+        case model = "model"
+        case state = "state"
+        case queuedAt = "queuedAt"
+        case startedAt = "startedAt"
+        case durationMs = "durationMs"
+        case tokens = "tokens"
+        case toolCalls = "toolCalls"
+        case lastToolName = "lastToolName"
+        case lastToolSummary = "lastToolSummary"
+        case promptPreview = "promptPreview"
+        case resultPreview = "resultPreview"
+        case error = "error"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.index = try c.decode(Double.self, forKey: .index)
+        self.label = try c.decode(String.self, forKey: .label)
+        self.phaseIndex = try c.decodeIfPresent(Double.self, forKey: .phaseIndex)
+        self.phaseTitle = try c.decodeIfPresent(String.self, forKey: .phaseTitle)
+        self.agentId = try c.decodeIfPresent(String.self, forKey: .agentId)
+        self.model = try c.decodeIfPresent(String.self, forKey: .model)
+        self.state = try c.decode(String.self, forKey: .state)
+        self.queuedAt = try c.decodeIfPresent(Double.self, forKey: .queuedAt)
+        self.startedAt = try c.decodeIfPresent(Double.self, forKey: .startedAt)
+        self.durationMs = try c.decodeIfPresent(Double.self, forKey: .durationMs)
+        self.tokens = try c.decodeIfPresent(Double.self, forKey: .tokens)
+        self.toolCalls = try c.decodeIfPresent(Double.self, forKey: .toolCalls)
+        self.lastToolName = try c.decodeIfPresent(String.self, forKey: .lastToolName)
+        self.lastToolSummary = try c.decodeIfPresent(String.self, forKey: .lastToolSummary)
+        self.promptPreview = try c.decodeIfPresent(String.self, forKey: .promptPreview)
+        self.resultPreview = try c.decodeIfPresent(String.self, forKey: .resultPreview)
+        self.error = try c.decodeIfPresent(String.self, forKey: .error)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(index, forKey: .index)
+        try c.encode(label, forKey: .label)
+        try c.encodeIfPresent(phaseIndex, forKey: .phaseIndex)
+        try c.encodeIfPresent(phaseTitle, forKey: .phaseTitle)
+        try c.encodeIfPresent(agentId, forKey: .agentId)
+        try c.encodeIfPresent(model, forKey: .model)
+        try c.encode(state, forKey: .state)
+        try c.encodeIfPresent(queuedAt, forKey: .queuedAt)
+        try c.encodeIfPresent(startedAt, forKey: .startedAt)
+        try c.encodeIfPresent(durationMs, forKey: .durationMs)
+        try c.encodeIfPresent(tokens, forKey: .tokens)
+        try c.encodeIfPresent(toolCalls, forKey: .toolCalls)
+        try c.encodeIfPresent(lastToolName, forKey: .lastToolName)
+        try c.encodeIfPresent(lastToolSummary, forKey: .lastToolSummary)
+        try c.encodeIfPresent(promptPreview, forKey: .promptPreview)
+        try c.encodeIfPresent(resultPreview, forKey: .resultPreview)
+        try c.encodeIfPresent(error, forKey: .error)
+    }
+}
+
 public struct ScheduledTask: Codable, Sendable, Hashable {
     public var id: String
     public var name: String
@@ -3680,6 +3886,109 @@ public struct TaskBackgroundResult: Codable, Sendable, Hashable {
     }
 }
 
+public struct WorkflowReadParams: Codable, Sendable, Hashable {
+    public var threadId: String
+    public var runId: String
+
+    public init(threadId: String, runId: String) {
+        self.threadId = threadId
+        self.runId = runId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case threadId = "threadId"
+        case runId = "runId"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.threadId = try c.decode(String.self, forKey: .threadId)
+        self.runId = try c.decode(String.self, forKey: .runId)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(threadId, forKey: .threadId)
+        try c.encode(runId, forKey: .runId)
+    }
+}
+
+public struct WorkflowReadResult: Codable, Sendable, Hashable {
+    public var workflow: WorkflowSnapshot?
+
+    public init(workflow: WorkflowSnapshot? = nil) {
+        self.workflow = workflow
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case workflow = "workflow"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.workflow = try c.decodeIfPresent(WorkflowSnapshot.self, forKey: .workflow)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(workflow, forKey: .workflow)
+    }
+}
+
+public struct WorkflowAgentItemsParams: Codable, Sendable, Hashable {
+    public var threadId: String
+    public var runId: String
+    public var agentId: String
+
+    public init(threadId: String, runId: String, agentId: String) {
+        self.threadId = threadId
+        self.runId = runId
+        self.agentId = agentId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case threadId = "threadId"
+        case runId = "runId"
+        case agentId = "agentId"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.threadId = try c.decode(String.self, forKey: .threadId)
+        self.runId = try c.decode(String.self, forKey: .runId)
+        self.agentId = try c.decode(String.self, forKey: .agentId)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(threadId, forKey: .threadId)
+        try c.encode(runId, forKey: .runId)
+        try c.encode(agentId, forKey: .agentId)
+    }
+}
+
+public struct WorkflowAgentItemsResult: Codable, Sendable, Hashable {
+    public var items: [Item]
+
+    public init(items: [Item]) {
+        self.items = items
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case items = "items"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.items = try c.decode([Item].self, forKey: .items)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(items, forKey: .items)
+    }
+}
+
 public struct McpStatusParams: Codable, Sendable, Hashable {
     public var threadId: String
 
@@ -5043,6 +5352,16 @@ public enum Methods {
         public typealias Params = TaskBackgroundParams
         public typealias Result = TaskBackgroundResult
     }
+    public enum WorkflowRead: TetherMethod {
+        public static let name = "workflow/read"
+        public typealias Params = WorkflowReadParams
+        public typealias Result = WorkflowReadResult
+    }
+    public enum WorkflowAgentItems: TetherMethod {
+        public static let name = "workflow/agentItems"
+        public typealias Params = WorkflowAgentItemsParams
+        public typealias Result = WorkflowAgentItemsResult
+    }
     public enum McpStatus: TetherMethod {
         public static let name = "mcp/status"
         public typealias Params = McpStatusParams
@@ -5683,9 +6002,11 @@ public struct TaskEventNotification: Codable, Sendable, Hashable {
     public var description: String?
     public var status: String?
     public var summary: String?
+    public var error: String?
+    public var workflow: WorkflowSnapshot?
     public var data: JSONValue
 
-    public init(threadId: String, seq: Int, event: String, taskId: String, toolUseId: String? = nil, description: String? = nil, status: String? = nil, summary: String? = nil, data: JSONValue) {
+    public init(threadId: String, seq: Int, event: String, taskId: String, toolUseId: String? = nil, description: String? = nil, status: String? = nil, summary: String? = nil, error: String? = nil, workflow: WorkflowSnapshot? = nil, data: JSONValue) {
         self.threadId = threadId
         self.seq = seq
         self.event = event
@@ -5694,6 +6015,8 @@ public struct TaskEventNotification: Codable, Sendable, Hashable {
         self.description = description
         self.status = status
         self.summary = summary
+        self.error = error
+        self.workflow = workflow
         self.data = data
     }
 
@@ -5706,6 +6029,8 @@ public struct TaskEventNotification: Codable, Sendable, Hashable {
         case description = "description"
         case status = "status"
         case summary = "summary"
+        case error = "error"
+        case workflow = "workflow"
         case data = "data"
     }
 
@@ -5719,6 +6044,8 @@ public struct TaskEventNotification: Codable, Sendable, Hashable {
         self.description = try c.decodeIfPresent(String.self, forKey: .description)
         self.status = try c.decodeIfPresent(String.self, forKey: .status)
         self.summary = try c.decodeIfPresent(String.self, forKey: .summary)
+        self.error = try c.decodeIfPresent(String.self, forKey: .error)
+        self.workflow = try c.decodeIfPresent(WorkflowSnapshot.self, forKey: .workflow)
         self.data = try c.decode(JSONValue.self, forKey: .data)
     }
 
@@ -5732,6 +6059,8 @@ public struct TaskEventNotification: Codable, Sendable, Hashable {
         try c.encodeIfPresent(description, forKey: .description)
         try c.encodeIfPresent(status, forKey: .status)
         try c.encodeIfPresent(summary, forKey: .summary)
+        try c.encodeIfPresent(error, forKey: .error)
+        try c.encodeIfPresent(workflow, forKey: .workflow)
         try c.encode(data, forKey: .data)
     }
 }

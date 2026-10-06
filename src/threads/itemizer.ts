@@ -1,5 +1,15 @@
 import type { Item, ToolCallItem, ToolKind, Turn, TurnResult, UserInput } from '../protocol/index.ts';
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
+import type { WorkflowSnapshot } from '../protocol/items.ts';
+import {
+  launchRunId,
+  launchTaskId,
+  mergeWorkflowProgress,
+  notificationResult,
+  scriptMeta,
+  workflowCallName,
+  workflowStatus,
+} from './workflows.ts';
 
 export type Emission = { [N in NotificationName]: { method: N; body: NotificationBody<N> } }[NotificationName];
 
@@ -110,6 +120,24 @@ export class Itemizer {
   /** The CLI's current background task ids, and which tool call started each task. */
   private backgroundTaskIds = new Set<string>();
   private taskTools = new Map<string, string>();
+  /** Each task's `task_type` (local_bash, local_agent, local_workflow, …), from its start. */
+  private taskTypes = new Map<string, string>();
+  /** Each dynamic workflow's phases and agents, merged from its progress events, by task id. */
+  private workflows = new Map<string, WorkflowSnapshot>();
+  /** Which Workflow call each workflow agent works for, from the snapshots' agents. */
+  private workflowAgents = new Map<string, string>();
+  /** Which Workflow call launched each run, from its launch's `Run ID`. */
+  private workflowRuns = new Map<string, string>();
+  /** In history mode, the message being read's time, and the last one read's. */
+  private messageTime?: number;
+  private lastMessageTime?: number;
+
+  /**
+   * Which workflow run an agent id belongs to, from the session's directory on disk: for a peer
+   * message from an agent of a run this itemizer has no snapshot of (history, or a run whose agents
+   * the CLI hasn't reported yet).
+   */
+  locateWorkflowAgent?: (agentId: string) => string | undefined;
 
   /**
    * @param historyMode transcripts have no `result` messages, so a new real user prompt closes the open turn.
@@ -145,7 +173,7 @@ export class Itemizer {
       id: messageId,
       turnId: this.turn!.id,
       parentToolUseId: null,
-      createdAt: this.now(),
+      createdAt: this.stamp(),
       content,
       ...(queued ? { queued: true } : {}),
     };
@@ -154,6 +182,37 @@ export class Itemizer {
   }
 
   ingest(msg: AnyMsg): Emission[] {
+    if (!this.historyMode) return this.route(msg);
+    const t = typeof msg.timestamp === 'string' ? Date.parse(msg.timestamp) : NaN;
+    this.messageTime = Number.isFinite(t) ? t : undefined;
+    try {
+      return this.route(msg);
+    } finally {
+      if (this.messageTime !== undefined) this.lastMessageTime = this.messageTime;
+      this.messageTime = undefined;
+    }
+  }
+
+  /**
+   * When an item or turn happened: now, for a live stream; for history, the time its message was
+   * written, since read time would date everything to the moment the transcript was opened.
+   */
+  private stamp(): number {
+    return this.messageTime ?? this.now();
+  }
+
+  /** When a turn read from history ended: with the last message before whatever closes it. */
+  private endStamp(): number {
+    return this.historyMode ? (this.lastMessageTime ?? this.messageTime ?? this.now()) : this.now();
+  }
+
+  /** A dynamic workflow's snapshot by its run id, while this itemizer has one. */
+  workflowByRun(runId: string): WorkflowSnapshot | undefined {
+    for (const w of this.workflows.values()) if (w.runId === runId) return structuredClone(w);
+    return undefined;
+  }
+
+  private route(msg: AnyMsg): Emission[] {
     switch (msg.type) {
       case 'stream_event':
         return this.onStreamEvent(msg);
@@ -222,7 +281,7 @@ export class Itemizer {
       id: msg.uuid ?? `notice_${++this.fallbackCounter}`,
       turnId: this.turn?.id ?? null,
       parentToolUseId: null,
-      createdAt: this.now(),
+      createdAt: this.stamp(),
       kind,
       text,
       ...(level ? { level } : {}),
@@ -244,7 +303,7 @@ export class Itemizer {
           id: msg.uuid ?? `compact_${++this.fallbackCounter}`,
           turnId: this.turn?.id ?? null,
           parentToolUseId: null,
-          createdAt: this.now(),
+          createdAt: this.stamp(),
           ...(md.trigger ? { trigger: md.trigger } : {}),
           ...(md.pre_tokens !== undefined ? { preTokens: md.pre_tokens } : {}),
           ...(md.post_tokens !== undefined ? { postTokens: md.post_tokens } : {}),
@@ -277,7 +336,10 @@ export class Itemizer {
         return [
           ...this.taskEvent(msg),
           ...this.settleTask(msg.tool_use_id, msg.status),
-          ...(this.worthANotice(msg) ? this.taskNotice(msg.task_id, msg.status, msg.summary, msg.uuid) : []),
+          // A workflow's finish is said once, by its `<task-notification>` message, which has its result.
+          ...(this.worthANotice(msg) && !this.isWorkflowTask(msg.task_id, msg.tool_use_id)
+            ? this.taskNotice(msg.task_id, msg.status, msg.summary, msg.uuid)
+            : []),
         ];
       case 'task_started':
       case 'task_progress':
@@ -301,20 +363,104 @@ export class Itemizer {
   }
 
   private taskEvent(msg: AnyMsg): Emission[] {
+    const taskId: string = msg.task_id;
+    if (msg.subtype === 'task_started' && typeof msg.task_type === 'string') this.taskTypes.set(taskId, msg.task_type);
+    const workflow = this.isWorkflowTask(taskId, msg.tool_use_id) || Array.isArray(msg.workflow_progress);
+    const snapshot = workflow ? this.trackWorkflow(msg) : undefined;
+    // What the CLI reports of a workflow is in the snapshot; the rest of the event goes as it came.
+    // The started event's prompt is the whole script, already the Workflow call's input.
+    let data = msg;
+    if (workflow && ('workflow_progress' in msg || 'prompt' in msg)) {
+      const { workflow_progress: _p, prompt: _s, ...rest } = msg;
+      data = rest;
+    }
+    const description: string | undefined =
+      msg.subtype === 'task_updated'
+        ? msg.patch?.description
+        : // A workflow's progress names its latest agent ("Verify: ls-1"): its activity, not a new name.
+          workflow && msg.subtype === 'task_progress'
+          ? undefined
+          : msg.description;
+    const error = msg.patch?.error ?? msg.error;
     return [
       {
         method: 'task/event',
         body: {
           event: msg.subtype.slice('task_'.length),
-          taskId: msg.task_id,
+          taskId,
           ...(msg.tool_use_id ? { toolUseId: msg.tool_use_id } : {}),
-          ...(msg.description ? { description: msg.description } : {}),
+          ...(description ? { description } : {}),
           ...(msg.status || msg.patch?.status ? { status: msg.status ?? msg.patch.status } : {}),
           ...(msg.summary ? { summary: msg.summary } : {}),
-          data: msg,
+          ...(typeof error === 'string' && error ? { error } : typeof error?.message === 'string' ? { error: error.message } : {}),
+          ...(snapshot ? { workflow: structuredClone(snapshot) } : {}),
+          data,
         },
       },
     ];
+  }
+
+  /** Whether a task is a dynamic workflow: by its type, else by the call that started it. */
+  private isWorkflowTask(taskId: string | undefined, toolUseId?: string): boolean {
+    const type = taskId ? this.taskTypes.get(taskId) : undefined;
+    if (type) return type === 'local_workflow';
+    const callId = toolUseId ?? (taskId ? this.taskTools.get(taskId) : undefined);
+    return !!callId && this.toolItems.get(callId)?.name === 'Workflow';
+  }
+
+  /**
+   * A workflow's snapshot with what this event says merged in. Returned only for events worth
+   * sending it on: its start, its finish, and progress that carried the agents (the CLI sends
+   * them at most every few seconds, so the snapshot is held between).
+   */
+  private trackWorkflow(msg: AnyMsg): WorkflowSnapshot | undefined {
+    const taskId: string = msg.task_id;
+    const callId: string | undefined = msg.tool_use_id ?? this.taskTools.get(taskId);
+    const call = callId ? this.toolItems.get(callId) : undefined;
+    let w: WorkflowSnapshot = this.workflows.get(taskId) ?? { phases: scriptMeta((call?.input as AnyMsg)?.script).phases, agents: [] };
+    const runId = call ? launchRunId(call.output, call.outputText) : undefined;
+    if (runId && !w.runId) w.runId = runId;
+    if (!w.name) {
+      const name = msg.workflow_name ?? workflowCallName(call?.input);
+      if (typeof name === 'string' && name) w.name = name;
+    }
+    let send = false;
+    switch (msg.subtype) {
+      case 'task_started':
+        if (typeof msg.description === 'string' && msg.description) w.description = msg.description;
+        w.status = 'running';
+        send = true;
+        break;
+      case 'task_progress':
+        if (typeof msg.description === 'string' && msg.description && msg.description !== w.description) w.activity = msg.description;
+        break;
+      case 'task_updated': {
+        const status = workflowStatus(msg.patch?.status);
+        if (status) w.status = status;
+        break;
+      }
+      case 'task_notification':
+        w.status = workflowStatus(msg.status) ?? 'completed';
+        send = true;
+        break;
+    }
+    const u = msg.usage;
+    if (u && typeof u === 'object') {
+      if (typeof u.total_tokens === 'number') w.totalTokens = u.total_tokens;
+      if (typeof u.tool_uses === 'number') w.toolUses = u.tool_uses;
+      if (typeof u.duration_ms === 'number') w.durationMs = u.duration_ms;
+    }
+    if (Array.isArray(msg.workflow_progress)) {
+      w = mergeWorkflowProgress(w, msg.workflow_progress);
+      send = true;
+    }
+    if (!w.description && call?.input) {
+      const d = scriptMeta((call.input as AnyMsg).script).description;
+      if (d) w.description = d;
+    }
+    this.workflows.set(taskId, w);
+    if (callId) for (const a of w.agents) if (a.agentId) this.workflowAgents.set(a.agentId, callId);
+    return send ? w : undefined;
   }
 
   /**
@@ -331,7 +477,7 @@ export class Itemizer {
       id: id ?? `task_${taskId ?? ++this.fallbackCounter}_notification`,
       turnId: this.turn?.id ?? null,
       parentToolUseId: null,
-      createdAt: this.now(),
+      createdAt: this.stamp(),
       kind: 'taskNotification',
       text: this.noticeText(taskId, status, summary),
       ...(status === 'failed' ? { level: 'warning' as const } : {}),
@@ -423,7 +569,7 @@ export class Itemizer {
 
   private startTurn(id: string): Emission[] {
     this.interruptRequested = false;
-    this.turn = { id, status: 'inProgress', startedAt: this.now() };
+    this.turn = { id, status: 'inProgress', startedAt: this.stamp() };
     this.turns.push(this.turn);
     return [{ method: 'turn/started', body: { turn: { ...this.turn } } }];
   }
@@ -479,7 +625,7 @@ export class Itemizer {
         const placed = this.turnFor(parent, msgId);
         out.push(...placed.out);
         const turnId = placed.turnId;
-        const createdAt = this.now();
+        const createdAt = this.stamp();
         let item: Item | null = null;
         if (cb.type === 'text') {
           item = { type: 'agentMessage', id: this.nextBlockId(msgId), turnId, parentToolUseId: parent, createdAt, text: '' };
@@ -554,7 +700,7 @@ export class Itemizer {
           id: `${msgId}:error`,
           turnId,
           parentToolUseId: parent,
-          createdAt: this.now(),
+          createdAt: this.stamp(),
           message: contentToText(m.content) || String(msg.error),
           code: String(msg.error),
         }),
@@ -571,7 +717,7 @@ export class Itemizer {
             id,
             turnId: prev?.turnId ?? turnId,
             parentToolUseId: parent,
-            createdAt: prev?.createdAt ?? this.now(),
+            createdAt: prev?.createdAt ?? this.stamp(),
             text: block.text ?? '',
             model: m.model,
           }),
@@ -586,7 +732,7 @@ export class Itemizer {
             id,
             turnId: prev?.turnId ?? turnId,
             parentToolUseId: parent,
-            createdAt: prev?.createdAt ?? this.now(),
+            createdAt: prev?.createdAt ?? this.stamp(),
             text,
             ...(text ? {} : { redacted: true }),
           }),
@@ -600,7 +746,7 @@ export class Itemizer {
           id: block.id,
           turnId: prev?.turnId ?? turnId,
           parentToolUseId: parent,
-          createdAt: prev?.createdAt ?? this.now(),
+          createdAt: prev?.createdAt ?? this.stamp(),
           name,
           kind: toolKind(name),
           input: block.input ?? {},
@@ -628,14 +774,29 @@ export class Itemizer {
     // A background agent's launch names the task its report and notification will come from.
     const agentId = (structured as AnyMsg)?.agentId ?? /^agentId: (\w+)/m.exec(text)?.[1];
     if (t.kind === 'subagent' && typeof agentId === 'string') this.taskTools.set(agentId, t.id);
+    if (t.name === 'Workflow' && !isError) this.noteWorkflowLaunch(t, structured, text);
     return this.addCompleted(t);
+  }
+
+  /** A Workflow call's launch names its task and run; history has only the text. */
+  private noteWorkflowLaunch(t: ToolCallItem, structured: unknown, text: string) {
+    const taskId = launchTaskId(structured, text);
+    const runId = launchRunId(structured, text);
+    const taskType = (structured as AnyMsg)?.taskType;
+    if (runId) this.workflowRuns.set(runId, t.id);
+    if (!taskId) return;
+    this.taskTools.set(taskId, t.id);
+    if (!this.taskTypes.has(taskId) && (taskType === 'local_workflow' || (!taskType && /launched in background/i.test(text))))
+      this.taskTypes.set(taskId, 'local_workflow');
+    const w = this.workflows.get(taskId);
+    if (w && runId && !w.runId) w.runId = runId;
   }
 
   // ---- user messages (tool results, echoes, synthetic prompts) ----
 
   private onUser(msg: AnyMsg): Emission[] {
     const content = msg.message?.content;
-    const parent: string | null = msg.parent_tool_use_id ?? null;
+    let parent: string | null = msg.parent_tool_use_id ?? null;
     const out: Emission[] = [];
     if (Array.isArray(content) && content.some((b: AnyMsg) => b?.type === 'tool_result')) {
       const results = content.filter((b: AnyMsg) => b?.type === 'tool_result');
@@ -656,7 +817,9 @@ export class Itemizer {
     // Transcript conventions for CLI-generated user messages.
     const notification = parseTaskNotification(firstText);
     if (notification) {
-      if (parent !== null || !this.worthANotice({ tool_use_id: notification.toolUseId })) return out;
+      if (parent !== null) return out;
+      if (this.isWorkflowTask(notification.taskId, notification.toolUseId)) return this.workflowFinished(notification, id, msg);
+      if (!this.worthANotice({ tool_use_id: notification.toolUseId })) return out;
       return this.taskNotice(notification.taskId, notification.status, notification.summary, id);
     }
     if (firstText.startsWith('[Request interrupted')) {
@@ -673,6 +836,9 @@ export class Itemizer {
     let originKind: string | undefined = msg.origin?.kind;
     let originName: string | undefined = originKind === 'peer' && typeof msg.origin?.name === 'string' ? msg.origin.name : undefined;
     const handback = originKind === 'peer' && msg.origin?.handback ? subagentReport(firstText) : undefined;
+    // A workflow's agent can message the session; that belongs under its workflow, not in the chat.
+    const workflowCall = originKind === 'peer' && handback === undefined ? this.workflowCallOfAgent(msg.origin?.senderTaskId ?? msg.origin?.from) : undefined;
+    if (workflowCall) parent = workflowCall;
     if (handback !== undefined) {
       const taskId: string | undefined = msg.origin?.senderTaskId ?? msg.origin?.from;
       const call = taskId ? this.toolItems.get(this.taskTools.get(taskId) ?? '') : undefined;
@@ -703,12 +869,62 @@ export class Itemizer {
         id,
         turnId,
         parentToolUseId: parent,
-        createdAt: msg.timestamp ? Date.parse(msg.timestamp) : this.now(),
+        createdAt: msg.timestamp ? Date.parse(msg.timestamp) : this.stamp(),
         content: inputs,
         ...(synthetic ? { synthetic: true } : {}),
         ...(originKind && originKind !== 'human' ? { origin: originKind } : {}),
         ...(originName ? { originName } : {}),
         ...(originKind === 'peer' && typeof msg.origin?.fromSession === 'string' ? { originSession: msg.origin.fromSession } : {}),
+      }),
+    );
+    return out;
+  }
+
+  /** The Workflow call an agent works for, by its agent id: from the snapshots, else from disk. */
+  private workflowCallOfAgent(agentId: unknown): string | undefined {
+    if (typeof agentId !== 'string' || !agentId) return undefined;
+    const known = this.workflowAgents.get(agentId);
+    if (known) return known;
+    const runId = this.locateWorkflowAgent?.(agentId);
+    return runId ? this.workflowRuns.get(runId) : undefined;
+  }
+
+  /**
+   * A workflow's finish, as the message the CLI hands the model: from the workflow, named for it,
+   * holding its result, or what happened when it failed or was stopped. It begins the turn that
+   * answers it, as a prompt would, so that turn isn't counted as part of the one that launched it.
+   */
+  private workflowFinished(n: NonNullable<ReturnType<typeof parseTaskNotification>>, id: string, msg: AnyMsg): Emission[] {
+    if (n.taskId) {
+      if (this.notifiedTasks.has(n.taskId)) return [];
+      this.notifiedTasks.add(n.taskId);
+    }
+    const callId = n.toolUseId ?? (n.taskId ? this.taskTools.get(n.taskId) : undefined);
+    const call = callId ? this.toolItems.get(callId) : undefined;
+    const name = (n.taskId ? this.workflows.get(n.taskId)?.name : undefined) ?? workflowCallName(call?.input);
+    const text =
+      n.result !== undefined && n.result !== ''
+        ? notificationResult(n.result)
+        : (n.summary ?? '').replace(/<recovery>[\s\S]*?<\/recovery>/g, '').trim() || `Workflow ${workflowStatus(n.status) ?? 'finished'}`;
+    if (n.taskId) {
+      const w = this.workflows.get(n.taskId);
+      if (w && n.result) w.result = notificationResult(n.result);
+    }
+    const out: Emission[] = [];
+    if (this.historyMode && this.turn) out.push(...this.closeTurn('completed'));
+    const placed = this.turnFor(null, id);
+    out.push(...placed.out);
+    out.push(
+      ...this.addCompleted({
+        type: 'userMessage',
+        id,
+        turnId: placed.turnId,
+        parentToolUseId: null,
+        createdAt: msg.timestamp ? Date.parse(msg.timestamp) : this.stamp(),
+        content: [{ type: 'text', text }],
+        synthetic: true,
+        origin: 'workflow',
+        ...(name ? { originName: name } : {}),
       }),
     );
     return out;
@@ -755,7 +971,7 @@ export class Itemizer {
     const interrupted = this.interruptRequested && msg.subtype !== 'success';
     turn.status = msg.subtype === 'success' && !msg.is_error ? 'completed' : interrupted ? 'interrupted' : 'failed';
     if (this.interruptRequested && msg.subtype === 'success') turn.status = 'interrupted';
-    turn.completedAt = this.now();
+    turn.completedAt = this.stamp();
     turn.result = result;
     // Anything still in flight did not finish.
     for (const t of this.cutShort(turn.id)) {
@@ -796,7 +1012,7 @@ export class Itemizer {
     if (!this.turn) return [];
     const turn = this.turn;
     turn.status = status === 'completed' && this.interruptRequested ? 'interrupted' : status;
-    turn.completedAt = this.now();
+    turn.completedAt = this.endStamp();
     this.interruptRequested = false;
     const out: Emission[] = [];
     for (const t of this.cutShort(turn.id)) {
@@ -835,8 +1051,17 @@ export function subagentReport(text: string): string | undefined {
  */
 export function parseTaskNotification(
   text: string,
-): { taskId?: string; toolUseId?: string; status?: string; summary?: string } | undefined {
+): { taskId?: string; toolUseId?: string; status?: string; summary?: string; result?: string; outputFile?: string } | undefined {
   if (!/^\s*<task-notification>/.test(text)) return undefined;
   const tag = (name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim();
-  return { taskId: tag('task-id'), toolUseId: tag('tool-use-id'), status: tag('status'), summary: tag('summary') };
+  // A result can itself hold tags, so it runs to the last closing tag.
+  const result = /<result>([\s\S]*)<\/result>/.exec(text)?.[1]?.trim();
+  return {
+    taskId: tag('task-id'),
+    toolUseId: tag('tool-use-id'),
+    status: tag('status'),
+    summary: tag('summary'),
+    ...(result !== undefined ? { result } : {}),
+    ...(tag('output-file') ? { outputFile: tag('output-file') } : {}),
+  };
 }

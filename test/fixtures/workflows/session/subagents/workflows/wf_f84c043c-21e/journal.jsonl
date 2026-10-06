@@ -1,0 +1,9 @@
+{"type":"launched"}
+{"type":"started","key":"v2:73df29b48487c3a0ebe3741194b36766b7886e7a31e5df38079be7310c8de304","agentId":"a5423bc7914d77b5c","label":"ls-0","phase":"List"}
+{"type":"started","key":"v2:89e79d9844e528e6580f2f9094418a546fa980c69aac99c7fe8cbb6e90c9b38c","agentId":"aae76a8bc34eeebb5","label":"ls-1","phase":"List"}
+{"type":"started","key":"v2:718b5c16fac13ed6f158b83cbc5c8d9bdc6f47d426504d2416c95fd6da7fcc7b","agentId":"a7967148a35efb746","label":"ls-2","phase":"List"}
+{"type":"result","key":"v2:718b5c16fac13ed6f158b83cbc5c8d9bdc6f47d426504d2416c95fd6da7fcc7b","agentId":"a7967148a35efb746","result":{"entries":["Applications","Code","Desktop","Documents","Downloads","Library","Movies","Music","Pictures","Public"]}}
+{"type":"result","key":"v2:73df29b48487c3a0ebe3741194b36766b7886e7a31e5df38079be7310c8de304","agentId":"a5423bc7914d77b5c","result":{"entries":["Applications","Code","Desktop","Documents","Downloads","Library","Movies","Music","Pictures","Public"]}}
+{"type":"result","key":"v2:89e79d9844e528e6580f2f9094418a546fa980c69aac99c7fe8cbb6e90c9b38c","agentId":"aae76a8bc34eeebb5","result":{"entries":["Applications","Code","Desktop","Documents","Downloads","Library","Movies","Music","Pictures","Public"]}}
+{"type":"started","key":"v2:6801acea3a44ef3f9e733a34eb9890141076ede217f8769adde5071f670026d1","agentId":"a8a2b2c3f7641bbd4","label":"verify","phase":"Verify"}
+{"type":"result","key":"v2:6801acea3a44ef3f9e733a34eb9890141076ede217f8769adde5071f670026d1","agentId":"a8a2b2c3f7641bbd4","result":{"agree":true,"explanation":"All three agents' outputs are identical. Each contains the same 10 entries (Applications, Code, Desktop, Documents, Downloads, Library, Movies, Music, Pictures, Public) in the same order. The outputs completely agree on the contents of the directory."}}

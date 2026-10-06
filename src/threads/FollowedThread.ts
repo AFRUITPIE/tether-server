@@ -10,6 +10,7 @@ import type { NotificationBody, NotificationName } from '../protocol/notificatio
 import { Itemizer, type Emission } from './itemizer.ts';
 import type { Subscriber } from './LiveThread.ts';
 import { replayGap, seqOrigin } from './seq.ts';
+import { sessionDirSync, workflowAgentLocator } from './workflows.ts';
 
 const MAX_BUFFERED_EVENTS = 2000;
 /** Appends arrive in bursts as a message is written; one read per burst is enough. */
@@ -51,6 +52,7 @@ export class FollowedThread implements WatchableThread {
     this.id = id;
     this.cwd = cwd;
     this.seq = seqOrigin(seqAfter);
+    this.itemizer.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(id));
   }
 
   /** Reads what is already on disk without emitting: the snapshot `thread/read` hands back. */

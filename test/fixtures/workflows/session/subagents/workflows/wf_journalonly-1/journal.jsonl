@@ -1,0 +1,5 @@
+{"type":"launched"}
+{"type":"started","key":"v2:73df29b48487c3a0ebe3741194b36766b7886e7a31e5df38079be7310c8de304","agentId":"a5423bc7914d77b5c","label":"ls-0","phase":"List"}
+{"type":"started","key":"v2:89e79d9844e528e6580f2f9094418a546fa980c69aac99c7fe8cbb6e90c9b38c","agentId":"aae76a8bc34eeebb5","label":"ls-1","phase":"List"}
+{"type":"started","key":"v2:718b5c16fac13ed6f158b83cbc5c8d9bdc6f47d426504d2416c95fd6da7fcc7b","agentId":"a7967148a35efb746","label":"ls-2","phase":"List"}
+{"type":"result","key":"v2:718b5c16fac13ed6f158b83cbc5c8d9bdc6f47d426504d2416c95fd6da7fcc7b","agentId":"a7967148a35efb746","result":{"entries":["Applications","Code","Desktop","Documents","Downloads","Library","Movies","Music","Pictures","Public"]}}
