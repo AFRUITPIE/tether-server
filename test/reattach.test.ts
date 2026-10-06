@@ -65,6 +65,34 @@ describe('background work keeps a thread loaded', () => {
     expect(t.hasBackgroundWork).toBe(false);
   });
 
+  test('tells subscribers how many are running, when the number changes', () => {
+    const t = liveThread();
+    const counts: (number | undefined)[] = [];
+    const client = {
+      id: 'c',
+      notify: (method: string, p: any) => method === 'thread/status/changed' && counts.push(p.backgroundTasks),
+      request: () => new Promise(() => {}),
+      cancelRequest() {},
+    };
+    t.subscribe(client, t.threadInfo().lastSeq);
+    report(t, [{ task_id: 'b1', task_type: 'local_bash', description: 'sleep' }]);
+    report(t, [{ task_id: 'b1', task_type: 'local_bash', description: 'sleep' }]);
+    report(t, [{ task_id: 'b1', task_type: 'local_bash' }, { task_id: 'a1', task_type: 'local_agent' }]);
+    report(t, [{ task_id: 'w1', task_type: 'monitor', ambient: true }]);
+    expect(counts).toEqual([1, 2, 0]);
+  });
+
+  test('the chat list says how many are running in a loaded thread', () => {
+    const mgr = new ThreadManager(claude);
+    const t = liveThread();
+    mgr.threads.set(t.id, t);
+    report(t, [{ task_id: 'b1', task_type: 'local_bash', description: 'sleep' }]);
+    const session = { sessionId: t.id, summary: 'x', lastModified: 0 } as any;
+    expect(mgr.summary(session).backgroundTasks).toBe(1);
+    expect(mgr.summary({ ...session, sessionId: 'other' }).backgroundTasks).toBeUndefined();
+    mgr.shutdown();
+  });
+
   test('an idle thread with a background command is neither evicted nor drained', () => {
     const mgr = new ThreadManager(claude);
     const t = liveThread();

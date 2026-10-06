@@ -443,6 +443,7 @@ export class ThreadManager {
       ...(s.createdAt ? { createdAt: s.createdAt } : {}),
       updatedAt: s.lastModified,
       status: live ? live.status : 'notLoaded',
+      ...(live ? { backgroundTasks: live.backgroundTaskCount } : {}),
     };
   }
 

@@ -261,6 +261,11 @@ export class LiveThread {
     return this.backgroundTasks.size > 0;
   }
 
+  /** How many background commands and agents are running. */
+  get backgroundTaskCount() {
+    return this.backgroundTasks.size;
+  }
+
   /** An unattended thread waiting on a person, with no client subscribed to be that person. */
   get waitingUnattended() {
     return !!this.opts.unattended && this.pending.size > 0 && this.subscribers.size === 0;
@@ -343,7 +348,10 @@ export class LiveThread {
       }
       if (m.subtype === 'background_tasks_changed' && Array.isArray(m.tasks)) {
         // Replace, don't pair edges: this is the CLI's full current set.
+        const before = this.backgroundTasks.size;
         this.backgroundTasks = new Set(m.tasks.filter((t: any) => !t.ambient).map((t: any) => String(t.task_id)));
+        // Clients show a chat with background work as working, though its turn has ended.
+        if (this.backgroundTasks.size !== before) this.emitStatus();
       }
       if (m.subtype === 'session_state_changed') {
         if (m.state === 'idle' && this.pending.size === 0 && !this.itemizer.currentTurn) this.setStatus('idle');
@@ -432,7 +440,11 @@ export class LiveThread {
   }
 
   private emitStatus() {
-    this.emit('thread/status/changed', { status: this.status, activity: this.activity });
+    this.emit('thread/status/changed', {
+      status: this.status,
+      activity: this.activity,
+      backgroundTasks: this.backgroundTasks.size,
+    });
   }
 
   threadInfo(): ThreadInfo {
