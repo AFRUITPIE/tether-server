@@ -58,6 +58,16 @@ export const Notifications = {
      * reported its progress, and when it starts and settles. When absent, the last one still holds.
      */
     workflow: WorkflowSnapshot.optional(),
+    /**
+     * A task a subagent started (the CLI's `owned_by_subagent`), on every event of it: the
+     * subagent's business, never said in the chat. A subagent whose calls stream is the parent of
+     * the call `toolUseId` names; a workflow agent's are never streamed, so the two below say whose.
+     */
+    ownedBySubagent: z.boolean().optional(),
+    /** The Workflow call whose agent started this task: the agent's run, or else the run going on when it started. */
+    workflowToolUseId: z.string().optional(),
+    /** That workflow agent's id (`WorkflowAgent.agentId`), once its transcript shows it made the call. */
+    workflowAgentId: z.string().optional(),
     data: JsonValue,
   }),
   'task/backgroundChanged': z.object({ ...T, tasks: JsonValue }),

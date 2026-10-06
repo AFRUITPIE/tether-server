@@ -130,6 +130,12 @@ export class Itemizer {
   /** Which Workflow call launched each run, from its launch's `Run ID`. */
   private workflowRuns = new Map<string, string>();
   /**
+   * Tasks a subagent started (`owned_by_subagent` on their start), by task id, with the Workflow
+   * call and agent that started each, as far as known: a workflow agent's own background command
+   * belongs under that agent, never in the chat.
+   */
+  private ownedTasks = new Map<string, { workflowToolUseId?: string; workflowAgentId?: string }>();
+  /**
    * In history mode, whether the open turn's last reply ended it (a stop reason other than
    * `tool_use`): a transcript has no result messages, so this is how history knows a turn is over.
    */
@@ -151,6 +157,15 @@ export class Itemizer {
    * the CLI hasn't reported yet).
    */
   locateWorkflowAgent?: (agentId: string) => string | undefined;
+
+  /**
+   * Which agent of these runs made the tool call `toolUseId`, from the agents' transcripts on disk:
+   * for a task a workflow's agent started, whose call never reaches the stream.
+   */
+  locateWorkflowCall?: (toolUseId: string, runIds: string[]) => { runId: string; agentId: string } | undefined;
+
+  /** A finished run's result as text, from its run record on disk (`workflows/<runId>.json`). */
+  readRunResult?: (runId: string) => string | undefined;
 
   /**
    * @param historyMode transcripts have no `result` messages, so a new real user prompt closes the open turn.
@@ -367,7 +382,8 @@ export class Itemizer {
       case 'task_notification': {
         const workflow = this.isWorkflowTask(msg.task_id, msg.tool_use_id);
         const events = [...this.taskEvent(msg), ...this.settleTask(msg.tool_use_id, msg.status)];
-        if (!this.worthANotice(msg)) return events;
+        // A subagent's own task is the subagent's business: its call never reaches the chat.
+        if (this.ownedTasks.has(msg.task_id) || !this.worthANotice(msg)) return events;
         if (workflow)
           return [...events, ...this.workflowFinished({ taskId: msg.task_id, toolUseId: msg.tool_use_id, status: msg.status, summary: msg.summary }, 'event')];
         return [...events, ...this.taskNotice(msg.task_id, msg.status, msg.summary, msg.uuid)];
@@ -401,6 +417,8 @@ export class Itemizer {
   private taskEvent(msg: AnyMsg): Emission[] {
     const taskId: string = msg.task_id;
     if (msg.subtype === 'task_started' && typeof msg.task_type === 'string') this.taskTypes.set(taskId, msg.task_type);
+    if (msg.subtype === 'task_started' && msg.owned_by_subagent === true && !this.ownedTasks.has(taskId)) this.ownedTasks.set(taskId, {});
+    const owner = this.ownerOf(taskId, msg.tool_use_id ?? this.taskTools.get(taskId));
     const workflow = this.isWorkflowTask(taskId, msg.tool_use_id) || Array.isArray(msg.workflow_progress);
     const snapshot = workflow ? this.trackWorkflow(msg) : undefined;
     // What the CLI reports of a workflow is in the snapshot; the rest of the event goes as it came.
@@ -430,10 +448,38 @@ export class Itemizer {
           ...(msg.summary ? { summary: msg.summary } : {}),
           ...(typeof error === 'string' && error ? { error } : typeof error?.message === 'string' ? { error: error.message } : {}),
           ...(snapshot ? { workflow: structuredClone(snapshot) } : {}),
+          ...(owner ? { ownedBySubagent: true } : {}),
+          ...(owner?.workflowToolUseId ? { workflowToolUseId: owner.workflowToolUseId } : {}),
+          ...(owner?.workflowAgentId ? { workflowAgentId: owner.workflowAgentId } : {}),
           data,
         },
       },
     ];
+  }
+
+  /**
+   * Who started a subagent's own task, worked out again on each of its events until known. A call
+   * this itemizer has (a subagent's, streamed) already places the task under its subagent. Else
+   * it is a workflow agent's: the agent whose transcript holds the call, among the running
+   * workflows' (the call is written before the task starts, but may not be on disk yet), else the
+   * workflow that is running, the latest if more than one.
+   */
+  private ownerOf(taskId: string, toolUseId: string | undefined): { workflowToolUseId?: string; workflowAgentId?: string } | undefined {
+    const owner = this.ownedTasks.get(taskId);
+    if (!owner || owner.workflowAgentId || (toolUseId && this.toolItems.has(toolUseId))) return owner;
+    const running = [...this.workflows.entries()].filter(([, w]) => w.status === 'running');
+    const runIds = running.flatMap(([, w]) => (w.runId ? [w.runId] : []));
+    const found = toolUseId && runIds.length ? this.locateWorkflowCall?.(toolUseId, runIds) : undefined;
+    const call = found ? this.workflowRuns.get(found.runId) : undefined;
+    if (found && call) {
+      owner.workflowToolUseId = call;
+      owner.workflowAgentId = found.agentId;
+    } else if (!owner.workflowToolUseId) {
+      const latest = running.at(-1);
+      const latestCall = latest ? this.taskTools.get(latest[0]) : undefined;
+      if (latestCall) owner.workflowToolUseId = latestCall;
+    }
+    return owner;
   }
 
   /** Whether a task is a dynamic workflow: by its type, else by the call that started it. */
@@ -950,8 +996,9 @@ export class Itemizer {
    * A workflow's finish: a message from the workflow, named for it, holding its result, or what
    * happened when it failed or was stopped. It is one item, `workflow_<taskId>_finished`, said by
    * whichever comes first of the `task_notification` event (live only) and the `<task-notification>`
-   * message the CLI hands the model (live and history); the message, coming second, puts its
-   * `<result>` in the same item.
+   * message the CLI hands the model (history: the SDK stream doesn't carry it, as the slow-check
+   * capture shows); the message, coming second, puts its `<result>` in the same item. Live, the
+   * event takes the result from the run record (`readRunResult`), so both say the same.
    *
    * Where it goes is decided once, by one rule, live and in history: in the running turn if there
    * is one, else opening the turn that answers it. Live, the event usually comes first, while no
@@ -972,6 +1019,12 @@ export class Itemizer {
     const id = n.taskId ? `workflow_${n.taskId}_finished` : (messageId ?? `workflow_${++this.fallbackCounter}_finished`);
     const status = workflowStatus(n.status);
     const w = n.taskId ? this.workflows.get(n.taskId) : undefined;
+    // Live, the CLI's message with the result never reaches the stream (it starts the turn that
+    // answers it, unechoed): the event says it with the result its run record holds, as history does.
+    if (source === 'event' && status === 'completed' && n.result === undefined && w?.runId && !this.items.has(id)) {
+      const recorded = this.readRunResult?.(w.runId);
+      if (recorded !== undefined) n = { ...n, result: recorded };
+    }
     if (w && n.result && status === 'completed') w.result = notificationResult(n.result);
     if (w && !w.error && status === 'failed') {
       const error = failureOf(undefined, n.summary);

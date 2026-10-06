@@ -6024,9 +6024,12 @@ public struct TaskEventNotification: Codable, Sendable, Hashable {
     public var summary: String?
     public var error: String?
     public var workflow: WorkflowSnapshot?
+    public var ownedBySubagent: Bool?
+    public var workflowToolUseId: String?
+    public var workflowAgentId: String?
     public var data: JSONValue
 
-    public init(threadId: String, seq: Int, event: String, taskId: String, toolUseId: String? = nil, description: String? = nil, status: String? = nil, summary: String? = nil, error: String? = nil, workflow: WorkflowSnapshot? = nil, data: JSONValue) {
+    public init(threadId: String, seq: Int, event: String, taskId: String, toolUseId: String? = nil, description: String? = nil, status: String? = nil, summary: String? = nil, error: String? = nil, workflow: WorkflowSnapshot? = nil, ownedBySubagent: Bool? = nil, workflowToolUseId: String? = nil, workflowAgentId: String? = nil, data: JSONValue) {
         self.threadId = threadId
         self.seq = seq
         self.event = event
@@ -6037,6 +6040,9 @@ public struct TaskEventNotification: Codable, Sendable, Hashable {
         self.summary = summary
         self.error = error
         self.workflow = workflow
+        self.ownedBySubagent = ownedBySubagent
+        self.workflowToolUseId = workflowToolUseId
+        self.workflowAgentId = workflowAgentId
         self.data = data
     }
 
@@ -6051,6 +6057,9 @@ public struct TaskEventNotification: Codable, Sendable, Hashable {
         case summary = "summary"
         case error = "error"
         case workflow = "workflow"
+        case ownedBySubagent = "ownedBySubagent"
+        case workflowToolUseId = "workflowToolUseId"
+        case workflowAgentId = "workflowAgentId"
         case data = "data"
     }
 
@@ -6066,6 +6075,9 @@ public struct TaskEventNotification: Codable, Sendable, Hashable {
         self.summary = try c.decodeIfPresent(String.self, forKey: .summary)
         self.error = try c.decodeIfPresent(String.self, forKey: .error)
         self.workflow = try c.decodeIfPresent(WorkflowSnapshot.self, forKey: .workflow)
+        self.ownedBySubagent = try c.decodeIfPresent(Bool.self, forKey: .ownedBySubagent)
+        self.workflowToolUseId = try c.decodeIfPresent(String.self, forKey: .workflowToolUseId)
+        self.workflowAgentId = try c.decodeIfPresent(String.self, forKey: .workflowAgentId)
         self.data = try c.decode(JSONValue.self, forKey: .data)
     }
 
@@ -6081,6 +6093,9 @@ public struct TaskEventNotification: Codable, Sendable, Hashable {
         try c.encodeIfPresent(summary, forKey: .summary)
         try c.encodeIfPresent(error, forKey: .error)
         try c.encodeIfPresent(workflow, forKey: .workflow)
+        try c.encodeIfPresent(ownedBySubagent, forKey: .ownedBySubagent)
+        try c.encodeIfPresent(workflowToolUseId, forKey: .workflowToolUseId)
+        try c.encodeIfPresent(workflowAgentId, forKey: .workflowAgentId)
         try c.encode(data, forKey: .data)
     }
 }

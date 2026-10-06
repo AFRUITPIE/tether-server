@@ -26,7 +26,7 @@ import type { NotificationBody, NotificationName } from '../protocol/notificatio
 import type { ServerRequestName, ServerRequestParams, ServerRequestResult } from '../protocol/serverRequests.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { Itemizer, type Emission } from './itemizer.ts';
-import { sessionDirSync, workflowAgentLocator } from './workflows.ts';
+import { runResultReader, sessionDirSync, workflowAgentLocator, workflowCallLocator } from './workflows.ts';
 import { PushQueue } from './pushQueue.ts';
 import { replayGap, seqOrigin } from './seq.ts';
 import pkg from '../../package.json' with { type: 'json' };
@@ -186,6 +186,8 @@ export class LiveThread {
     if (opts.title) this.info.title = opts.title;
     // Found on disk only for an agent the CLI hasn't reported yet; the session's folder may not exist until then.
     this.itemizer.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(this.id));
+    this.itemizer.locateWorkflowCall = workflowCallLocator(() => sessionDirSync(this.id));
+    this.itemizer.readRunResult = runResultReader(() => sessionDirSync(this.id));
   }
 
   /** A dynamic workflow this thread is running or ran while loaded, by its run id. */

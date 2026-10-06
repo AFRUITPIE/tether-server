@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
@@ -258,6 +258,54 @@ export function workflowAgentLocator(sessionDir: string | (() => string | undefi
     missed.add(agentId);
     list();
     return byAgent!.get(agentId);
+  };
+}
+
+/**
+ * Which agent of the given runs made a tool call, by the call's id in the agents' transcripts: for a
+ * task a workflow agent started (its own background command), which the stream reports with the
+ * call's id alone. Read when asked, since a call is written as the agent makes it.
+ */
+export function workflowCallLocator(
+  sessionDir: string | (() => string | undefined),
+): (toolUseId: string, runIds: string[]) => { runId: string; agentId: string } | undefined {
+  return (toolUseId, runIds) => {
+    const dir = typeof sessionDir === 'string' ? sessionDir : sessionDir();
+    if (!dir || !isSafeId(toolUseId)) return undefined;
+    const needle = `"id":"${toolUseId}"`;
+    for (const runId of runIds) {
+      if (!isSafeId(runId)) continue;
+      let files: string[] = [];
+      try {
+        files = readdirSync(runDir(dir, runId));
+      } catch {
+        continue;
+      }
+      for (const f of files) {
+        const m = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(f);
+        if (!m) continue;
+        try {
+          if (readFileSync(join(runDir(dir, runId), f), 'utf8').includes(needle)) return { runId, agentId: m[1]! };
+        } catch {
+          // gone or unreadable: not this one
+        }
+      }
+    }
+    return undefined;
+  };
+}
+
+/** A finished run's result as text, from its run record (`workflows/<runId>.json`), read when asked. */
+export function runResultReader(sessionDir: string | (() => string | undefined)): (runId: string) => string | undefined {
+  return (runId) => {
+    const dir = typeof sessionDir === 'string' ? sessionDir : sessionDir();
+    if (!dir || !isSafeId(runId)) return undefined;
+    try {
+      const r = JSON.parse(readFileSync(join(dir, 'workflows', `${runId}.json`), 'utf8'));
+      return r && typeof r === 'object' ? resultText(r.result) : undefined;
+    } catch {
+      return undefined;
+    }
   };
 }
 
