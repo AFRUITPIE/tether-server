@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Item } from '../src/protocol/index.ts';
 import { Itemizer, type Emission } from '../src/threads/itemizer.ts';
-import { ingestHistory, QueuedNotifications } from '../src/threads/FollowedThread.ts';
+import { ingestHistory, TranscriptExtras } from '../src/threads/FollowedThread.ts';
 import { runResultReader, workflowAgentLocator, workflowCallLocator } from '../src/threads/workflows.ts';
 
 /**
@@ -86,7 +86,7 @@ function live(opts: { disk?: boolean } = { disk: true }) {
 function read() {
   const iz = new Itemizer(() => 1, true);
   iz.locateWorkflowAgent = workflowAgentLocator(SESSION);
-  ingestHistory(iz, history, new QueuedNotifications());
+  ingestHistory(iz, history, new TranscriptExtras());
   iz.closeTurn('completed');
   return iz.snapshot();
 }

@@ -17,6 +17,7 @@ import type { ClaudeBinary } from '../claude.ts';
 import type {
   EffortLevel,
   PermissionMode,
+  SessionCron,
   ThinkingSetting,
   ThreadInfo,
   ThreadStatus,
@@ -26,6 +27,7 @@ import type { NotificationBody, NotificationName } from '../protocol/notificatio
 import type { ServerRequestName, ServerRequestParams, ServerRequestResult } from '../protocol/serverRequests.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { Itemizer, type Emission } from './itemizer.ts';
+import { TranscriptExtras } from './FollowedThread.ts';
 import { runResultReader, sessionDirSync, workflowAgentLocator, workflowCallLocator } from './workflows.ts';
 import { PushQueue } from './pushQueue.ts';
 import { replayGap, seqOrigin } from './seq.ts';
@@ -120,6 +122,8 @@ export type LiveThreadOptions = {
  * documented, and this is how to see it. `TETHER_DEBUG_TASKS=1` in the daemon's environment.
  */
 const DEBUG_TASKS = !!process.env.TETHER_DEBUG_TASKS;
+/** \`TETHER_DEBUG_MESSAGES=1\`: every SDK message but streamed deltas, for capturing what a feature sends. */
+const DEBUG_MESSAGES = !!process.env.TETHER_DEBUG_MESSAGES;
 
 const MAX_BUFFERED_EVENTS = 20_000;
 
@@ -168,6 +172,15 @@ export class LiveThread {
   private backgroundTasks = new Set<string>();
   /** Whether the client asked for session tools on this thread; only then are they allowed. */
   private readonly sessionToolsEnabled: boolean;
+  /**
+   * What the transcript holds that the stream doesn't (a scheduled job's prompt, a /goal's checks),
+   * read as it's written: from where the file ended when this process started.
+   */
+  private readonly extras = new TranscriptExtras();
+  private extrasPath?: string;
+  private extrasReading = false;
+  private extrasAgain = false;
+  private extrasTimers = new Set<ReturnType<typeof setTimeout>>();
 
   /** The `claude` this thread runs, for a catalog that could share it. */
   get claudePath(): string {
@@ -199,6 +212,14 @@ export class LiveThread {
 
   async start(): Promise<void> {
     const o = this.opts;
+    // A resumed session's file already holds what history read; only what's written from now is new.
+    const dir = sessionDirSync(this.id);
+    if (dir) {
+      this.extrasPath = `${dir}.jsonl`;
+      await this.extras.skipTo(this.extrasPath);
+    }
+    // Session-only: a new process has none until it schedules some.
+    this.info.sessionCrons = [];
     const options: Options = {
       pathToClaudeCodeExecutable: o.claude.path,
       cwd: o.cwd,
@@ -216,6 +237,9 @@ export class LiveThread {
       onUserDialog: (req, ctx) => this.onUserDialog(req, ctx.signal) as any,
       supportedDialogKinds: ['refusal_fallback_prompt'],
       perTaskStopAffordance: true,
+      // What will wake the session later (CronCreate, ScheduleWakeup, /loop): no control request
+      // lists them, but every Stop hook is told, after each turn. It changes nothing.
+      hooks: { Stop: [{ hooks: [async (input) => (this.noteSessionCrons((input as any).session_crons), {})] }] },
       stderr: (data) => {
         o.stderr?.(data);
         this.emit('thread/stderr', { text: data });
@@ -297,6 +321,8 @@ export class LiveThread {
 
   close() {
     clearTimeout(this.titleCheck);
+    for (const t of this.extrasTimers) clearTimeout(t);
+    this.extrasTimers.clear();
     this.input.end();
     try {
       this.q?.close();
@@ -320,6 +346,8 @@ export class LiveThread {
       this.backgroundTasks.clear();
       this.emitAll(this.itemizer.abandonAll());
       this.emit('task/backgroundChanged', { tasks: [] });
+      // So do its scheduled jobs: they're session-only.
+      this.noteSessionCrons([]);
       for (const p of this.pending.values()) {
         clearTimeout(p.timer);
         p.reject(new RpcError(ErrorCodes.requestCancelled, 'thread closed'));
@@ -338,6 +366,8 @@ export class LiveThread {
     const m = msg as any;
     if (DEBUG_TASKS && m.type === 'system' && typeof m.subtype === 'string' && m.subtype.startsWith('task_'))
       this.opts.log?.(`thread ${this.id} ${m.subtype}: ${JSON.stringify(m)}`);
+    else if (DEBUG_MESSAGES && m.type !== 'stream_event')
+      this.opts.log?.(`thread ${this.id} message ${m.type}${m.subtype ? '/' + m.subtype : ''}: ${JSON.stringify(m).slice(0, 4000)}`);
     if (m.type === 'system') {
       if (m.subtype === 'init') {
         Object.assign(this.info, {
@@ -383,12 +413,79 @@ export class LiveThread {
     const out = this.itemizer.ingest(m);
     if (out.some((e) => e.method === 'turn/started') && this.status !== 'requiresAction') this.setStatus('running');
     this.emitAll(out);
+    this.lookForExtras(m, out);
     if (m.type === 'result') {
       this.activity = null;
       if (this.pending.size === 0) this.setStatus('idle');
       this.lookForTitle();
       if (this.generateTitle) void this.nameChat();
     }
+  }
+
+  /**
+   * Reads the transcript when it holds something the stream doesn't say: a scheduled job's prompt,
+   * once the CLI starts a command Tether didn't send (written as it starts, so looked for a few
+   * times until found); a /goal's check, written as its Stop hook answers: after the turn ends, or,
+   * while a goal is active, before the model is asked again.
+   */
+  private lookForExtras(m: any, out: Emission[]) {
+    if (m.type === 'command_lifecycle' && out.some((e) => e.method === 'turn/started')) {
+      const id: string = m.command_uuid;
+      this.readExtrasAt([30, 250, 1000, 3000], () => this.itemizer.items.has(id));
+    } else if (m.type === 'result') {
+      this.readExtrasAt([250, 1500]);
+    } else if (this.itemizer.goalActive && m.parent_tool_use_id == null) {
+      const startsRequest = m.type === 'stream_event' && m.event?.type === 'message_start';
+      const content = m.message?.content;
+      const prompt = m.type === 'user' && !(Array.isArray(content) && content.some((b: any) => b?.type === 'tool_result'));
+      if (startsRequest || prompt) void this.readExtras();
+    }
+  }
+
+  /** Reads the transcript after each delay in turn, stopping once `done`. */
+  private readExtrasAt(delays: number[], done?: () => boolean) {
+    const [delay, ...rest] = delays;
+    if (delay === undefined || this.exited) return;
+    const t = setTimeout(async () => {
+      this.extrasTimers.delete(t);
+      await this.readExtras();
+      if (!done?.()) this.readExtrasAt(rest, done);
+    }, delay);
+    t.unref?.();
+    this.extrasTimers.add(t);
+  }
+
+  private async readExtras(): Promise<void> {
+    if (this.extrasReading) {
+      this.extrasAgain = true;
+      return;
+    }
+    this.extrasReading = true;
+    try {
+      do {
+        this.extrasAgain = false;
+        // A new session's file appears with its first message; all of it is this process's.
+        if (!this.extrasPath) {
+          const dir = sessionDirSync(this.id);
+          if (!dir) return;
+          this.extrasPath = `${dir}.jsonl`;
+        }
+        await this.extras.readFile(this.extrasPath);
+        // A workflow's queued notification is said by its task event live.
+        for (const r of this.extras.take())
+          if (r.attachment?.type !== 'queued_command') this.emitAll(this.itemizer.ingestExtra(r));
+      } while (this.extrasAgain);
+    } finally {
+      this.extrasReading = false;
+    }
+  }
+
+  /** The jobs that will wake the session, as a Stop hook was told; sent when they change. */
+  private noteSessionCrons(raw: unknown) {
+    const crons = sessionCronsOf(raw);
+    if (!crons || JSON.stringify(crons) === JSON.stringify(this.info.sessionCrons)) return;
+    this.info.sessionCrons = crons;
+    this.emit('thread/updated', { thread: this.threadInfo() });
   }
 
   /**
@@ -806,3 +903,13 @@ function toContentBlocks(content: UserInput[], cwd: string): any[] {
   return blocks;
 }
 
+
+/** The CLI's `session_crons`, as far as each entry has what a job needs; undefined if it sent none. */
+export function sessionCronsOf(raw: unknown): SessionCron[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return raw.flatMap((c: any) =>
+    c && typeof c.id === 'string' && typeof c.prompt === 'string'
+      ? [{ id: c.id, schedule: typeof c.schedule === 'string' ? c.schedule : String(c.cron ?? ''), recurring: c.recurring !== false, prompt: c.prompt }]
+      : [],
+  );
+}
