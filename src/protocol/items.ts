@@ -53,7 +53,10 @@ export const UserMessageItem = z.object({
    * Provenance for non-human messages, e.g. task-notification, peer, channel, subagent, or
    * `workflow`: a dynamic workflow's finish, `workflow_<taskId>_finished`, whose content is its
    * result (or, failed or stopped, what happened) and whose `originName` is the workflow's name. It
-   * may first come with the CLI's summary and then again, the same id, with the result.
+   * may first come with the CLI's summary and then again, the same id, with the result; or
+   * `wakeup`: a scheduled job firing (a /loop, CronCreate or ScheduleWakeup), whose content is
+   * the prompt it fired with. It opens the turn it starts, live and in history: id and turn id are
+   * the CLI's command uuid. The CLI never echoes it as a message, so it is read from the transcript.
    */
   origin: z.string().optional(),
   /** For a message from another session: the sender's display name, as it reported it. */
@@ -109,12 +112,35 @@ export const ErrorItem = z.object({
   code: z.string().optional(),
 });
 
+/** What happened to a /goal: set, a check that found it not met yet, met, failed (impossible), or cleared. */
+export const GoalEvent = z.enum(['set', 'notMet', 'met', 'failed', 'cleared']).meta({ id: 'GoalEvent' });
+export type GoalEvent = z.infer<typeof GoalEvent>;
+
+/** A /goal's condition and what its Stop hook last said of it, on a `goal` notice. */
+export const GoalNotice = z
+  .object({
+    condition: z.string(),
+    event: GoalEvent,
+    /** Why a check found it met, not met yet, or impossible: the evaluator's words. */
+    reason: z.string().optional(),
+    /** How many checks it took, when the CLI says (on met and failed). */
+    iterations: z.number().optional(),
+    durationMs: z.number().optional(),
+  })
+  .meta({ id: 'GoalNotice' });
+export type GoalNotice = z.infer<typeof GoalNotice>;
+
 export const NoticeItem = z.object({
   type: z.literal('notice'),
   ...base,
-  kind: z.string().describe('localCommandOutput | informational | hook | modelFallback | …'),
+  kind: z.string().describe('localCommandOutput | informational | hook | modelFallback | goal | …'),
   text: z.string(),
   level: z.enum(['info', 'warning', 'error']).optional(),
+  /**
+   * Kind `goal`: a /goal set or cleared (the command's own output), or what a check of it found
+   * (the CLI's `goal_status`, written to the transcript only, so read from there live too).
+   */
+  goal: GoalNotice.optional(),
 });
 
 export const WorkflowPhase = z

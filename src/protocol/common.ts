@@ -154,6 +154,20 @@ export const ThreadSettings = z
   })
   .meta({ id: 'ThreadSettings' });
 
+/** A job that will wake a session: the CLI's `SessionCronSummary`. */
+export const SessionCron = z
+  .object({
+    id: z.string(),
+    /** A cron expression, in the host's local time. */
+    schedule: z.string(),
+    /** False for a one-shot wakeup whose cron encodes a single fire time. */
+    recurring: z.boolean(),
+    /** What it fires with, cut at 1000 characters (the CLI marks the cut). */
+    prompt: z.string(),
+  })
+  .meta({ id: 'SessionCron' });
+export type SessionCron = z.infer<typeof SessionCron>;
+
 export const ThreadInfo = z
   .object({
     threadId: z.string(),
@@ -178,6 +192,12 @@ export const ThreadInfo = z
     mcpServers: z.array(McpServerStatus).optional(),
     claudeCodeVersion: z.string().optional(),
     capabilities: z.array(z.string()).optional(),
+    /**
+     * What will wake this session later (CronCreate, ScheduleWakeup, /loop), as its Stop hook last
+     * saw them: the CLI's whole list, after each turn. Empty once its process has ended (they're
+     * session-only) and when a process starts; absent for a thread not loaded here.
+     */
+    sessionCrons: z.array(SessionCron).optional(),
     lastSeq: z.number().int(),
   })
   .meta({ id: 'ThreadInfo' });

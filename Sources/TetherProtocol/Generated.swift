@@ -613,9 +613,10 @@ public struct ThreadInfo: Codable, Sendable, Hashable {
     public var mcpServers: [McpServerStatus]?
     public var claudeCodeVersion: String?
     public var capabilities: [String]?
+    public var sessionCrons: [SessionCron]?
     public var lastSeq: Int
 
-    public init(threadId: String, status: ThreadStatus, cwd: String, title: String? = nil, model: String? = nil, effort: EffortLevel? = nil, appliedEffort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastModeState: FastModeState? = nil, fastModeDisabledReason: String? = nil, tools: [String]? = nil, slashCommands: [String]? = nil, skills: [String]? = nil, agents: [String]? = nil, outputStyle: String? = nil, mcpServers: [McpServerStatus]? = nil, claudeCodeVersion: String? = nil, capabilities: [String]? = nil, lastSeq: Int) {
+    public init(threadId: String, status: ThreadStatus, cwd: String, title: String? = nil, model: String? = nil, effort: EffortLevel? = nil, appliedEffort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastModeState: FastModeState? = nil, fastModeDisabledReason: String? = nil, tools: [String]? = nil, slashCommands: [String]? = nil, skills: [String]? = nil, agents: [String]? = nil, outputStyle: String? = nil, mcpServers: [McpServerStatus]? = nil, claudeCodeVersion: String? = nil, capabilities: [String]? = nil, sessionCrons: [SessionCron]? = nil, lastSeq: Int) {
         self.threadId = threadId
         self.status = status
         self.cwd = cwd
@@ -634,6 +635,7 @@ public struct ThreadInfo: Codable, Sendable, Hashable {
         self.mcpServers = mcpServers
         self.claudeCodeVersion = claudeCodeVersion
         self.capabilities = capabilities
+        self.sessionCrons = sessionCrons
         self.lastSeq = lastSeq
     }
 
@@ -656,6 +658,7 @@ public struct ThreadInfo: Codable, Sendable, Hashable {
         case mcpServers = "mcpServers"
         case claudeCodeVersion = "claudeCodeVersion"
         case capabilities = "capabilities"
+        case sessionCrons = "sessionCrons"
         case lastSeq = "lastSeq"
     }
 
@@ -679,6 +682,7 @@ public struct ThreadInfo: Codable, Sendable, Hashable {
         self.mcpServers = try c.decodeIfPresent([McpServerStatus].self, forKey: .mcpServers)
         self.claudeCodeVersion = try c.decodeIfPresent(String.self, forKey: .claudeCodeVersion)
         self.capabilities = try c.decodeIfPresent([String].self, forKey: .capabilities)
+        self.sessionCrons = try c.decodeIfPresent([SessionCron].self, forKey: .sessionCrons)
         self.lastSeq = try c.decode(Int.self, forKey: .lastSeq)
     }
 
@@ -702,6 +706,7 @@ public struct ThreadInfo: Codable, Sendable, Hashable {
         try c.encodeIfPresent(mcpServers, forKey: .mcpServers)
         try c.encodeIfPresent(claudeCodeVersion, forKey: .claudeCodeVersion)
         try c.encodeIfPresent(capabilities, forKey: .capabilities)
+        try c.encodeIfPresent(sessionCrons, forKey: .sessionCrons)
         try c.encode(lastSeq, forKey: .lastSeq)
     }
 
@@ -758,6 +763,43 @@ public struct McpServerStatus: Codable, Sendable, Hashable {
         try c.encodeIfPresent(source, forKey: .source)
         try c.encodeIfPresent(error, forKey: .error)
         try c.encodeIfPresent(toolCount, forKey: .toolCount)
+    }
+}
+
+public struct SessionCron: Codable, Sendable, Hashable {
+    public var id: String
+    public var schedule: String
+    public var recurring: Bool
+    public var prompt: String
+
+    public init(id: String, schedule: String, recurring: Bool, prompt: String) {
+        self.id = id
+        self.schedule = schedule
+        self.recurring = recurring
+        self.prompt = prompt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case schedule = "schedule"
+        case recurring = "recurring"
+        case prompt = "prompt"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.schedule = try c.decode(String.self, forKey: .schedule)
+        self.recurring = try c.decode(Bool.self, forKey: .recurring)
+        self.prompt = try c.decode(String.self, forKey: .prompt)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(schedule, forKey: .schedule)
+        try c.encode(recurring, forKey: .recurring)
+        try c.encode(prompt, forKey: .prompt)
     }
 }
 
@@ -1208,12 +1250,13 @@ public enum Item: Codable, Sendable, Hashable {
         public var parentToolUseId: String?
         /// ms since epoch
         public var createdAt: Double
-        /// localCommandOutput | informational | hook | modelFallback | …
+        /// localCommandOutput | informational | hook | modelFallback | goal | …
         public var kind: String
         public var text: String
         public var level: Level?
+        public var goal: GoalNotice?
 
-        public init(id: String, turnId: String? = nil, parentToolUseId: String? = nil, createdAt: Double, kind: String, text: String, level: Level? = nil) {
+        public init(id: String, turnId: String? = nil, parentToolUseId: String? = nil, createdAt: Double, kind: String, text: String, level: Level? = nil, goal: GoalNotice? = nil) {
             self.id = id
             self.turnId = turnId
             self.parentToolUseId = parentToolUseId
@@ -1221,6 +1264,7 @@ public enum Item: Codable, Sendable, Hashable {
             self.kind = kind
             self.text = text
             self.level = level
+            self.goal = goal
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -1232,6 +1276,7 @@ public enum Item: Codable, Sendable, Hashable {
             case kind = "kind"
             case text = "text"
             case level = "level"
+            case goal = "goal"
         }
 
         public init(from decoder: any Decoder) throws {
@@ -1244,6 +1289,7 @@ public enum Item: Codable, Sendable, Hashable {
             self.kind = try c.decode(String.self, forKey: .kind)
             self.text = try c.decode(String.self, forKey: .text)
             self.level = try c.decodeIfPresent(Level.self, forKey: .level)
+            self.goal = try c.decodeIfPresent(GoalNotice.self, forKey: .goal)
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -1256,6 +1302,7 @@ public enum Item: Codable, Sendable, Hashable {
             try c.encode(kind, forKey: .kind)
             try c.encode(text, forKey: .text)
             try c.encodeIfPresent(level, forKey: .level)
+            try c.encodeIfPresent(goal, forKey: .goal)
         }
 
         public struct Level: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
@@ -1315,6 +1362,62 @@ public struct ToolStatus: RawRepresentable, Codable, Sendable, Hashable, CaseIte
     public static let denied = ToolStatus(rawValue: "denied")
     public static let interrupted = ToolStatus(rawValue: "interrupted")
     public static let allCases: [ToolStatus] = [.pending, .running, .completed, .failed, .denied, .interrupted]
+}
+
+public struct GoalNotice: Codable, Sendable, Hashable {
+    public var condition: String
+    public var event: GoalEvent
+    public var reason: String?
+    public var iterations: Double?
+    public var durationMs: Double?
+
+    public init(condition: String, event: GoalEvent, reason: String? = nil, iterations: Double? = nil, durationMs: Double? = nil) {
+        self.condition = condition
+        self.event = event
+        self.reason = reason
+        self.iterations = iterations
+        self.durationMs = durationMs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case condition = "condition"
+        case event = "event"
+        case reason = "reason"
+        case iterations = "iterations"
+        case durationMs = "durationMs"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.condition = try c.decode(String.self, forKey: .condition)
+        self.event = try c.decode(GoalEvent.self, forKey: .event)
+        self.reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        self.iterations = try c.decodeIfPresent(Double.self, forKey: .iterations)
+        self.durationMs = try c.decodeIfPresent(Double.self, forKey: .durationMs)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(condition, forKey: .condition)
+        try c.encode(event, forKey: .event)
+        try c.encodeIfPresent(reason, forKey: .reason)
+        try c.encodeIfPresent(iterations, forKey: .iterations)
+        try c.encodeIfPresent(durationMs, forKey: .durationMs)
+    }
+}
+
+public struct GoalEvent: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public init(stringLiteral value: String) { self.rawValue = value }
+    public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
+    public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
+    public static let set = GoalEvent(rawValue: "set")
+    public static let notMet = GoalEvent(rawValue: "notMet")
+    public static let met = GoalEvent(rawValue: "met")
+    public static let failed = GoalEvent(rawValue: "failed")
+    public static let cleared = GoalEvent(rawValue: "cleared")
+    public static let allCases: [GoalEvent] = [.set, .notMet, .met, .failed, .cleared]
 }
 
 public struct Turn: Codable, Sendable, Hashable {

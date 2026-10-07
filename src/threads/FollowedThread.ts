@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import type { EffortLevel, Item, PermissionMode, ThreadInfo, Turn } from '../protocol/index.ts';
 import { EffortLevel as EffortLevelSchema, PermissionMode as PermissionModeSchema } from '../protocol/common.ts';
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
-import { Itemizer, type Emission } from './itemizer.ts';
+import { isWakeup, Itemizer, type Emission } from './itemizer.ts';
 import type { Subscriber } from './LiveThread.ts';
 import { replayGap, seqOrigin } from './seq.ts';
 import { sessionDirSync, workflowAgentLocator } from './workflows.ts';
@@ -47,7 +47,7 @@ export class FollowedThread implements WatchableThread {
   private pending?: ReturnType<typeof setTimeout>;
   private reading = false;
   private again = false;
-  private readonly queued = new QueuedNotifications();
+  private readonly queued = new TranscriptExtras();
 
   constructor(id: string, cwd: string, seqAfter?: number) {
     this.id = id;
@@ -204,7 +204,7 @@ export class FollowedThread implements WatchableThread {
  * Where Claude Code keeps a session's transcript. The project folder name is the CLI's own
  * flattening of the cwd, so the id is looked for rather than the path derived.
  */
-async function transcriptPath(threadId: string): Promise<string | undefined> {
+export async function transcriptPath(threadId: string): Promise<string | undefined> {
   const root = join(homedir(), '.claude', 'projects');
   let dirs;
   try {
@@ -336,17 +336,28 @@ function settingsFrom(lines: string[]): SessionSettings {
 }
 
 /**
- * The `<task-notification>`s the CLI queued mid-turn, from the raw transcript: it writes each as an
- * `attachment` (`queued_command`) after the message it followed (a tool result, or another
- * attachment after one), and getSessionMessages drops attachments. Each is held under the message
- * it follows, to be read right after that message (`ingestHistory`), so a workflow's finish lands
- * in history where it did live.
+ * What only the raw transcript holds, read from the file: getSessionMessages drops attachments and
+ * meta prompts, and keeps a system record without its content.
+ *
+ * - The `<task-notification>`s the CLI queued mid-turn: it writes each as an `attachment`
+ *   (`queued_command`) after the message it followed (a tool result, or another attachment after
+ *   one), so a workflow's finish lands in history where it did live.
+ * - A scheduled job's prompt (a /loop, CronCreate or ScheduleWakeup firing): a meta `user` record
+ *   with `turnOrigin: scheduled`, whose uuid is the CLI's command uuid.
+ * - A /goal's checks (`goal_status` attachments, after the reply each judged) and its set (the
+ *   `local_command` record, after the prompt).
+ *
+ * Each is held under the message it follows (the nearest record getSessionMessages keeps, through
+ * dropped attachments and meta prompts), to be read right after that message (`ingestHistory`).
+ * Live, `take()` hands over what was written since the last read, in file order.
  */
-export class QueuedNotifications {
-  /** An attachment's parent, to find the message a run of attachments follows. */
+export class TranscriptExtras {
+  /** A dropped record's parent, to find the message a run of them follows. */
   private parentOf = new Map<string, string>();
   private waiting = new Map<string, Record<string, any>[]>();
-  /** Messages already read, for a notification written after its message was. */
+  /** What was found and not yet taken, in file order, for a live reader. */
+  private found: Record<string, any>[] = [];
+  /** Messages already read, for a record written after its message was. */
   private read = new Set<string>();
   /** How far into the file has been read. */
   offset = 0;
@@ -360,36 +371,48 @@ export class QueuedNotifications {
       this.offset = added.end;
       this.add(added.lines);
     } catch {
-      // unreadable: no notifications
+      // unreadable: nothing more
+    }
+  }
+
+  /** Skips what the file holds now: a live reader wants only what is written from here on. */
+  async skipTo(path: string): Promise<void> {
+    try {
+      this.offset = (await stat(path)).size;
+    } catch {
+      this.offset = 0;
     }
   }
 
   add(lines: string[]): void {
     for (const line of lines) {
-      if (!line.includes('"attachment"')) continue;
+      if (!line.includes('"attachment"') && !line.includes('"isMeta":true') && !line.includes('"local_command"')) continue;
       let o: any;
       try {
         o = JSON.parse(line);
       } catch {
         continue;
       }
-      if (o?.type !== 'attachment' || o.isSidechain || typeof o.uuid !== 'string' || typeof o.parentUuid !== 'string') continue;
-      this.parentOf.set(o.uuid, o.parentUuid);
-      const a = o.attachment;
-      if (a?.type !== 'queued_command' || typeof a.prompt !== 'string' || !/^\s*<task-notification>/.test(a.prompt)) continue;
+      if (!o || o.isSidechain || typeof o.uuid !== 'string') continue;
+      const dropped = o.type === 'attachment' || (o.type === 'user' && o.isMeta === true);
+      if (dropped && typeof o.parentUuid === 'string') this.parentOf.set(o.uuid, o.parentUuid);
+      if (!isExtra(o)) continue;
+      delete o.rendered;
+      this.found.push(o);
+      if (typeof o.parentUuid !== 'string') continue;
       const anchor = this.anchor(o.parentUuid);
-      this.waiting.set(anchor, [...(this.waiting.get(anchor) ?? []), { uuid: o.uuid, timestamp: o.timestamp ?? a.timestamp, attachment: a }]);
+      this.waiting.set(anchor, [...(this.waiting.get(anchor) ?? []), o]);
     }
   }
 
-  /** The message a run of attachments follows. */
+  /** The message a run of dropped records follows. */
   private anchor(uuid: string): string {
     let at = uuid;
     for (let i = 0; i < 1000 && this.parentOf.has(at); i++) at = this.parentOf.get(at)!;
     return at;
   }
 
-  /** The notifications that follow a message, once, as it is read. */
+  /** The records that follow a message, once, as it is read. */
   after(uuid: unknown): Record<string, any>[] {
     if (typeof uuid !== 'string') return [];
     this.read.add(uuid);
@@ -398,7 +421,7 @@ export class QueuedNotifications {
     return found;
   }
 
-  /** Notifications written after the message they follow had already been read. */
+  /** Records written after the message they follow had already been read. */
   late(): Record<string, any>[] {
     const out: Record<string, any>[] = [];
     for (const [uuid, found] of this.waiting) {
@@ -408,15 +431,34 @@ export class QueuedNotifications {
     }
     return out;
   }
+
+  /** Live: every record found since the last take, in the order written. */
+  take(): Record<string, any>[] {
+    const out = this.found;
+    this.found = [];
+    this.waiting.clear();
+    return out;
+  }
 }
 
-/** History's messages into an itemizer, each followed by the queued notifications written after it. */
-export function ingestHistory(iz: Itemizer, msgs: readonly unknown[], queued?: QueuedNotifications): Emission[] {
+/** A raw record the itemizer reads that getSessionMessages leaves out (see `TranscriptExtras`). */
+function isExtra(o: any): boolean {
+  if (o.type === 'attachment') {
+    const a = o.attachment;
+    if (a?.type === 'queued_command') return typeof a.prompt === 'string' && /^\s*<task-notification>/.test(a.prompt);
+    return a?.type === 'goal_status' && a.sentinel !== true;
+  }
+  if (o.type === 'user') return o.isMeta === true && isWakeup(o);
+  return o.type === 'system' && o.subtype === 'local_command' && o.commandRun?.command === 'goal';
+}
+
+/** History's messages into an itemizer, each followed by what the raw transcript wrote after it. */
+export function ingestHistory(iz: Itemizer, msgs: readonly unknown[], extras?: TranscriptExtras): Emission[] {
   const out: Emission[] = [];
-  if (queued) for (const r of queued.late()) out.push(...iz.ingestQueued(r));
+  if (extras) for (const r of extras.late()) out.push(...iz.ingestExtra(r));
   for (const m of msgs as Record<string, any>[]) {
     out.push(...iz.ingest(m));
-    if (queued) for (const r of queued.after(m.uuid)) out.push(...iz.ingestQueued(r));
+    if (extras) for (const r of extras.after(m.uuid)) out.push(...iz.ingestExtra(r));
   }
   return out;
 }

@@ -1,6 +1,6 @@
 import type { Item, ToolCallItem, ToolKind, Turn, TurnResult, UserInput } from '../protocol/index.ts';
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
-import type { WorkflowSnapshot } from '../protocol/items.ts';
+import type { GoalNotice, WorkflowSnapshot } from '../protocol/items.ts';
 import {
   launchRunId,
   launchTaskId,
@@ -150,6 +150,13 @@ export class Itemizer {
   /** In history mode, the message being read's time, and the last one read's. */
   private messageTime?: number;
   private lastMessageTime?: number;
+  /**
+   * The /goal being worked toward, by its condition: from its set until it's met, failed or
+   * cleared. While there is one, its Stop hook's feedback to the model isn't a message of the chat.
+   */
+  private activeGoal?: string;
+  /** The last turn to end: a goal's check is written just after the reply that ends it. */
+  private lastTurnId: string | null = null;
 
   /**
    * Which workflow run an agent id belongs to, from the session's directory on disk: for a peer
@@ -211,20 +218,48 @@ export class Itemizer {
 
   ingest(msg: AnyMsg): Emission[] {
     if (!this.historyMode) return this.route(msg);
-    const t = typeof msg.timestamp === 'string' ? Date.parse(msg.timestamp) : NaN;
+    return this.at(msg.timestamp, () => this.route(msg));
+  }
+
+  /** Whether a /goal is being worked toward, so its checks are worth looking for. */
+  get goalActive(): boolean {
+    return this.activeGoal !== undefined;
+  }
+
+  /** Runs `f` as of `timestamp`, when the record says when it was written. */
+  private at<T>(timestamp: unknown, f: () => T): T {
+    const t = typeof timestamp === 'string' ? Date.parse(timestamp) : NaN;
     this.messageTime = Number.isFinite(t) ? t : undefined;
     try {
-      return this.route(msg);
+      return f();
     } finally {
-      if (this.messageTime !== undefined) this.lastMessageTime = this.messageTime;
+      if (this.messageTime !== undefined && this.historyMode) this.lastMessageTime = this.messageTime;
       this.messageTime = undefined;
     }
   }
 
   /**
+   * What only the raw transcript holds, which getSessionMessages drops and the SDK stream never
+   * carries (`TranscriptExtras` reads it, in history after the message it follows, live as it is
+   * written): a scheduled job's prompt (`wakeup`), a /goal's checks (`goal_status`) and its set
+   * (the `local_command` record), and a workflow's mid-turn `<task-notification>` (`ingestQueued`).
+   */
+  ingestExtra(record: AnyMsg): Emission[] {
+    if (record.type === 'attachment') {
+      const a = record.attachment;
+      if (a?.type === 'queued_command') return this.ingestQueued(record);
+      if (a?.type === 'goal_status') return this.at(record.timestamp, () => this.goalStatus(record.uuid, a));
+      return [];
+    }
+    if (record.type === 'user' && isWakeup(record)) return this.at(record.timestamp, () => this.wakeup(record));
+    if (record.type === 'system' && record.subtype === 'local_command') return this.at(record.timestamp, () => this.onSystem(record));
+    return [];
+  }
+
+  /**
    * A `<task-notification>` the CLI queued mid-turn and handed the model at the turn's next step:
    * written to the transcript as an `attachment` (`queued_command`) after the message it followed,
-   * which getSessionMessages drops, so history reads it from the file (`QueuedNotifications`).
+   * which getSessionMessages drops, so history reads it from the file (`TranscriptExtras`).
    * Only a workflow's is read, for its finish to land where it did live.
    */
   ingestQueued(record: AnyMsg): Emission[] {
@@ -295,6 +330,8 @@ export class Itemizer {
         }
         return out;
       }
+      case 'command_lifecycle':
+        return this.onCommandLifecycle(msg);
       case 'prompt_suggestion':
         return [{ method: 'thread/promptSuggestion', body: { suggestion: msg.suggestion } }];
       case 'rate_limit_event':
@@ -357,7 +394,13 @@ export class Itemizer {
         });
       }
       case 'local_command_output':
-        return this.notice(msg, 'localCommandOutput', msg.content ?? '');
+        return this.localCommand(msg, typeof msg.content === 'string' ? msg.content : '');
+      // A local command's record, as the transcript keeps it: only a /goal's is the chat's (a
+      // prompt's own output comes as a `<local-command-stdout>` message).
+      case 'local_command': {
+        const goal = msg.commandRun?.command === 'goal' && typeof msg.content === 'string' ? goalFromCommandOutput(msg.content) : undefined;
+        return goal ? this.goalNotice(msg.uuid, goal) : [this.raw(msg)];
+      }
       case 'informational':
         return this.notice(msg, 'informational', msg.content ?? '', msg.level === 'warning' ? 'warning' : 'info');
       case 'model_refusal_fallback':
@@ -781,6 +824,13 @@ export class Itemizer {
     const placed = this.turnFor(parent, msgId);
     out.push(...placed.out);
     const turnId = placed.turnId;
+    // A local command's output, which the CLI sends as a reply of its own (`<synthetic>`): a /goal's
+    // set or clear is the goal's line, not a reply.
+    const command = msg.local_command_run?.command;
+    if (parent === null && (command === 'goal' || (command === undefined && m.model === '<synthetic>'))) {
+      const goal = goalFromCommandOutput(contentToText(m.content));
+      if (goal) return [...out, ...this.goalNotice(msg.uuid ?? msgId, goal)];
+    }
     if (this.historyMode && parent === null && typeof m.stop_reason === 'string') this.replyEnded = m.stop_reason !== 'tool_use';
     if (msg.error) {
       out.push(
@@ -900,10 +950,13 @@ export class Itemizer {
     }
     if (msg.uuid && this.echoUuids.has(msg.uuid)) return out;
     if (msg.isReplay) return out;
+    if (parent === null && isWakeup(msg)) return this.wakeup(msg);
     let inputs = userContentToInputs(content);
     if (inputs.length === 0) return out;
     const id: string = msg.uuid ?? `user_${++this.fallbackCounter}`;
     const firstText = inputs[0]?.type === 'text' ? inputs[0].text : '';
+    // A /goal's harness talking to the model (its Stop hook's feedback, its brief), never the chat's.
+    if (parent === null && msg.origin?.kind !== 'human' && isGoalHarness(firstText, this.activeGoal !== undefined)) return out;
     // Transcript conventions for CLI-generated user messages.
     const notification = parseTaskNotification(firstText);
     if (notification) {
@@ -923,11 +976,8 @@ export class Itemizer {
     }
     const stdout = /^<local-command-(stdout|stderr)>([\s\S]*)<\/local-command-\1>\s*$/.exec(firstText);
     if (stdout) return this.notice({ uuid: id }, 'localCommandOutput', stdout[2]!.trim(), stdout[1] === 'stderr' ? 'error' : undefined);
-    const command = /<command-name>([^<]*)<\/command-name>[\s\S]*?(?:<command-args>([\s\S]*?)<\/command-args>)?/.exec(firstText);
-    if (command) {
-      const name = command[1]!.trim();
-      inputs = [{ type: 'text', text: `${name.startsWith('/') ? name : '/' + name}${command[2]?.trim() ? ' ' + command[2].trim() : ''}` }];
-    }
+    const command = slashCommand(firstText);
+    if (command) inputs = [{ type: 'text', text: command }];
     let originKind: string | undefined = msg.origin?.kind;
     let originName: string | undefined = originKind === 'peer' && typeof msg.origin?.name === 'string' ? msg.origin.name : undefined;
     const handback = originKind === 'peer' && msg.origin?.handback ? subagentReport(firstText) : undefined;
@@ -973,6 +1023,98 @@ export class Itemizer {
       }),
     );
     return out;
+  }
+
+  /**
+   * Live, a command the CLI took in that Tether didn't send: a scheduled job firing (its prompt is
+   * never echoed). Its turn starts now, named for the command, as history names it from the
+   * prompt's record; the prompt itself is said once read from the transcript (`ingestExtra`).
+   */
+  private onCommandLifecycle(msg: AnyMsg): Emission[] {
+    const uuid = msg.command_uuid;
+    if (msg.state !== 'started' || typeof uuid !== 'string' || this.echoUuids.has(uuid) || this.turn) return [];
+    return this.startTurn(uuid);
+  }
+
+  /**
+   * A scheduled job's prompt, as a quiet line opening the turn it starts (`origin: wakeup`). In
+   * history it starts a turn as a prompt does; live its turn has started already, at the CLI's
+   * command lifecycle, unless it was read too late, when it goes in the turn it ran in.
+   */
+  private wakeup(record: AnyMsg): Emission[] {
+    const id: string = record.uuid;
+    if (typeof id !== 'string' || this.items.has(id)) return [];
+    const out: Emission[] = [];
+    if (this.turn?.id !== id) {
+      if (this.historyMode) {
+        if (this.turn) out.push(...this.closeTurn('completed'));
+        out.push(...this.startTurn(id));
+      } else if (!this.turn && this.lastTurnId !== id) {
+        return [];
+      }
+    }
+    // A dynamic /loop's wakeup fires with the /loop input itself, which may come as the command.
+    const raw = contentToText(record.message?.content).trim();
+    const text = slashCommand(raw) ?? raw;
+    out.push(
+      ...this.addCompleted({
+        type: 'userMessage',
+        id,
+        turnId: this.turn?.id ?? this.lastTurnId,
+        parentToolUseId: null,
+        createdAt: this.stamp(),
+        content: [{ type: 'text', text }],
+        synthetic: true,
+        origin: 'wakeup',
+      }),
+    );
+    return out;
+  }
+
+  /** A local command's output: a /goal set or cleared is the goal's, anything else a plain notice. */
+  private localCommand(msg: AnyMsg, content: string): Emission[] {
+    const command = msg.commandRun?.command ?? msg.local_command_run?.command;
+    const goal = command === undefined || command === 'goal' ? goalFromCommandOutput(content) : undefined;
+    if (goal) return this.goalNotice(msg.uuid, goal);
+    const stdout = /^<local-command-(stdout|stderr)>([\s\S]*)<\/local-command-\1>\s*$/.exec(content);
+    if (stdout) return this.notice(msg, 'localCommandOutput', stdout[2]!.trim(), stdout[1] === 'stderr' ? 'error' : undefined);
+    return this.notice(msg, 'localCommandOutput', content);
+  }
+
+  /** What a /goal's Stop hook found, from the CLI's `goal_status` (its set is the command's own output). */
+  private goalStatus(id: unknown, a: AnyMsg): Emission[] {
+    if (a.sentinel === true) return [];
+    const condition = typeof a.condition === 'string' && a.condition ? a.condition : this.activeGoal;
+    if (!condition) return [];
+    const event: GoalNotice['event'] = a.met === true ? 'met' : a.failed === true ? 'failed' : a.cleared === true ? 'cleared' : 'notMet';
+    return this.goalNotice(id, {
+      condition,
+      event,
+      ...(typeof a.reason === 'string' && a.reason ? { reason: a.reason } : {}),
+      ...(typeof a.iterations === 'number' ? { iterations: a.iterations } : {}),
+      ...(typeof a.durationMs === 'number' ? { durationMs: a.durationMs } : {}),
+    });
+  }
+
+  /**
+   * A /goal's line in the chat: `kind: goal` with what happened. It goes in the running turn, or
+   * the one just ended: a check is written after the reply it judged.
+   */
+  private goalNotice(id: unknown, goal: GoalNotice): Emission[] {
+    this.activeGoal = goal.event === 'set' || goal.event === 'notMet' ? goal.condition : undefined;
+    const itemId = typeof id === 'string' && id ? id : `goal_${++this.fallbackCounter}`;
+    if (this.items.has(itemId)) return [];
+    return this.addCompleted({
+      type: 'notice',
+      id: itemId,
+      turnId: this.turn?.id ?? this.lastTurnId,
+      parentToolUseId: null,
+      createdAt: this.stamp(),
+      kind: 'goal',
+      text: goalText(goal),
+      ...(goal.event === 'failed' ? { level: 'warning' as const } : {}),
+      goal,
+    });
   }
 
   /** The Workflow call an agent works for, by its agent id: from the snapshots, else from disk. */
@@ -1136,6 +1278,7 @@ export class Itemizer {
       method: 'thread/tokenUsage/updated',
       body: { ...result.usage, totalCostUsd: result.totalCostUsd },
     });
+    this.lastTurnId = turn.id;
     this.turn = null;
     this.interruptRequested = false;
     // A finish still waiting for a step of the turn comes after it, as the turn that answers it.
@@ -1177,6 +1320,7 @@ export class Itemizer {
       out.push(...this.addCompleted(t));
     }
     out.push({ method: 'turn/completed', body: { turn: structuredClone(turn) } });
+    this.lastTurnId = turn.id;
     this.turn = null;
     return out;
   }
@@ -1232,4 +1376,61 @@ export function parseTaskNotification(
     ...(result !== undefined ? { result } : {}),
     ...(tag('output-file') ? { outputFile: tag('output-file') } : {}),
   };
+}
+
+/**
+ * A slash command as typed, from the tags the CLI writes it in. The args may come before or after
+ * the name and message tags (a skill's /loop has the message first, a built-in /goal the name).
+ */
+function slashCommand(text: string): string | undefined {
+  const name = /<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim();
+  if (name === undefined) return undefined;
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim();
+  return `${name.startsWith('/') ? name : '/' + name}${args ? ' ' + args : ''}`;
+}
+
+/**
+ * A scheduled job's prompt, as the transcript records it: `turnOrigin: scheduled`, or a wakeup's
+ * `promptSource`, or the dynamic /loop's sentinel.
+ */
+export function isWakeup(record: AnyMsg): boolean {
+  if (record.turnOrigin === 'scheduled') return true;
+  if (record.promptSource === 'loop_wakeup' || record.promptSource === 'schedule_wakeup') return true;
+  return !!record.isMeta && /^\s*<<autonomous-loop/.test(contentToText(record.message?.content));
+}
+
+/**
+ * A /goal's set or clear, from the command's output ("Goal set: <condition>", "Goal cleared:
+ * <condition>"), plain or in `<local-command-stdout>`.
+ */
+export function goalFromCommandOutput(text: string): Pick<GoalNotice, 'event' | 'condition'> | undefined {
+  const plain = text.replace(/^\s*<local-command-stdout>([\s\S]*)<\/local-command-stdout>\s*$/, '$1').trim();
+  const m = /^Goal (set|cleared): ([\s\S]+)$/.exec(plain);
+  if (!m) return undefined;
+  return { event: m[1] === 'set' ? 'set' : 'cleared', condition: m[2]!.trim() };
+}
+
+/**
+ * What a /goal's harness says to the model: its brief when set ("A session-scoped Stop hook is now
+ * active…"), and, while a goal is active, its Stop hook's feedback ("Stop hook feedback:").
+ */
+function isGoalHarness(text: string, goalActive: boolean): boolean {
+  if (/^A session-scoped Stop hook is now active with condition:/.test(text)) return true;
+  return goalActive && /^Stop hook feedback:/.test(text);
+}
+
+/** A goal notice's text, for a client that draws only `text`. */
+function goalText(g: GoalNotice): string {
+  switch (g.event) {
+    case 'set':
+      return `Goal set: ${g.condition}`;
+    case 'met':
+      return 'Goal met';
+    case 'notMet':
+      return 'Goal not met yet';
+    case 'failed':
+      return 'Goal can’t be met';
+    case 'cleared':
+      return 'Goal cleared';
+  }
 }

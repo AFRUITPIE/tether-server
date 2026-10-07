@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Item, Turn } from '../src/protocol/index.ts';
 import { Itemizer, type Emission } from '../src/threads/itemizer.ts';
-import { ingestHistory, QueuedNotifications } from '../src/threads/FollowedThread.ts';
+import { ingestHistory, TranscriptExtras } from '../src/threads/FollowedThread.ts';
 import { readAgentItems, readRunRecord, unframeAgentPrompt, workflowAgentLocator } from '../src/threads/workflows.ts';
 
 /**
@@ -85,7 +85,7 @@ function live(opts: { tasks?: any[]; midTurn?: boolean } = {}) {
 function read(messages: any[], raw: string[] = []) {
   const iz = new Itemizer(() => 1, true);
   iz.locateWorkflowAgent = workflowAgentLocator(SESSION);
-  const queued = new QueuedNotifications();
+  const queued = new TranscriptExtras();
   queued.add(raw);
   ingestHistory(iz, messages, queued);
   iz.closeTurn('completed');
@@ -200,7 +200,7 @@ describe('typo-check, the finish landing mid-turn', () => {
 
   test("an attachment written after its message was read is read on the next pass", () => {
     const iz = new Itemizer(() => 1, true);
-    const queued = new QueuedNotifications();
+    const queued = new TranscriptExtras();
     ingestHistory(iz, [prompt, launch, launchResult, waitCall, waitResult], queued);
     queued.add(queuedLines);
     const out = ingestHistory(iz, [reply], queued);

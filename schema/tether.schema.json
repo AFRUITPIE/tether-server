@@ -3751,6 +3751,12 @@
             "type": "string"
           }
         },
+        "sessionCrons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionCron"
+          }
+        },
         "lastSeq": {
           "type": "integer",
           "minimum": -9007199254740991,
@@ -3788,6 +3794,30 @@
       "required": [
         "name",
         "status"
+      ],
+      "additionalProperties": false
+    },
+    "SessionCron": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "schedule": {
+          "type": "string"
+        },
+        "recurring": {
+          "type": "boolean"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "schedule",
+        "recurring",
+        "prompt"
       ],
       "additionalProperties": false
     },
@@ -4127,7 +4157,7 @@
             },
             "kind": {
               "type": "string",
-              "description": "localCommandOutput | informational | hook | modelFallback | …"
+              "description": "localCommandOutput | informational | hook | modelFallback | goal | …"
             },
             "text": {
               "type": "string"
@@ -4139,6 +4169,9 @@
                 "warning",
                 "error"
               ]
+            },
+            "goal": {
+              "$ref": "#/$defs/GoalNotice"
             }
           },
           "required": [
@@ -4189,6 +4222,41 @@
         "failed",
         "denied",
         "interrupted"
+      ]
+    },
+    "GoalNotice": {
+      "type": "object",
+      "properties": {
+        "condition": {
+          "type": "string"
+        },
+        "event": {
+          "$ref": "#/$defs/GoalEvent"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "iterations": {
+          "type": "number"
+        },
+        "durationMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "condition",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "GoalEvent": {
+      "type": "string",
+      "enum": [
+        "set",
+        "notMet",
+        "met",
+        "failed",
+        "cleared"
       ]
     },
     "Turn": {
