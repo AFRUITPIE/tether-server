@@ -1,6 +1,6 @@
 {
   "name": "tether-server",
-  "version": "0.6.0",
+  "version": "0.5.18",
   "license": "MIT",
   "private": true,
   "type": "module",
