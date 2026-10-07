@@ -1,0 +1,9 @@
+{"type":"launched"}
+{"type":"started","key":"v2:f17f54bb82fb7e079bac40589515de2339213285f414a242bba1c1c4149a985b","agentId":"a94a2c3c8051bd3b2","label":"wait-1","phase":"Wait"}
+{"type":"started","key":"v2:46b360b06d1237738a89cea88e3679083c64daf07a572479e3361381038f9869","agentId":"a7e44f6cd9ebe1b61","label":"wait-2","phase":"Wait"}
+{"type":"started","key":"v2:23081633e88e4d3e53c24ed108cd0eff0174ff1429258a49ac07d937475074a7","agentId":"aedf699f0125cc7a8","label":"wait-3","phase":"Wait"}
+{"type":"result","key":"v2:46b360b06d1237738a89cea88e3679083c64daf07a572479e3361381038f9869","agentId":"a7e44f6cd9ebe1b61","result":"Waiting for sleep to complete...\n\nwaited"}
+{"type":"result","key":"v2:f17f54bb82fb7e079bac40589515de2339213285f414a242bba1c1c4149a985b","agentId":"a94a2c3c8051bd3b2","result":"waited"}
+{"type":"result","key":"v2:23081633e88e4d3e53c24ed108cd0eff0174ff1429258a49ac07d937475074a7","agentId":"aedf699f0125cc7a8","result":"I'm now monitoring for the sleep task to complete. Once it finishes, I'll reply with the required message."}
+{"type":"started","key":"v2:c1d0aa598bcc19ebe965e16256e55d164787d4734503d89aa18394eeb7284cea","agentId":"a28600e7fe0161950","label":"report","phase":"Report"}
+{"type":"result","key":"v2:c1d0aa598bcc19ebe965e16256e55d164787d4734503d89aa18394eeb7284cea","agentId":"a28600e7fe0161950","result":"all waited"}

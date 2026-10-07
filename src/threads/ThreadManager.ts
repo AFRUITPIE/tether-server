@@ -20,9 +20,11 @@ import type { Scheduler } from './Scheduler.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { createWorktree, removeWorktree, worktreeName } from '../server/fsApi.ts';
 import { Itemizer } from './itemizer.ts';
-import { FollowedThread, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
+import { FollowedThread, ingestHistory, QueuedNotifications, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
 import { LiveThread, TETHER_VERSION, type LiveThreadOptions } from './LiveThread.ts';
 import { PushQueue } from './pushQueue.ts';
+import { isSafeId, readAgentItems, readRunJournal, readRunRecord, sessionDirSync, workflowAgentLocator } from './workflows.ts';
+import type { WorkflowSnapshot } from '../protocol/index.ts';
 
 const IDLE_EVICT_MS = Number(process.env.TETHER_IDLE_EVICT_MS ?? 30 * 60_000);
 /** How long a scheduled run waits, with nobody watching, for a person to answer before it's denied. */
@@ -140,6 +142,7 @@ export class ThreadManager {
       claude,
       env: { ...env, ...(p.env ?? {}) },
       mode: 'new',
+      log: this.log,
       ...extra,
       onExit: (lt) => this.onExit(lt),
     });
@@ -216,6 +219,7 @@ export class ThreadManager {
         ...(p.generateTitle ? { generateTitle: true } : {}),
         ...settings,
         title: info.customTitle ?? info.summary,
+        log: this.log,
         onExit: (lt) => this.onExit(lt),
       });
       this.threads.set(p.threadId, t);
@@ -534,9 +538,42 @@ export class ThreadManager {
   private async readStored(threadId: string, cwd?: string) {
     const msgs = await getSessionMessages(threadId, { ...(cwd ? { dir: cwd } : {}), includeSystemMessages: true });
     const iz = new Itemizer(Date.now, true);
-    for (const m of msgs) iz.ingest(m as any);
+    iz.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(threadId));
+    const dir = sessionDirSync(threadId);
+    const queued = new QueuedNotifications();
+    if (dir) await queued.readFile(`${dir}.jsonl`);
+    ingestHistory(iz, msgs, queued);
     iz.closeTurn('completed');
     return iz.snapshot();
+  }
+
+  // ---------- dynamic workflows ----------
+
+  /**
+   * A workflow run of the thread: the live thread's own snapshot while it has one (with the run
+   * record's result or error once there is one), else the CLI's run record, else its journal,
+   * whose status is unknown.
+   */
+  async readWorkflow(threadId: string, runId: string): Promise<WorkflowSnapshot | null> {
+    if (!isSafeId(threadId) || !isSafeId(runId)) throw new RpcError(ErrorCodes.invalidParams, 'invalid thread or run id');
+    const live = this.loaded(threadId)?.workflowByRun(runId);
+    const dir = sessionDirSync(threadId);
+    const record = dir ? await readRunRecord(dir, runId) : undefined;
+    if (live)
+      return {
+        ...live,
+        ...(record?.result && !live.result ? { result: record.result } : {}),
+        ...(record?.error && !live.error ? { error: record.error } : {}),
+      };
+    if (record) return record;
+    return (dir ? await readRunJournal(dir, runId) : undefined) ?? null;
+  }
+
+  async workflowAgentItems(threadId: string, runId: string, agentId: string): Promise<Item[]> {
+    if (!isSafeId(threadId) || !isSafeId(runId) || !isSafeId(agentId))
+      throw new RpcError(ErrorCodes.invalidParams, 'invalid thread, run or agent id');
+    const dir = sessionDirSync(threadId);
+    return dir ? readAgentItems(dir, runId, agentId) : [];
   }
 
   async fork(threadId: string, atMessageId?: string, title?: string) {

@@ -16,7 +16,7 @@ import {
   ThreadSummary,
   UserInput,
 } from './common.ts';
-import { Item, Turn } from './items.ts';
+import { Item, Turn, WorkflowSnapshot } from './items.ts';
 
 const Empty = z.object({});
 /** The scopes `claude plugin` takes. Inlined, so each method's params keep a nested `Scope` in Swift. */
@@ -289,6 +289,20 @@ export const Methods = {
   'task/background': {
     params: z.object({ threadId: z.string(), toolUseId: z.string().optional() }),
     result: z.object({ backgrounded: z.boolean() }),
+  },
+
+  /**
+   * A dynamic workflow run of the thread, by its run id: the live thread's own while it runs here,
+   * else the CLI's run record, else what its journal says of a run still going. Null when none is found.
+   */
+  'workflow/read': {
+    params: z.object({ threadId: z.string(), runId: z.string() }),
+    result: z.object({ workflow: WorkflowSnapshot.nullable() }),
+  },
+  /** One workflow agent's transcript, itemized as history is. Empty while it hasn't written one. */
+  'workflow/agentItems': {
+    params: z.object({ threadId: z.string(), runId: z.string(), agentId: z.string() }),
+    result: z.object({ items: z.array(Item) }),
   },
 
   'mcp/status': { params: ThreadRef, result: z.object({ servers: z.array(McpServerStatus) }) },

@@ -1307,6 +1307,80 @@
         "additionalProperties": false
       }
     },
+    "workflow/read": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "threadId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId",
+          "runId"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "workflow": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorkflowSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "workflow"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "workflow/agentItems": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "threadId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId",
+          "runId",
+          "agentId"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Item"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      }
+    },
     "mcp/status": {
       "params": {
         "type": "object",
@@ -2452,6 +2526,21 @@
           "type": "string"
         },
         "summary": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "workflow": {
+          "$ref": "#/$defs/WorkflowSnapshot"
+        },
+        "ownedBySubagent": {
+          "type": "boolean"
+        },
+        "workflowToolUseId": {
+          "type": "string"
+        },
+        "workflowAgentId": {
           "type": "string"
         },
         "data": {
@@ -4257,6 +4346,148 @@
         "cacheReadInputTokens",
         "cacheCreationInputTokens",
         "costUsd"
+      ],
+      "additionalProperties": false
+    },
+    "WorkflowSnapshot": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "activity": {
+          "type": "string"
+        },
+        "phases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkflowPhase"
+          }
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkflowAgent"
+          }
+        },
+        "totalTokens": {
+          "type": "number"
+        },
+        "toolUses": {
+          "type": "number"
+        },
+        "durationMs": {
+          "type": "number"
+        },
+        "result": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "phases",
+        "agents"
+      ],
+      "additionalProperties": false
+    },
+    "WorkflowPhase": {
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "number"
+        },
+        "title": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "WorkflowAgent": {
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "number"
+        },
+        "label": {
+          "type": "string"
+        },
+        "phaseIndex": {
+          "type": "number"
+        },
+        "phaseTitle": {
+          "type": "string"
+        },
+        "agentId": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "skipped": {
+          "type": "boolean"
+        },
+        "cached": {
+          "type": "boolean"
+        },
+        "blocked": {
+          "type": "boolean"
+        },
+        "queuedAt": {
+          "type": "number"
+        },
+        "startedAt": {
+          "type": "number"
+        },
+        "durationMs": {
+          "type": "number"
+        },
+        "tokens": {
+          "type": "number"
+        },
+        "toolCalls": {
+          "type": "number"
+        },
+        "lastToolName": {
+          "type": "string"
+        },
+        "lastToolSummary": {
+          "type": "string"
+        },
+        "promptPreview": {
+          "type": "string"
+        },
+        "resultPreview": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "label",
+        "state"
       ],
       "additionalProperties": false
     },

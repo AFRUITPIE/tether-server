@@ -26,6 +26,7 @@ import type { NotificationBody, NotificationName } from '../protocol/notificatio
 import type { ServerRequestName, ServerRequestParams, ServerRequestResult } from '../protocol/serverRequests.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { Itemizer, type Emission } from './itemizer.ts';
+import { runResultReader, sessionDirSync, workflowAgentLocator, workflowCallLocator } from './workflows.ts';
 import { PushQueue } from './pushQueue.ts';
 import { replayGap, seqOrigin } from './seq.ts';
 import pkg from '../../package.json' with { type: 'json' };
@@ -110,7 +111,15 @@ export type LiveThreadOptions = {
   /** Set for a scheduled run, which nobody is there to answer. */
   unattended?: Unattended;
   stderr?: (text: string) => void;
+  /** The daemon's log. */
+  log?: (msg: string) => void;
 };
+
+/**
+ * Logs every raw `task_*` message: what the CLI reports of background tasks and workflows isn't
+ * documented, and this is how to see it. `TETHER_DEBUG_TASKS=1` in the daemon's environment.
+ */
+const DEBUG_TASKS = !!process.env.TETHER_DEBUG_TASKS;
 
 const MAX_BUFFERED_EVENTS = 20_000;
 
@@ -175,6 +184,15 @@ export class LiveThread {
     if (opts.effort) this.info.effort = opts.effort;
     if (opts.permissionMode) this.info.permissionMode = opts.permissionMode;
     if (opts.title) this.info.title = opts.title;
+    // Found on disk only for an agent the CLI hasn't reported yet; the session's folder may not exist until then.
+    this.itemizer.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(this.id));
+    this.itemizer.locateWorkflowCall = workflowCallLocator(() => sessionDirSync(this.id));
+    this.itemizer.readRunResult = runResultReader(() => sessionDirSync(this.id));
+  }
+
+  /** A dynamic workflow this thread is running or ran while loaded, by its run id. */
+  workflowByRun(runId: string) {
+    return this.itemizer.workflowByRun(runId);
   }
 
   // ---------- lifecycle ----------
@@ -318,6 +336,8 @@ export class LiveThread {
   private onMessage(msg: SDKMessage) {
     this.lastActivityAt = Date.now();
     const m = msg as any;
+    if (DEBUG_TASKS && m.type === 'system' && typeof m.subtype === 'string' && m.subtype.startsWith('task_'))
+      this.opts.log?.(`thread ${this.id} ${m.subtype}: ${JSON.stringify(m)}`);
     if (m.type === 'system') {
       if (m.subtype === 'init') {
         Object.assign(this.info, {
