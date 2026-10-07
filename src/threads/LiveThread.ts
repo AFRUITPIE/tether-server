@@ -120,6 +120,8 @@ export type LiveThreadOptions = {
  * documented, and this is how to see it. `TETHER_DEBUG_TASKS=1` in the daemon's environment.
  */
 const DEBUG_TASKS = !!process.env.TETHER_DEBUG_TASKS;
+/** \`TETHER_DEBUG_MESSAGES=1\`: every SDK message but streamed deltas, for capturing what a feature sends. */
+const DEBUG_MESSAGES = !!process.env.TETHER_DEBUG_MESSAGES;
 
 const MAX_BUFFERED_EVENTS = 20_000;
 
@@ -338,6 +340,8 @@ export class LiveThread {
     const m = msg as any;
     if (DEBUG_TASKS && m.type === 'system' && typeof m.subtype === 'string' && m.subtype.startsWith('task_'))
       this.opts.log?.(`thread ${this.id} ${m.subtype}: ${JSON.stringify(m)}`);
+    else if (DEBUG_MESSAGES && m.type !== 'stream_event')
+      this.opts.log?.(`thread ${this.id} message ${m.type}${m.subtype ? '/' + m.subtype : ''}: ${JSON.stringify(m).slice(0, 4000)}`);
     if (m.type === 'system') {
       if (m.subtype === 'init') {
         Object.assign(this.info, {
