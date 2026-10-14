@@ -107,7 +107,17 @@ describe('itemizer: a background agent hands back its report', () => {
     expect(items.some((i) => i.type === 'notice')).toBe(false);
   });
 
-  test("a notice never shows the CLI's note to the model", () => {
+  // The CLI writes the notification before the hand-back: the report was still shown with an
+  // "Agent … finished" notice above it.
+  test('the report alone when the notification comes first', () => {
+    const iz = new Itemizer(Date.now, true);
+    for (const m of [...launch, notification, handback]) iz.ingest(m);
+    const { items } = iz.snapshot();
+    expect(items.some((i) => i.type === 'notice')).toBe(false);
+    expect(items.find((i) => i.type === 'userMessage' && i.id === 'h1')).toMatchObject({ origin: 'subagent', originName: '5 second timer' });
+  });
+
+  test("live, the CLI's note to the model is no notice: the report that follows says it", () => {
     const iz = new Itemizer(Date.now);
     iz.beginUserTurn('p1', [{ type: 'text', text: 'Run an agent' }], false);
     for (const m of launch.slice(1)) iz.ingest(m);
@@ -120,7 +130,28 @@ describe('itemizer: a background agent hands back its report', () => {
       status: 'completed',
       summary: 'This agent\'s report was delivered to you as a message from "abc123" (its SubagentHandback call).',
     });
-    const notice = iz.snapshot().items.find((i) => i.type === 'notice');
-    expect(notice).toMatchObject({ kind: 'taskNotification', text: 'Agent "5 second timer" finished' });
+    iz.ingest(handback);
+    const { items } = iz.snapshot();
+    expect(items.some((i) => i.type === 'notice')).toBe(false);
+    expect(items.some((i) => i.type === 'userMessage' && i.id === 'h1')).toBe(true);
+  });
+
+  test('an agent whose report comes with its notification still gets a notice', () => {
+    const iz = new Itemizer(Date.now, true);
+    const plain = { ...notification, message: { role: 'user', content: notification.message.content.replace(/<result>[\s\S]*<\/result>/, '<result>done</result>') } };
+    for (const m of [...launch, plain]) iz.ingest(m);
+    expect(iz.snapshot().items.find((i) => i.type === 'notice')).toMatchObject({ text: 'Agent "5 second timer" finished' });
+  });
+});
+
+describe('itemizer: a local command', () => {
+  test("its caveat to the model is no message, and its output loses the terminal's styling", () => {
+    const iz = new Itemizer(Date.now, true);
+    iz.ingest({ type: 'user', uuid: 'c1', origin: { kind: 'human' }, message: { role: 'user', content: '<command-name>/config</command-name>\n<command-message>config</command-message>\n<command-args></command-args>' } });
+    iz.ingest({ type: 'user', uuid: 'c2', isMeta: true, message: { role: 'user', content: '<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request.</local-command-caveat>' } });
+    iz.ingest({ type: 'user', uuid: 'c3', message: { role: 'user', content: '<local-command-stdout>Set workflows to \x1b[1mon\x1b[22m</local-command-stdout>' } });
+    const { items } = iz.snapshot();
+    expect(items.some((i) => i.id === 'c2')).toBe(false);
+    expect(items.find((i) => i.id === 'c3')).toMatchObject({ type: 'notice', kind: 'localCommandOutput', text: 'Set workflows to on' });
   });
 });
