@@ -600,14 +600,40 @@ type Snapshot = { items: Item[]; turns: Turn[] };
 
 /**
  * A live thread's transcript: what was on disk when it loaded, then what it has done since. Where
- * both have an item the live one wins, since the stored copy can predate its tool result. A stored
- * turn no item belongs to any more is dropped: the transcript splits a message sent mid-turn into a
- * turn of its own, where the live thread (and so the item) keeps it in the turn it steered.
+ * both have an item the live one wins, since the stored copy can predate its tool result. An item
+ * only the live thread has goes after the one it followed there, not at the end: the transcript on
+ * disk leaves some out (a skill's instructions, which Claude Code writes as a meta message right
+ * after the Skill call), and appended they came after the turn's reply, where the app couldn't tell
+ * them from a message. A stored turn no item belongs to any more is dropped: the transcript splits a
+ * message sent mid-turn into a turn of its own, where the live thread (and so the item) keeps it in
+ * the turn it steered.
  */
 export function mergeHistory(stored: Snapshot, live: Snapshot): Snapshot {
   const liveById = new Map(live.items.map((i) => [i.id, i]));
   const storedIds = new Set(stored.items.map((i) => i.id));
-  const items = [...stored.items.map((i) => liveById.get(i.id) ?? i), ...live.items.filter((i) => !storedIds.has(i.id))];
+  // The live-only items that follow each item (null: the first).
+  const following = new Map<string | null, Item[]>();
+  let previous: string | null = null;
+  for (const item of live.items) {
+    if (!storedIds.has(item.id)) following.set(previous, [...(following.get(previous) ?? []), item]);
+    previous = item.id;
+  }
+  const items: Item[] = [];
+  const pending: Item[] = [...(following.get(null) ?? [])].reverse();
+  const place = () => {
+    while (pending.length) {
+      const item = pending.pop()!;
+      items.push(item);
+      pending.push(...[...(following.get(item.id) ?? [])].reverse());
+    }
+  };
+  place();
+  for (const s of stored.items) {
+    const item = liveById.get(s.id) ?? s;
+    items.push(item);
+    pending.push(...[...(following.get(item.id) ?? [])].reverse());
+    place();
+  }
   const used = new Set(items.map((i) => i.turnId));
   const liveTurns = new Set(live.turns.map((t) => t.id));
   const turns = [...stored.turns.filter((t) => !liveTurns.has(t.id) && used.has(t.id)), ...live.turns];
