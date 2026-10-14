@@ -10,6 +10,7 @@ import type { NotificationBody, NotificationName } from '../protocol/notificatio
 import { isWakeup, Itemizer, type Emission } from './itemizer.ts';
 import type { Subscriber } from './LiveThread.ts';
 import { replayGap, seqOrigin } from './seq.ts';
+import { readSessionHistory } from './history.ts';
 import { sessionDirSync, workflowAgentLocator } from './workflows.ts';
 
 const MAX_BUFFERED_EVENTS = 2000;
@@ -61,9 +62,11 @@ export class FollowedThread implements WatchableThread {
     this.path = await transcriptPath(this.id);
     // The file first: a notification it holds is read with the message it follows.
     if (this.path) await this.queued.readFile(this.path);
-    const msgs = await getSessionMessages(this.id, { dir: this.cwd, includeSystemMessages: true });
+    // From the chat's start, across compactions; `ingested` counts the last segment's, which is
+    // what getSessionMessages' offset counts.
+    const { messages: msgs, tail } = await readSessionHistory(this.id, this.cwd, this.path);
     ingestHistory(this.itemizer, msgs, this.queued);
-    this.ingested = msgs.length;
+    this.ingested = tail;
     await this.readSettings();
     await this.watchFile();
   }
@@ -205,7 +208,8 @@ export class FollowedThread implements WatchableThread {
  * flattening of the cwd, so the id is looked for rather than the path derived.
  */
 export async function transcriptPath(threadId: string): Promise<string | undefined> {
-  const root = join(homedir(), '.claude', 'projects');
+  // CLAUDE_CONFIG_DIR, else ~/.claude, as the CLI and the SDK look.
+  const root = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects');
   let dirs;
   try {
     dirs = await readdir(root, { withFileTypes: true });

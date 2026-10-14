@@ -993,7 +993,8 @@ export class Itemizer {
     if (stdout) return this.notice({ uuid: id }, 'localCommandOutput', stdout[2]!.replace(/\x1b\[[0-9;]*m/g, '').trim(), stdout[1] === 'stderr' ? 'error' : undefined);
     const command = slashCommand(firstText);
     if (command) inputs = [{ type: 'text', text: command }];
-    let originKind: string | undefined = msg.origin?.kind;
+    // The summary Claude Code writes when it compacts the chat: its, not the person's.
+    let originKind: string | undefined = msg.isCompactSummary === true ? 'compaction' : msg.origin?.kind;
     let originName: string | undefined = originKind === 'peer' && typeof msg.origin?.name === 'string' ? msg.origin.name : undefined;
     const handback = originKind === 'peer' && msg.origin?.handback ? subagentReport(firstText) : undefined;
     // A workflow's agent can message the session; that belongs under its workflow, not in the chat.

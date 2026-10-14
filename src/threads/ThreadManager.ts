@@ -2,7 +2,6 @@ import {
   deleteSession,
   forkSession,
   getSessionInfo,
-  getSessionMessages,
   listSessions,
   query,
   renameSession,
@@ -22,6 +21,7 @@ import { createWorktree, removeWorktree, worktreeName } from '../server/fsApi.ts
 import { Itemizer } from './itemizer.ts';
 import { FollowedThread, ingestHistory, TranscriptExtras, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
 import { LiveThread, TETHER_VERSION, type LiveThreadOptions } from './LiveThread.ts';
+import { readSessionHistory } from './history.ts';
 import { PushQueue } from './pushQueue.ts';
 import { isSafeId, readAgentItems, readRunJournal, readRunRecord, sessionDirSync, workflowAgentLocator } from './workflows.ts';
 import type { WorkflowSnapshot } from '../protocol/index.ts';
@@ -536,10 +536,11 @@ export class ThreadManager {
   };
 
   private async readStored(threadId: string, cwd?: string) {
-    const msgs = await getSessionMessages(threadId, { ...(cwd ? { dir: cwd } : {}), includeSystemMessages: true });
+    const dir = sessionDirSync(threadId);
+    // From the chat's start, across compactions.
+    const { messages: msgs } = await readSessionHistory(threadId, cwd, dir ? `${dir}.jsonl` : undefined);
     const iz = new Itemizer(Date.now, true);
     iz.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(threadId));
-    const dir = sessionDirSync(threadId);
     const queued = new TranscriptExtras();
     if (dir) await queued.readFile(`${dir}.jsonl`);
     ingestHistory(iz, msgs, queued);
