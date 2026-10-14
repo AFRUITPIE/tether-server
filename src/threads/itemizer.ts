@@ -429,6 +429,7 @@ export class Itemizer {
         if (this.ownedTasks.has(msg.task_id) || !this.worthANotice(msg)) return events;
         if (workflow)
           return [...events, ...this.workflowFinished({ taskId: msg.task_id, toolUseId: msg.tool_use_id, status: msg.status, summary: msg.summary }, 'event')];
+        if (reportFollows(msg.summary, msg.result)) return [...events, ...this.reportComing(msg.task_id)];
         return [...events, ...this.taskNotice(msg.task_id, msg.status, msg.summary, msg.uuid)];
       }
       case 'task_started':
@@ -613,11 +614,21 @@ export class Itemizer {
   }
 
   /**
-   * What a settled task says: its summary, unless that is the CLI's note to the model (an agent's
-   * "report was delivered to you as a message"), which a reader shouldn't see.
+   * A background agent whose report the CLI hands back as a message of its own: that message is
+   * its line, so the task gets no notice. The CLI says so before the message comes (the
+   * notification's result or summary), so the notice can't wait to be dropped when it arrives.
+   */
+  private reportComing(taskId: string | undefined): Emission[] {
+    if (taskId) this.notifiedTasks.add(taskId);
+    return [];
+  }
+
+  /**
+   * What a settled task says: its summary (never the CLI's note that a report was delivered as a
+   * message, which gets no notice), else the agent's own line.
    */
   private noticeText(taskId: string | undefined, status: string | undefined, summary: string | undefined): string {
-    if (summary && !/delivered to you as a message/.test(summary)) return summary;
+    if (summary) return summary;
     const call = taskId ? this.toolItems.get(this.taskTools.get(taskId) ?? '') : undefined;
     const description = (call?.input as AnyMsg)?.description;
     const verb = status === 'failed' ? 'failed' : status === 'killed' || status === 'stopped' ? 'stopped' : 'finished';
@@ -964,8 +975,11 @@ export class Itemizer {
       if (this.isWorkflowTask(notification.taskId, notification.toolUseId))
         return this.workflowFinished(notification, 'message', id, msg.timestamp ? Date.parse(msg.timestamp) : undefined);
       if (!this.worthANotice({ tool_use_id: notification.toolUseId })) return out;
+      if (reportFollows(notification.summary, notification.result)) return this.reportComing(notification.taskId);
       return this.taskNotice(notification.taskId, notification.status, notification.summary, id);
     }
+    // Claude Code's note to the model before a command's output, never a message to show.
+    if (/^\s*<local-command-caveat>/.test(firstText)) return out;
     if (firstText.startsWith('[Request interrupted')) {
       // Nothing more of the turn follows an interrupt: live, its result comes next and ends it.
       if (this.historyMode) {
@@ -975,10 +989,12 @@ export class Itemizer {
       return this.notice({ uuid: id }, 'interrupted', firstText);
     }
     const stdout = /^<local-command-(stdout|stderr)>([\s\S]*)<\/local-command-\1>\s*$/.exec(firstText);
-    if (stdout) return this.notice({ uuid: id }, 'localCommandOutput', stdout[2]!.trim(), stdout[1] === 'stderr' ? 'error' : undefined);
+    // Without the terminal's styling ("Set workflows to \x1b[1mon\x1b[22m").
+    if (stdout) return this.notice({ uuid: id }, 'localCommandOutput', stdout[2]!.replace(/\x1b\[[0-9;]*m/g, '').trim(), stdout[1] === 'stderr' ? 'error' : undefined);
     const command = slashCommand(firstText);
     if (command) inputs = [{ type: 'text', text: command }];
-    let originKind: string | undefined = msg.origin?.kind;
+    // The summary Claude Code writes when it compacts the chat: its, not the person's.
+    let originKind: string | undefined = msg.isCompactSummary === true ? 'compaction' : msg.origin?.kind;
     let originName: string | undefined = originKind === 'peer' && typeof msg.origin?.name === 'string' ? msg.origin.name : undefined;
     const handback = originKind === 'peer' && msg.origin?.handback ? subagentReport(firstText) : undefined;
     // A workflow's agent can message the session; that belongs under its workflow, not in the chat.
@@ -1331,6 +1347,12 @@ export class Itemizer {
       turns: this.turns.map((t) => structuredClone(t)),
     };
   }
+}
+
+/** Whether a settled task's notification says its report was delivered as a message of its own. */
+function reportFollows(summary: unknown, result: unknown): boolean {
+  const note = /delivered to you as a message/;
+  return (typeof summary === 'string' && note.test(summary)) || (typeof result === 'string' && note.test(result));
 }
 
 /**

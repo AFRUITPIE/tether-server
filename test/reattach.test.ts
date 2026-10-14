@@ -276,6 +276,16 @@ describe('merging stored and live history', () => {
     expect(merged.items.map((i) => [i.id, i.turnId])).toEqual([['a', 'a'], ['b', 'a']]);
     expect(merged.turns.map((t) => t.id)).toEqual(['a', 'x']);
   });
+
+  test("an item only the live thread has stays where it was, not after the turn's reply", () => {
+    // A real session's order: on disk the skill's instructions (a meta message) are left out.
+    const item = (id: string): Item => user(id, 't');
+    const stored = { items: ['prompt', 'skill', 'thinking', 'reply'].map(item), turns: [] } as any;
+    const live = { items: ['prompt', 'skill', 'instructions', 'thinking', 'reply', 'next'].map(item), turns: [] } as any;
+    expect(mergeHistory(stored, live).items.map((i) => i.id)).toEqual(['prompt', 'skill', 'instructions', 'thinking', 'reply', 'next']);
+    // A chat with nothing on disk yet is the live thread's, in its order.
+    expect(mergeHistory({ items: [], turns: [] } as any, live).items.map((i) => i.id)).toEqual(live.items.map((i: Item) => i.id));
+  });
 });
 
 describe('a session whose cwd the SDK misses', () => {
