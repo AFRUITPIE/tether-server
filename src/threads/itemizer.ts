@@ -1078,7 +1078,7 @@ export class Itemizer {
     const firstText = inputs[0]?.type === 'text' ? inputs[0].text : '';
     // A skill's instructions, which Claude Code puts in the conversation right after the Skill call:
     // the call's, never a message. The transcript names the call; the stream, by place alone.
-    const skillCall = this.skillCallFor(msg, id, parent);
+    const skillCall = this.skillCallFor(msg, id, parent, firstText);
     if (skillCall) return this.skillInstructions(skillCall, msg);
     // A /goal's harness talking to the model (its Stop hook's feedback, its brief), never the chat's.
     if (parent === null && msg.origin?.kind !== 'human' && isGoalHarness(firstText, this.activeGoal !== undefined)) return out;
@@ -1218,12 +1218,17 @@ export class Itemizer {
   }
 
   /** The Skill call a user message is the instructions of, if it is. */
-  private skillCallFor(msg: AnyMsg, id: string, parent: string | null): string | undefined {
+  private skillCallFor(msg: AnyMsg, id: string, parent: string | null, text: string): string | undefined {
     const named = typeof msg.sourceToolUseID === 'string' ? msg.sourceToolUseID : undefined;
     const known = this.skillMessages.get(id);
     if (known) return known;
-    const synthetic = msg.isSynthetic === true || msg.isMeta === true;
-    const candidate = named ?? (synthetic && msg.origin?.kind !== 'human' ? this.lastItemOf.get(parent) : undefined);
+    // By place, only a plain synthetic message: not another sender's, a notification, an interrupt or a command's output.
+    const sender = msg.origin?.kind;
+    const plain =
+      (msg.isSynthetic === true || msg.isMeta === true) &&
+      !['human', 'peer', 'task-notification', 'channel', 'subagent'].includes(sender) &&
+      !/^\s*(<[a-z-]+>|\[Request interrupted)/.test(text);
+    const candidate = named ?? (plain ? this.lastItemOf.get(parent) : undefined);
     const call = candidate ? this.toolItems.get(candidate) : undefined;
     if (!call || call.kind !== 'skill' || call.parentToolUseId !== parent) return undefined;
     if (!named && call.skillInstructions !== undefined) return undefined;

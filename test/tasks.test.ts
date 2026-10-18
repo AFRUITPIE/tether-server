@@ -137,6 +137,15 @@ describe('skill instructions', () => {
     expect(iz.items.get('other')?.type).toBe('userMessage');
   });
 
+  test("a notification right after a Skill call is still the notification's", () => {
+    const iz = new Itemizer(() => 1);
+    iz.beginUserTurn('u1', [{ type: 'text', text: 'go' }], false);
+    iz.ingest(skillCall);
+    iz.ingest(launched);
+    iz.ingest({ ...body, uuid: 'n1', message: { content: [{ type: 'text', text: '<task-notification>\n<task-id>t9</task-id>\n<status>completed</status>\n<summary>Background command "x" completed</summary>\n</task-notification>' }] } });
+    expect((iz.items.get('skill1') as ToolCallItem).skillInstructions).toBeUndefined();
+  });
+
   test('history reads it from the transcript, which names its call', () => {
     const iz = new Itemizer(() => 1, true);
     const extras = new TranscriptExtras();
