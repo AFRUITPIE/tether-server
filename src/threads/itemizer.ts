@@ -1674,11 +1674,13 @@ export class Itemizer {
     this.tasksDirty = true;
   }
 
+  /**
+   * The items and turns in order, as they are: the itemizer goes on changing them (a streamed
+   * reply grows in place), so what is handed to a client while it runs is copied first
+   * (`ThreadManager.read` copies the page it returns).
+   */
   snapshot(): { items: Item[]; turns: Turn[] } {
-    return {
-      items: this.order.map((id) => structuredClone(this.items.get(id)!)),
-      turns: this.turns.map((t) => structuredClone(t)),
-    };
+    return { items: this.order.map((id) => this.items.get(id)!), turns: this.turns };
   }
 }
 

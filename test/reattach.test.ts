@@ -327,6 +327,37 @@ describe('paging history back', () => {
   });
 });
 
+describe('reading a live thread', () => {
+  test('the page handed out is as of historySeq, though the reply goes on streaming into it', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'tether-live-read-'));
+    const saved = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = home;
+    const mgr = new ThreadManager(claude);
+    try {
+      const id = '5f0c8a52-3f7e-4c1e-9d55-0b7a2f6f1c21';
+      const t = new LiveThread({ threadId: id, cwd: '/tmp', claude, env: {}, mode: 'new' });
+      mgr.threads.set(id, t);
+      const on = (m: object) => (t as any).onMessage(m);
+      t.send([{ type: 'text', text: 'hi' }]);
+      on({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_1' } } });
+      on({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } });
+      const delta = (text: string) => on({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } });
+      delta('Hello');
+      const read = await mgr.read(id, '/tmp', { limit: 10 });
+      delta(', world');
+      const reply = read.items.find((i) => i.type === 'agentMessage') as any;
+      expect(reply.text).toBe('Hello');
+      expect(read.historySeq).toBeLessThan(t.threadInfo().lastSeq);
+      expect((t.history().items.find((i) => i.type === 'agentMessage') as any).text).toBe('Hello, world');
+      t.close();
+    } finally {
+      mgr.shutdown();
+      if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = saved;
+    }
+  });
+});
+
 describe('a session whose cwd the SDK misses', () => {
   test('is read from past a first message too long for the SDK’s look at the head', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'tether-cwd-')), 'session.jsonl');

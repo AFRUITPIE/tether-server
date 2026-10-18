@@ -546,8 +546,7 @@ export class ThreadManager {
         // Snapshot, tasks and seq taken together, so replay after historySeq never duplicates.
         const snap = follower.history();
         return {
-          ...pageOf(snap.items, page),
-          turns: snap.turns,
+          ...copied(pageOf(snap.items, page), snap.turns),
           tasks: this.tasksWith(threadId, follower.tasks(), { stale }),
           historySeq: snap.seq,
           ...(summary ? { summary } : {}),
@@ -566,7 +565,9 @@ export class ThreadManager {
     const liveSnap = live.history();
     const historySeq = live.threadInfo().lastSeq;
     const { items, turns } = mergeHistory(stored, liveSnap);
-    return { ...pageOf(items, page), turns, tasks: this.tasksWith(threadId, stored.tasks, { live }), historySeq, ...(summary ? { summary } : {}) };
+    // What was on disk is never changed; only what the live thread holds is.
+    const changing = new Set<Item | Turn>([...liveSnap.items, ...liveSnap.turns]);
+    return { ...copied(pageOf(items, page), turns, (x) => changing.has(x)), tasks: this.tasksWith(threadId, stored.tasks, { live }), historySeq, ...(summary ? { summary } : {}) };
   }
 
   /**
@@ -744,6 +745,20 @@ export function mergeHistory(stored: Snapshot, live: Snapshot): Snapshot {
   const liveTurns = new Set(live.turns.map((t) => t.id));
   const turns = [...stored.turns.filter((t) => !liveTurns.has(t.id) && used.has(t.id)), ...live.turns];
   return { items, turns };
+}
+
+/**
+ * A page and the turns as they are now, copied: a live thread or a follower goes on changing its
+ * items (a streamed reply grows in place) while the result waits to be written, and what's written
+ * has to be what `historySeq` says. Only the page is copied, not the whole chat.
+ */
+function copied(
+  page: { items: Item[]; hasMore: boolean },
+  turns: Turn[],
+  changing: (x: Item | Turn) => boolean = () => true,
+): { items: Item[]; turns: Turn[]; hasMore: boolean } {
+  const copy = <T extends Item | Turn>(x: T): T => (changing(x) ? structuredClone(x) : x);
+  return { items: page.items.map(copy), turns: turns.map(copy), hasMore: page.hasMore };
 }
 
 /**
