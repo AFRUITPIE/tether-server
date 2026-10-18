@@ -81,7 +81,13 @@ export async function readRecords(path: string, start = 0, opts: { keep?: (line:
   const out: Read = { records: [], sizes: [], end: start };
   let at = opts.midLine && start > 0 ? buf.indexOf(0x0a) + 1 : 0;
   if (at === 0 && opts.midLine && start > 0) return out;
+  let pause = at + YIELD_BYTES;
   for (let nl = buf.indexOf(0x0a, at); nl >= 0; at = nl + 1, nl = buf.indexOf(0x0a, at)) {
+    // A long chat takes a few hundred milliseconds to parse: other threads' streams go on meanwhile.
+    if (at > pause) {
+      await new Promise((resolve) => setImmediate(resolve));
+      pause = at + YIELD_BYTES;
+    }
     if (nl - at < 2 || (opts.keep && !opts.keep(buf.subarray(at, nl)))) continue;
     try {
       const r = JSON.parse(buf.toString('utf8', at, nl));
@@ -96,6 +102,9 @@ export async function readRecords(path: string, start = 0, opts: { keep?: (line:
   out.end = start + at;
   return out;
 }
+
+/** How much is parsed before letting the event loop run. */
+const YIELD_BYTES = 4 * 1024 * 1024;
 
 /** A line holding one of these strings (as JSON writes them): a cheap look before parsing it. */
 const holding = (needles: string[]) => {

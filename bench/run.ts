@@ -91,6 +91,27 @@ function record(name: string, values: Record<string, number | string>) {
   console.log(`${name.padEnd(28)} ${shown.join('  ')}`);
 }
 
+/**
+ * The longest the event loop was held up while `f` ran: how long another thread's stream (or a
+ * client's request) would wait behind it.
+ */
+async function longestStall<T>(f: () => Promise<T>): Promise<{ value: T; stallMs: number }> {
+  let last = now();
+  let worst = 0;
+  const tick = setInterval(() => {
+    const t = now();
+    worst = Math.max(worst, t - last);
+    last = t;
+  }, 1);
+  try {
+    const value = await f();
+    worst = Math.max(worst, now() - last);
+    return { value, stallMs: worst };
+  } finally {
+    clearInterval(tick);
+  }
+}
+
 /** A sink that drops what it's sent, as fast as a socket that never pushes back. */
 const sink = () =>
   new Writable({
@@ -274,7 +295,8 @@ async function benchHistory() {
     const mgr = new ThreadManager(claude);
     const h0 = heapMB();
     let t0 = now();
-    let r = await mgr.read(t.id, t.cwd, { limit: 50 });
+    const opened = await longestStall(() => mgr.read(t.id, t.cwd, { limit: 50 }));
+    let r = opened.value;
     const open = now() - t0;
     const openPeak = peakRssMB();
     const held = heapMB() - h0;
@@ -316,6 +338,7 @@ async function benchHistory() {
       items: total,
       tasks: stored.tasks.length,
       openMs: open,
+      openStallMs: opened.stallMs,
       reopenMs: reopen,
       pageMs: median(pages),
       pages: pages.length,
