@@ -20,60 +20,42 @@ export type Emission = { [N in NotificationName]: { method: N; body: Notificatio
 
 type AnyMsg = Record<string, any>;
 
+/** Each built-in tool's kind; an MCP tool's is `mcp`, anything else `other`. */
+const TOOL_KINDS: Record<string, ToolKind> = {
+  Bash: 'bash',
+  Read: 'fileRead',
+  Write: 'fileWrite',
+  Edit: 'fileEdit',
+  MultiEdit: 'fileEdit',
+  NotebookEdit: 'notebookEdit',
+  Grep: 'grep',
+  Glob: 'glob',
+  WebFetch: 'webFetch',
+  WebSearch: 'webSearch',
+  Task: 'subagent',
+  Agent: 'subagent',
+  TodoWrite: 'todoWrite',
+  TaskCreate: 'task',
+  TaskUpdate: 'task',
+  TaskGet: 'task',
+  TaskList: 'task',
+  TaskStop: 'task',
+  AskUserQuestion: 'askUserQuestion',
+  ExitPlanMode: 'exitPlanMode',
+  EnterPlanMode: 'enterPlanMode',
+  Skill: 'skill',
+  Monitor: 'monitor',
+  CronCreate: 'schedule',
+  CronDelete: 'schedule',
+  CronList: 'schedule',
+  ScheduleWakeup: 'schedule',
+  EnterWorktree: 'worktree',
+  ExitWorktree: 'worktree',
+};
+
 export function toolKind(name: string): ToolKind {
   if (name.startsWith('mcp__')) return 'mcp';
-  switch (name) {
-    case 'Bash':
-      return 'bash';
-    case 'Read':
-      return 'fileRead';
-    case 'Write':
-      return 'fileWrite';
-    case 'Edit':
-    case 'MultiEdit':
-      return 'fileEdit';
-    case 'NotebookEdit':
-      return 'notebookEdit';
-    case 'Grep':
-      return 'grep';
-    case 'Glob':
-      return 'glob';
-    case 'WebFetch':
-      return 'webFetch';
-    case 'WebSearch':
-      return 'webSearch';
-    case 'Task':
-    case 'Agent':
-      return 'subagent';
-    case 'TodoWrite':
-      return 'todoWrite';
-    case 'TaskCreate':
-    case 'TaskUpdate':
-    case 'TaskGet':
-    case 'TaskList':
-    case 'TaskStop':
-      return 'task';
-    case 'AskUserQuestion':
-      return 'askUserQuestion';
-    case 'ExitPlanMode':
-      return 'exitPlanMode';
-    case 'EnterPlanMode':
-      return 'enterPlanMode';
-    case 'Skill':
-      return 'skill';
-    case 'Monitor':
-      return 'monitor';
-    case 'CronCreate':
-    case 'CronDelete':
-    case 'CronList':
-    case 'ScheduleWakeup':
-      return 'schedule';
-    case 'EnterWorktree':
-    case 'ExitWorktree':
-      return 'worktree';
-    default:
-      return 'other';
-  }
+  return Object.hasOwn(TOOL_KINDS, name) ? TOOL_KINDS[name]! : 'other';
 }
 
 function contentToText(content: unknown): string {
@@ -303,7 +285,7 @@ export class Itemizer {
    * which getSessionMessages drops, so history reads it from the file (`TranscriptExtras`).
    * Only a workflow's is read, for its finish to land where it did live.
    */
-  ingestQueued(record: AnyMsg): Emission[] {
+  private ingestQueued(record: AnyMsg): Emission[] {
     const prompt = record.attachment?.prompt;
     const n = typeof prompt === 'string' ? parseTaskNotification(prompt) : undefined;
     if (!n || !this.isWorkflowTask(n.taskId, n.toolUseId)) return [];
@@ -1496,7 +1478,7 @@ export class Itemizer {
     return this.withTasks(out);
   }
 
-  abandonTurn(status: 'completed' | 'interrupted' | 'failed' = 'interrupted'): Emission[] {
+  private abandonTurn(status: 'completed' | 'interrupted' | 'failed' = 'interrupted'): Emission[] {
     if (!this.turn) return [];
     // The process may be gone: a finish waiting for the turn's next step goes in it now.
     const flushed = this.flushFinishes();

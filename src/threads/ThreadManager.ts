@@ -546,39 +546,17 @@ export class ThreadManager {
     page?: { limit?: number; before?: string },
   ): Promise<{ items: Item[]; turns: Turn[]; tasks: TaskState[]; summary?: ThreadSummary; historySeq?: number; hasMore?: boolean }> {
     const info = await sessionInfo(threadId, cwd);
-    const live = this.loaded(threadId);
     const summary = info ? this.summary(info) : undefined;
-    if (!live) {
-      // Follow on read, not subscribe: the seq handed back has to come from the follower that
-      // will replay to the client after it.
-      const follower = this.following(threadId) ?? (await this.follow(threadId, cwd));
-      const stale = await this.transcriptIsStale(threadId);
-      if (follower) {
-        // Snapshot, tasks and seq taken together, so replay after historySeq never duplicates.
-        const snap = follower.history();
-        return {
-          ...copied(pageOf(snap.items, page), snap.turns),
-          tasks: this.tasksWith(threadId, follower.tasks(), { stale }),
-          historySeq: snap.seq,
-          ...(summary ? { summary } : {}),
-        };
-      }
-      const storedOnly = await this.readStored(threadId, cwd);
-      return {
-        ...pageOf(storedOnly.items, page),
-        turns: storedOnly.turns,
-        tasks: this.tasksWith(threadId, storedOnly.tasks, { stale }),
-        ...(summary ? { summary } : {}),
-      };
-    }
-    const stored = await this.storedBeforeLoad(live, cwd);
-    // Snapshot, tasks and seq are taken together so replay after historySeq never duplicates.
-    const liveSnap = live.history();
-    const historySeq = live.threadInfo().lastSeq;
-    const { items, turns } = mergeHistory(stored, liveSnap);
-    // What was on disk is never changed; only what the live thread holds is.
-    const changing = new Set<Item | Turn>([...liveSnap.items, ...liveSnap.turns]);
-    return { ...copied(pageOf(items, page), turns, (x) => changing.has(x)), tasks: this.tasksWith(threadId, stored.tasks, { live }), historySeq, ...(summary ? { summary } : {}) };
+    // Follow on read, not subscribe: the seq handed back has to come from the follower that will
+    // replay to the client after it.
+    const chat = (await this.chat(threadId, cwd, true))();
+    const { items, turns } = chat.view();
+    return {
+      ...copied(pageOf(items, page), turns, chat.changing),
+      tasks: chat.tasks,
+      ...(chat.historySeq !== undefined ? { historySeq: chat.historySeq } : {}),
+      ...(summary ? { summary } : {}),
+    };
   }
 
   /**
@@ -586,11 +564,41 @@ export class ThreadManager {
    * live thread's or follower's, over what was kept and what its transcript says.
    */
   async tasksOf(t: { id: string }): Promise<TaskState[]> {
-    const live = this.loaded(t.id);
-    if (live) return this.tasksWith(t.id, (await this.storedBeforeLoad(live).catch(() => ({ tasks: [] as TaskState[] }))).tasks, { live });
-    const follower = this.following(t.id);
-    const stale = await this.transcriptIsStale(t.id);
-    return this.tasksWith(t.id, follower ? follower.tasks() : (await this.readStored(t.id)).tasks, { stale });
+    return (await this.chat(t.id, undefined, false))().tasks;
+  }
+
+  /**
+   * A chat as `read` hands it out, once what it needs is read: the live thread's items over what
+   * was on disk when it loaded, else the follower's, else the transcript's. What it returns takes
+   * the items, tasks and seq together, in one step, so replay after `historySeq` never duplicates;
+   * `changing` says which items the thread may still change (and so are copied).
+   */
+  private async chat(threadId: string, cwd: string | undefined, follow: boolean): Promise<() => ChatState> {
+    const live = this.loaded(threadId);
+    if (live) {
+      // A transcript that can't be read leaves the live thread's own (for tasks; a read says why).
+      const stored = await this.storedBeforeLoad(live, cwd).catch((e) => (follow ? Promise.reject(e) : { items: [], turns: [], tasks: [] }));
+      return () => {
+        const snap = live.history();
+        // What was on disk is never changed; only what the live thread holds is.
+        let changing: Set<Item | Turn> | undefined;
+        return {
+          view: () => mergeHistory(stored, snap),
+          changing: (x) => (changing ??= new Set<Item | Turn>([...snap.items, ...snap.turns])).has(x),
+          historySeq: live.threadInfo().lastSeq,
+          tasks: this.tasksWith(threadId, stored.tasks, { live }),
+        };
+      };
+    }
+    const follower = this.following(threadId) ?? (follow ? await this.follow(threadId, cwd) : undefined);
+    const stale = await this.transcriptIsStale(threadId);
+    if (follower)
+      return () => {
+        const snap = follower.history();
+        return { view: () => snap, changing: () => true, historySeq: snap.seq, tasks: this.tasksWith(threadId, follower.tasks(), { stale }) };
+      };
+    const stored = await this.readStored(threadId, cwd);
+    return () => ({ view: () => stored, changing: () => false, tasks: this.tasksWith(threadId, stored.tasks, { stale }) });
   }
 
   /**
@@ -716,6 +724,9 @@ export class ThreadManager {
 }
 
 type Snapshot = { items: Item[]; turns: Turn[] };
+
+/** A chat as `thread/read` and `thread/subscribe` take it (`ThreadManager.chat`). */
+type ChatState = { view: () => Snapshot; changing: (x: Item | Turn) => boolean; historySeq?: number; tasks: TaskState[] };
 
 /**
  * A live thread's transcript: what was on disk when it loaded, then what it has done since. Where
