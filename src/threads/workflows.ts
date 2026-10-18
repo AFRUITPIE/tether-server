@@ -162,27 +162,20 @@ function agentFrom(e: AnyObj): WorkflowAgent | undefined {
  */
 export function mergeWorkflowProgress(snapshot: WorkflowSnapshot, progress: unknown): WorkflowSnapshot {
   if (!Array.isArray(progress)) return snapshot;
-  const phases = [...snapshot.phases];
-  const agents = [...snapshot.agents];
+  const phases = new Map(snapshot.phases.map((p) => [p.index, p]));
+  const agents = new Map(snapshot.agents.map((a) => [a.index, a]));
   for (const e of progress as AnyObj[]) {
     if (e?.type === 'workflow_phase') {
       const p = phaseFrom(e);
-      if (!p) continue;
-      const i = phases.findIndex((x) => x.index === p.index);
       // A progress entry has no detail; the script's meta keeps it.
-      if (i >= 0) phases[i] = { ...phases[i]!, ...p };
-      else phases.push(p);
+      if (p) phases.set(p.index, { ...phases.get(p.index), ...p });
     } else if (e?.type === 'workflow_agent') {
       const a = agentFrom(e);
-      if (!a) continue;
-      const i = agents.findIndex((x) => x.index === a.index);
-      if (i >= 0) agents[i] = a;
-      else agents.push(a);
+      if (a) agents.set(a.index, a);
     }
   }
-  phases.sort((a, b) => a.index - b.index);
-  agents.sort((a, b) => a.index - b.index);
-  return { ...snapshot, phases, agents };
+  const byIndex = (a: { index: number }, b: { index: number }) => a.index - b.index;
+  return { ...snapshot, phases: [...phases.values()].sort(byIndex), agents: [...agents.values()].sort(byIndex) };
 }
 
 /** The value of a string property in a JS object literal's text: `name: 'x'`, `"name": "x"` or `` name: `x` ``. */
@@ -195,8 +188,22 @@ function literal(text: string, key: string): string | undefined {
  * What a workflow script's `export const meta = { name, description, phases }` says. The CLI
  * requires a pure literal, but this reads it with patterns, not by running anything.
  */
-export function scriptMeta(script: unknown): { name?: string; description?: string; phases: WorkflowPhase[] } {
+export function scriptMeta(script: unknown): ScriptMeta {
   if (typeof script !== 'string') return { phases: [] };
+  // Asked of the same few scripts on every task change of a running workflow.
+  let meta = metas.get(script);
+  if (!meta) {
+    meta = readMeta(script);
+    if (metas.size >= 64) metas.delete(metas.keys().next().value!);
+    metas.set(script, meta);
+  }
+  return { ...meta, phases: meta.phases.map((p) => ({ ...p })) };
+}
+
+type ScriptMeta = { name?: string; description?: string; phases: WorkflowPhase[] };
+const metas = new Map<string, ScriptMeta>();
+
+function readMeta(script: string): ScriptMeta {
   const start = script.search(/\bmeta\s*=\s*\{/);
   if (start < 0) return { phases: [] };
   // The meta block ends at the first top-level statement after it; 4 KB is ample for a literal.
