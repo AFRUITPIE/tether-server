@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Item } from '../src/protocol/index.ts';
 import { Itemizer, type Emission } from '../src/threads/itemizer.ts';
-import { ingestHistory, TranscriptExtras } from '../src/threads/FollowedThread.ts';
+import { ingestHistory, TranscriptExtras } from '../src/threads/transcript.ts';
 import { runResultReader, workflowAgentLocator, workflowCallLocator } from '../src/threads/workflows.ts';
 
 /**

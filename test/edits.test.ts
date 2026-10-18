@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ToolCallItem, Turn } from '../src/protocol/index.ts';
-import { ingestHistory, TranscriptExtras } from '../src/threads/FollowedThread.ts';
+import { ingestHistory, TranscriptExtras } from '../src/threads/transcript.ts';
 import { Itemizer, type Emission } from '../src/threads/itemizer.ts';
 import { lineDiffHunk, MAX_LINE_LENGTH, MAX_LINES_PER_FILE } from '../src/server/diff.ts';
 

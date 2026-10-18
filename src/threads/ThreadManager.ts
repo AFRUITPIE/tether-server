@@ -18,12 +18,11 @@ import { PermissionMode, type Item, type Params, type Result, type ScheduledTask
 import type { Scheduler } from './Scheduler.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { createWorktree, removeWorktree, worktreeName } from '../server/fsApi.ts';
-import { Itemizer } from './itemizer.ts';
-import { FollowedThread, ingestHistory, loadWorkflows, TranscriptExtras, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
+import { FollowedThread } from './FollowedThread.ts';
 import { LiveThread, TETHER_VERSION, type LiveThreadOptions } from './LiveThread.ts';
-import { readSessionHistory } from './history.ts';
 import { PushQueue } from './pushQueue.ts';
-import { agentPromptReader, isSafeId, readAgentItems, RECENT_RUN_MS, sessionDirSync, workflowAgentLocator } from './workflows.ts';
+import { readTranscript, sessionDir, transcriptCwd, transcriptFile, transcriptSettings, type SessionSettings } from './transcript.ts';
+import { isSafeId, readAgentItems, RECENT_RUN_MS } from './workflows.ts';
 import { mergeTasks } from './tasks.ts';
 import type { TaskStore } from './taskStore.ts';
 import { stat } from 'node:fs/promises';
@@ -619,10 +618,10 @@ export class ThreadManager {
 
   /** Whether nothing has been written to the chat's transcript for a few minutes, as a session nobody runs. */
   private async transcriptIsStale(threadId: string): Promise<boolean> {
-    const dir = sessionDirSync(threadId);
-    if (!dir) return true;
+    const path = transcriptFile(threadId);
+    if (!path) return true;
     try {
-      return (await stat(`${dir}.jsonl`)).mtimeMs < Date.now() - RECENT_RUN_MS;
+      return (await stat(path)).mtimeMs < Date.now() - RECENT_RUN_MS;
     } catch {
       return true;
     }
@@ -666,20 +665,11 @@ export class ThreadManager {
     },
   };
 
+  /** A chat's transcript as items, from its start, across compactions; its last turn taken as over. */
   private async readStored(threadId: string, cwd?: string) {
-    const dir = sessionDirSync(threadId);
-    // From the chat's start, across compactions.
-    const { messages: msgs } = await readSessionHistory(threadId, cwd, dir ? `${dir}.jsonl` : undefined);
-    const iz = new Itemizer(Date.now, true);
-    iz.taskUpdates = false;
-    iz.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(threadId));
-    iz.readAgentPrompt = agentPromptReader(() => sessionDirSync(threadId));
-    const queued = new TranscriptExtras();
-    if (dir) await queued.readFile(`${dir}.jsonl`);
-    ingestHistory(iz, msgs, queued);
-    iz.closeTurn('completed');
-    await loadWorkflows(iz, dir);
-    return { ...iz.snapshot(), tasks: iz.tasks() };
+    const { itemizer } = await readTranscript(threadId, cwd);
+    itemizer.closeTurn('completed');
+    return { ...itemizer.snapshot(), tasks: itemizer.tasks() };
   }
 
   // ---------- dynamic workflows ----------
@@ -687,7 +677,7 @@ export class ThreadManager {
   async workflowAgentItems(threadId: string, runId: string, agentId: string): Promise<Item[]> {
     if (!isSafeId(threadId) || !isSafeId(runId) || !isSafeId(agentId))
       throw new RpcError(ErrorCodes.invalidParams, 'invalid thread, run or agent id');
-    const dir = sessionDirSync(threadId);
+    const dir = sessionDir(threadId);
     return dir ? readAgentItems(dir, runId, agentId) : [];
   }
 

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Item, Turn } from '../src/protocol/index.ts';
 import { goalFromCommandOutput, Itemizer, type Emission } from '../src/threads/itemizer.ts';
-import { ingestHistory, TranscriptExtras } from '../src/threads/FollowedThread.ts';
+import { ingestHistory, TranscriptExtras } from '../src/threads/transcript.ts';
 import { sessionCronsOf } from '../src/threads/LiveThread.ts';
 
 /**

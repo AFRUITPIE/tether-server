@@ -1,5 +1,4 @@
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { closeSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import type { Item } from '../protocol/index.ts';
@@ -258,25 +257,7 @@ export function notificationResult(text: string): string {
   }
 }
 
-// ---------- the session's directory on disk ----------
-
-/**
- * A session's directory (`~/.claude/projects/<project>/<sessionId>`), beside its transcript. The
- * project folder's name is the CLI's flattening of the cwd, so the transcript is looked for.
- */
-export function sessionDirSync(sessionId: string): string | undefined {
-  if (!isSafeId(sessionId)) return undefined;
-  // Where the CLI keeps its files: CLAUDE_CONFIG_DIR, else ~/.claude.
-  const root = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects');
-  let projects: string[];
-  try {
-    projects = readdirSync(root);
-  } catch {
-    return undefined;
-  }
-  for (const p of projects) if (existsSync(join(root, p, `${sessionId}.jsonl`))) return join(root, p, sessionId);
-  return undefined;
-}
+// ---------- the session's directory on disk (`sessionDir`) ----------
 
 /** `<session dir>/subagents/workflows/<runId>` */
 export const runDir = (sessionDir: string, runId: string) => join(sessionDir, 'subagents', 'workflows', runId);

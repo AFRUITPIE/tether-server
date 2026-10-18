@@ -28,9 +28,8 @@ import type {
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
 import type { ServerRequestName, ServerRequestParams, ServerRequestResult } from '../protocol/serverRequests.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
-import { Itemizer, type Emission } from './itemizer.ts';
-import { TranscriptExtras } from './FollowedThread.ts';
-import { agentPromptReader, runResultReader, sessionDirSync, workflowAgentLocator, workflowCallLocator } from './workflows.ts';
+import type { Emission, Itemizer } from './itemizer.ts';
+import { sessionItemizer, TranscriptExtras, transcriptFile } from './transcript.ts';
 import { PushQueue } from './pushQueue.ts';
 import { EventStream, type Subscriber } from './events.ts';
 import pkg from '../../package.json' with { type: 'json' };
@@ -157,7 +156,7 @@ export class LiveThread {
 
   private q!: Query;
   private input = new PushQueue<SDKUserMessage>();
-  private itemizer = new Itemizer();
+  private readonly itemizer: Itemizer;
   private readonly events: EventStream;
   private pending = new Map<string, PendingRequest>();
   private info: Omit<ThreadInfo, 'threadId' | 'status' | 'lastSeq' | 'cwd'> = {};
@@ -196,11 +195,7 @@ export class LiveThread {
     if (opts.effort) this.info.effort = opts.effort;
     if (opts.permissionMode) this.info.permissionMode = opts.permissionMode;
     if (opts.title) this.info.title = opts.title;
-    // Found on disk only for an agent the CLI hasn't reported yet; the session's folder may not exist until then.
-    this.itemizer.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(this.id));
-    this.itemizer.locateWorkflowCall = workflowCallLocator(() => sessionDirSync(this.id));
-    this.itemizer.readRunResult = runResultReader(() => sessionDirSync(this.id));
-    this.itemizer.readAgentPrompt = agentPromptReader(() => sessionDirSync(this.id));
+    this.itemizer = sessionItemizer(opts.threadId, false);
   }
 
   /** The tasks this process has run or seen, and the chat's schedules and goals, as they stand. */
@@ -221,11 +216,8 @@ export class LiveThread {
   async start(): Promise<void> {
     const o = this.opts;
     // A resumed session's file already holds what history read; only what's written from now is new.
-    const dir = sessionDirSync(this.id);
-    if (dir) {
-      this.extrasPath = `${dir}.jsonl`;
-      await this.extras.skipTo(this.extrasPath);
-    }
+    this.extrasPath = transcriptFile(this.id);
+    if (this.extrasPath) await this.extras.skipTo(this.extrasPath);
     // Session-only: a new process has none until it schedules some.
     this.info.sessionCrons = [];
     this.emitAll(this.itemizer.noteSessionCrons([]));
@@ -473,11 +465,8 @@ export class LiveThread {
       do {
         this.extrasAgain = false;
         // A new session's file appears with its first message; all of it is this process's.
-        if (!this.extrasPath) {
-          const dir = sessionDirSync(this.id);
-          if (!dir) return;
-          this.extrasPath = `${dir}.jsonl`;
-        }
+        this.extrasPath ??= transcriptFile(this.id);
+        if (!this.extrasPath) return;
         await this.extras.readFile(this.extrasPath);
         // A workflow's queued notification is said by its task event live.
         for (const r of this.extras.take())

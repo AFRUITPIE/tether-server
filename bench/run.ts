@@ -61,8 +61,8 @@ mkdirSync(join(CONFIG, 'projects'), { recursive: true });
 const { Connection } = await import('../src/rpc/connection.ts');
 const { LiveThread } = await import('../src/threads/LiveThread.ts');
 const { ThreadManager } = await import('../src/threads/ThreadManager.ts');
-const { readSessionHistory } = await import('../src/threads/history.ts');
-const { recordedCwd } = await import('../src/threads/FollowedThread.ts');
+const { readSessionHistory } = await import('../src/threads/transcript.ts');
+const { recordedCwd } = await import('../src/threads/transcript.ts');
 const { TaskStore } = await import('../src/threads/taskStore.ts');
 
 const claude = { path: '/usr/bin/false', version: '0' } as any;

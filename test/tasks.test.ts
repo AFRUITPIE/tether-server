@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, w
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Item, TaskState, ToolCallItem } from '../src/protocol/index.ts';
-import { ingestHistory, TranscriptExtras } from '../src/threads/FollowedThread.ts';
+import { ingestHistory, TranscriptExtras } from '../src/threads/transcript.ts';
 import { Itemizer, type Emission } from '../src/threads/itemizer.ts';
 import { TaskStore } from '../src/threads/taskStore.ts';
 import { ThreadManager } from '../src/threads/ThreadManager.ts';
