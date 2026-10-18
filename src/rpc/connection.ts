@@ -56,7 +56,8 @@ type Handlers = {
  * requests (approvals) use string ids prefixed "s:" so they never collide with client ids.
  */
 export class Connection {
-  private buffer = '';
+  /** A line's start, in the chunks it came in, until its newline arrives. */
+  private partial: string[] = [];
   private pending = new Map<RequestId, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private nextId = 0;
   private closed = false;
@@ -118,14 +119,25 @@ export class Connection {
     this.output.write(JSON.stringify(msg) + '\n');
   }
 
+  /**
+   * Each chunk is looked through once: searching the whole of what had arrived for a newline, on
+   * every chunk, made a long line (an attached image is megabytes) quadratic in its chunks.
+   */
   private onData(chunk: string) {
-    this.buffer += chunk;
+    let start = 0;
     let nl: number;
-    while ((nl = this.buffer.indexOf('\n')) >= 0) {
-      const line = this.buffer.slice(0, nl).trim();
-      this.buffer = this.buffer.slice(nl + 1);
+    while ((nl = chunk.indexOf('\n', start)) >= 0) {
+      let line = chunk.slice(start, nl);
+      if (this.partial.length) {
+        this.partial.push(line);
+        line = this.partial.join('');
+        this.partial = [];
+      }
+      start = nl + 1;
+      line = line.trim();
       if (line) this.onLine(line);
     }
+    if (start < chunk.length) this.partial.push(chunk.slice(start));
   }
 
   private onLine(line: string) {
