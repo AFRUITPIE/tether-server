@@ -1017,8 +1017,8 @@ export class Itemizer {
       if (structured !== undefined) t.output = trimmedEditOutput(structured);
     } else if (structured !== undefined) t.output = structured;
     // A background agent's launch names the task its report and notification will come from.
-    const agentId = (structured as AnyMsg)?.agentId ?? /^agentId: (\w+)/m.exec(text)?.[1];
-    if (t.kind === 'subagent' && typeof agentId === 'string') {
+    const agentId = t.kind === 'subagent' ? ((structured as AnyMsg)?.agentId ?? /^agentId: (\w+)/m.exec(text)?.[1]) : undefined;
+    if (typeof agentId === 'string') {
       this.taskTools.set(agentId, t.id);
       this.linkTask(agentId, t.id);
     }

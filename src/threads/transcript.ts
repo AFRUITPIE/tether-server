@@ -82,13 +82,12 @@ export async function readRecords(path: string, start = 0, opts: { keep?: (line:
   let at = opts.midLine && start > 0 ? buf.indexOf(0x0a) + 1 : 0;
   if (at === 0 && opts.midLine && start > 0) return out;
   for (let nl = buf.indexOf(0x0a, at); nl >= 0; at = nl + 1, nl = buf.indexOf(0x0a, at)) {
-    const line = buf.subarray(at, nl);
-    if (line.length < 2 || (opts.keep && !opts.keep(line))) continue;
+    if (nl - at < 2 || (opts.keep && !opts.keep(buf.subarray(at, nl)))) continue;
     try {
-      const r = JSON.parse(line.toString('utf8'));
+      const r = JSON.parse(buf.toString('utf8', at, nl));
       if (r && typeof r === 'object') {
         out.records.push(r);
-        out.sizes.push(line.length);
+        out.sizes.push(nl - at);
       }
     } catch {
       // damaged, or not a record
