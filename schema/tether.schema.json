@@ -414,53 +414,6 @@
         "additionalProperties": false
       }
     },
-    "project/list": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "limit": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991
-          }
-        },
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "projects": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "cwd": {
-                  "type": "string"
-                },
-                "lastActivity": {
-                  "type": "number"
-                },
-                "threadCount": {
-                  "type": "integer",
-                  "minimum": -9007199254740991,
-                  "maximum": 9007199254740991
-                }
-              },
-              "required": [
-                "cwd",
-                "lastActivity",
-                "threadCount"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": [
-          "projects"
-        ],
-        "additionalProperties": false
-      }
-    },
     "thread/list": {
       "params": {
         "type": "object",
@@ -2866,6 +2819,18 @@
         "threadId",
         "seq",
         "text"
+      ],
+      "additionalProperties": false
+    },
+    "thread/summaryChanged": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "$ref": "#/$defs/ThreadSummary"
+        }
+      },
+      "required": [
+        "summary"
       ],
       "additionalProperties": false
     }

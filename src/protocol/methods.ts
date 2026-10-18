@@ -121,13 +121,6 @@ export const Methods = {
     result: z.object({ current: z.string(), available: z.array(z.string()) }),
   },
 
-  'project/list': {
-    params: z.object({ limit: z.number().int().optional() }),
-    result: z.object({
-      projects: z.array(z.object({ cwd: z.string(), lastActivity: z.number(), threadCount: z.number().int() })),
-    }),
-  },
-
   'thread/list': {
     params: z.object({
       cwd: z.string().optional(),

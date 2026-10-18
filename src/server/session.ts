@@ -58,6 +58,8 @@ export class ClientSession implements Subscriber {
   private optOut = new Set<string>();
   private experimental = false;
   private subscriptions = new Map<string, WatchableThread>();
+  /** Stops telling this client of chats' summaries. */
+  private unwatchSummaries?: () => void;
 
   constructor(
     private conn: Connection,
@@ -79,6 +81,7 @@ export class ClientSession implements Subscriber {
         if (method === 'initialized') return;
       },
       onClose: () => {
+        this.unwatchSummaries?.();
         for (const t of this.subscriptions.values()) {
           t.unsubscribe(this);
           this.dropFollowerIfUnwatched(t);
@@ -151,6 +154,8 @@ export class ClientSession implements Subscriber {
       if (p.env) this.mgr.noteClientEnv(p.env);
       this.experimental = !!p.capabilities?.experimentalApi;
       for (const m of p.capabilities?.optOutNotificationMethods ?? []) this.optOut.add(m);
+      // Every chat's summary as it changes, subscribed or not; an upgrade client has no chat list.
+      if (!this.upgradeOnly) this.unwatchSummaries = this.mgr.watchSummaries((summary) => this.notify('thread/summaryChanged', { summary }));
       this.log(`client ${this.id} initialized: ${p.clientInfo.name} ${p.clientInfo.version}`);
       return {
         serverInfo: { name: 'tether', version: TETHER_VERSION },
@@ -218,8 +223,6 @@ export class ClientSession implements Subscriber {
       const i = init as any;
       return { current: i.output_style ?? 'default', available: i.available_output_styles ?? [] };
     },
-
-    'project/list': async (p) => ({ projects: await this.mgr.projects(p.limit) }),
 
     'thread/list': async (p) => ({ threads: await this.mgr.list(p) }),
 

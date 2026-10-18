@@ -32,6 +32,8 @@ const IDLE_EVICT_MS = Number(process.env.TETHER_IDLE_EVICT_MS ?? 30 * 60_000);
 /** How long a scheduled run waits, with nobody watching, for a person to answer before it's denied. */
 const SCHEDULED_REQUEST_TIMEOUT_MS = Number(process.env.TETHER_SCHEDULED_REQUEST_TIMEOUT_MS ?? 10 * 60_000);
 const CATALOG_TTL_MS = 5 * 60_000;
+/** How long a chat's summary waits for more changes before it's told. */
+const SUMMARY_COALESCE_MS = 100;
 
 type Catalog = { q: Query; input: PushQueue<SDKUserMessage>; init: Promise<SDKControlInitializeResponse>; lastUsed: number };
 
@@ -152,6 +154,7 @@ export class ThreadManager {
       log: this.log,
       ...extra,
       onTasks: (tasks) => this.taskStore?.put(threadId, tasks),
+      onSummaryChange: () => this.summaryChanged(threadId),
       onExit: (lt) => this.onExit(lt),
     });
     this.threads.set(threadId, t);
@@ -229,6 +232,7 @@ export class ThreadManager {
         title: info.customTitle ?? info.summary,
         log: this.log,
         onTasks: (tasks) => this.taskStore?.put(p.threadId, tasks),
+        onSummaryChange: () => this.summaryChanged(p.threadId),
         onExit: (lt) => this.onExit(lt),
       });
       this.threads.set(p.threadId, t);
@@ -269,6 +273,62 @@ export class ThreadManager {
     this.retire(t);
     if (this.threads.get(t.id) === t) this.threads.delete(t.id);
     this.log(`thread ${t.id} exited`);
+    // No longer loaded: listed as notLoaded now.
+    this.summaryChanged(t.id);
+  }
+
+  // ---------- chat list ----------
+
+  private summaryListeners = new Set<(summary: ThreadSummary) => void>();
+  /** Each chat's summary as last told, as JSON, so a change is told once. */
+  private toldSummaries = new Map<string, string>();
+  private summaryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** Tells `listener` every chat's summary as it changes (`thread/summaryChanged`), until the returned function is called. */
+  watchSummaries(listener: (summary: ThreadSummary) => void): () => void {
+    this.summaryListeners.add(listener);
+    return () => this.summaryListeners.delete(listener);
+  }
+
+  /**
+   * What the chat list shows of a chat may have changed: worked out a moment later (changes come
+   * in bursts: a turn's status and its background count), and told only if it did change.
+   */
+  summaryChanged(threadId: string) {
+    if (this.summaryTimers.has(threadId) || this.summaryListeners.size === 0) return;
+    const timer = setTimeout(async () => {
+      this.summaryTimers.delete(threadId);
+      const summary = await this.summaryOf(threadId).catch(() => undefined);
+      if (!summary) return;
+      // Only what a list shows: when it was written changes with every message.
+      const { updatedAt: _u, ...shown } = summary;
+      const json = JSON.stringify(shown);
+      if (this.toldSummaries.get(threadId) === json) return;
+      this.toldSummaries.set(threadId, json);
+      for (const l of this.summaryListeners) l(summary);
+    }, SUMMARY_COALESCE_MS);
+    timer.unref?.();
+    this.summaryTimers.set(threadId, timer);
+  }
+
+  /** A chat's summary as `thread/list` gives it; for a chat whose file isn't written yet, what its live thread knows. */
+  async summaryOf(threadId: string): Promise<ThreadSummary | undefined> {
+    const live = this.loaded(threadId);
+    const info = await sessionInfo(threadId, live?.cwd).catch(() => undefined);
+    if (info) {
+      const s = this.summary(info);
+      // Named here a moment before its file says so.
+      return live?.title && !info.customTitle && info.summary === info.firstPrompt ? { ...s, title: live.title } : s;
+    }
+    if (!live) return undefined;
+    return {
+      threadId,
+      title: live.title ?? '',
+      cwd: live.cwd,
+      updatedAt: live.lastActivityAt,
+      status: live.status,
+      backgroundTasks: live.backgroundTaskCount,
+    };
   }
 
   get busy(): boolean {
@@ -324,6 +384,8 @@ export class ThreadManager {
   }
 
   shutdown() {
+    for (const t of this.summaryTimers.values()) clearTimeout(t);
+    this.summaryTimers.clear();
     this.taskStore?.flush();
     for (const t of this.threads.values()) if (t.waitingUnattended) t.abandonUnattended('Tether stopped');
     this.scheduler?.stop();
@@ -465,19 +527,6 @@ export class ThreadManager {
       status: live ? live.status : 'notLoaded',
       ...(live ? { backgroundTasks: live.backgroundTaskCount } : {}),
     };
-  }
-
-  async projects(limit?: number) {
-    const sessions = await Promise.all((await listSessions({ limit: 2000 })).map(withCwd));
-    const byCwd = new Map<string, { cwd: string; lastActivity: number; threadCount: number }>();
-    for (const s of sessions) {
-      if (!s.cwd) continue;
-      const p = byCwd.get(s.cwd) ?? { cwd: s.cwd, lastActivity: 0, threadCount: 0 };
-      p.threadCount++;
-      p.lastActivity = Math.max(p.lastActivity, s.lastModified);
-      byCwd.set(s.cwd, p);
-    }
-    return [...byCwd.values()].sort((a, b) => b.lastActivity - a.lastActivity).slice(0, limit ?? 200);
   }
 
   /** Transcript → items. A live thread answers from its own itemizer so in-flight state is included. */
@@ -647,12 +696,14 @@ export class ThreadManager {
     return r.sessionId;
   }
 
-  rename(threadId: string, title: string) {
-    return renameSession(threadId, title);
+  async rename(threadId: string, title: string) {
+    await renameSession(threadId, title);
+    this.summaryChanged(threadId);
   }
 
-  tag(threadId: string, tag: string | null) {
-    return tagSession(threadId, tag);
+  async tag(threadId: string, tag: string | null) {
+    await tagSession(threadId, tag);
+    this.summaryChanged(threadId);
   }
 
   async delete(threadId: string) {

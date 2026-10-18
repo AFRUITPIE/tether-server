@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import { JsonValue, ThreadInfo, ThreadStatus, UserInput } from './common.ts';
+import { JsonValue, ThreadInfo, ThreadStatus, ThreadSummary, UserInput } from './common.ts';
 import { Item, Turn } from './items.ts';
 import { TaskState } from './tasks.ts';
 
-/** Every thread-scoped notification carries these. `seq` is monotonic per thread, for replay. */
+/** Every thread-scoped notification carries these (all but `thread/summaryChanged`). `seq` is monotonic per thread, for replay. */
 const T = { threadId: z.string(), seq: z.number().int() };
 
 export const Notifications = {
@@ -85,6 +85,14 @@ export const Notifications = {
   }),
 
   'thread/stderr': z.object({ ...T, text: z.string() }),
+
+  /**
+   * Host-wide, not a thread's stream (no `threadId` envelope, no `seq`): a chat's summary changed —
+   * its title (renamed, or named by Claude Code), tag (archived is the tag `archived`), status, or
+   * background task count — sent to every client attached, subscribed to the chat or not, so a
+   * chat list stays current without asking again. The summary is whole, as `thread/list` has it.
+   */
+  'thread/summaryChanged': z.object({ summary: ThreadSummary }),
 } as const;
 
 export type NotificationName = keyof typeof Notifications;

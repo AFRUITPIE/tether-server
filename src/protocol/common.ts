@@ -136,6 +136,11 @@ export const ThreadSummary = z
     title: z.string(),
     customTitle: z.string().optional(),
     firstPrompt: z.string().optional(),
+    /**
+     * The directory the chat runs in: the transcript's (read from its lines where the SDK misses
+     * it), or a live chat's. Absent only for a transcript that records none. What a client lists
+     * recent directories from.
+     */
     cwd: z.string().optional(),
     gitBranch: z.string().optional(),
     tag: z.string().optional(),

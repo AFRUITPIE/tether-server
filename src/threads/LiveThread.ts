@@ -116,6 +116,8 @@ export type LiveThreadOptions = {
   unattended?: Unattended;
   /** Told each task's state as it changes, to be kept with the chat (`TaskStore`). */
   onTasks?: (tasks: TaskState[]) => void;
+  /** Told when what the chat list shows of it may have changed: its status, background count or title. */
+  onSummaryChange?: () => void;
   stderr?: (text: string) => void;
   /** The daemon's log. */
   log?: (msg: string) => void;
@@ -185,6 +187,11 @@ export class LiveThread {
   private extrasReading = false;
   private extrasAgain = false;
   private extrasTimers = new Set<ReturnType<typeof setTimeout>>();
+
+  /** The title the chat has here, which a new chat's file may not hold yet. */
+  get title(): string | undefined {
+    return this.info.title;
+  }
 
   /** The `claude` this thread runs, for a catalog that could share it. */
   get claudePath(): string {
@@ -526,6 +533,7 @@ export class LiveThread {
       clearTimeout(this.titleCheck);
       this.info.title = title;
       this.emit('thread/updated', { thread: this.threadInfo() });
+      this.opts.onSummaryChange?.();
     }
   }
 
@@ -545,6 +553,7 @@ export class LiveThread {
       if (title && title !== this.info.title) {
         this.info.title = title;
         this.emit('thread/updated', { thread: this.threadInfo() });
+        this.opts.onSummaryChange?.();
       } else {
         this.lookForTitle(rest);
       }
@@ -577,7 +586,15 @@ export class LiveThread {
       activity: this.activity,
       backgroundTasks: this.backgroundTasks.size,
     });
+    // The chat list shows the status and the background count, not the activity.
+    const shown = `${this.status}/${this.backgroundTasks.size}`;
+    if (shown !== this.shownStatus) {
+      this.shownStatus = shown;
+      this.opts.onSummaryChange?.();
+    }
   }
+
+  private shownStatus?: string;
 
   threadInfo(): ThreadInfo {
     return { threadId: this.id, status: this.status, cwd: this.cwd, lastSeq: this.seq, ...this.info };

@@ -26,6 +26,7 @@ Version 2 (`PROTOCOL_VERSION`; clients must send `protocolVersion: 2` in `initia
 - Every thread-scoped notification carries `threadId` and a per-thread `seq`; a read's `historySeq` says which events its snapshot includes, and `thread/subscribe` with `afterSeq` replays the rest (`gap` when it can't).
 - Edit calls carry their `edit` (hunks, lines added and removed, bounded), and a finished turn its `edits` totals.
 - `git/changes` is the working tree against the last commit, untracked files included, parsed and bounded on the host.
+- `thread/summaryChanged` tells every client when a chat's title, tag, status or background count changes (host-wide: no `seq`).
 - `thread/start` with a prompt returns its item's `messageId` (and `turnId`); that item is on the chat's stream before the result.
 - **Tasks** are typed state: `TaskState` (agents, commands, monitors, MCP tools, workflows and their agents, schedules, goals; each with its `parentId`, `status`, usage and kind-specific fields). `thread/read`, `thread/resume` (with history) and `thread/subscribe` return all of a chat's `tasks`, finished ones included, kept by the daemon across reloads and restarts; `task/updated` sends a task's whole state each time it changes.
 

@@ -3149,82 +3149,6 @@ public struct OutputStyleListResult: Codable, Sendable, Hashable {
     }
 }
 
-public struct ProjectListParams: Codable, Sendable, Hashable {
-    public var limit: Int?
-
-    public init(limit: Int? = nil) {
-        self.limit = limit
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case limit = "limit"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.limit = try c.decodeIfPresent(Int.self, forKey: .limit)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encodeIfPresent(limit, forKey: .limit)
-    }
-}
-
-public struct ProjectListResult: Codable, Sendable, Hashable {
-    public var projects: [Project]
-
-    public init(projects: [Project]) {
-        self.projects = projects
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case projects = "projects"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.projects = try c.decode([Project].self, forKey: .projects)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(projects, forKey: .projects)
-    }
-
-    public struct Project: Codable, Sendable, Hashable {
-        public var cwd: String
-        public var lastActivity: Double
-        public var threadCount: Int
-
-        public init(cwd: String, lastActivity: Double, threadCount: Int) {
-            self.cwd = cwd
-            self.lastActivity = lastActivity
-            self.threadCount = threadCount
-        }
-
-        private enum CodingKeys: String, CodingKey {
-            case cwd = "cwd"
-            case lastActivity = "lastActivity"
-            case threadCount = "threadCount"
-        }
-
-        public init(from decoder: any Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            self.cwd = try c.decode(String.self, forKey: .cwd)
-            self.lastActivity = try c.decode(Double.self, forKey: .lastActivity)
-            self.threadCount = try c.decode(Int.self, forKey: .threadCount)
-        }
-
-        public func encode(to encoder: any Encoder) throws {
-            var c = encoder.container(keyedBy: CodingKeys.self)
-            try c.encode(cwd, forKey: .cwd)
-            try c.encode(lastActivity, forKey: .lastActivity)
-            try c.encode(threadCount, forKey: .threadCount)
-        }
-    }
-}
-
 public struct ThreadListParams: Codable, Sendable, Hashable {
     public var cwd: String?
     public var limit: Int?
@@ -5799,11 +5723,6 @@ public enum Methods {
         public typealias Params = OutputStyleListParams
         public typealias Result = OutputStyleListResult
     }
-    public enum ProjectList: TetherMethod {
-        public static let name = "project/list"
-        public typealias Params = ProjectListParams
-        public typealias Result = ProjectListResult
-    }
     public enum ThreadList: TetherMethod {
         public static let name = "thread/list"
         public typealias Params = ThreadListParams
@@ -7084,6 +7003,28 @@ public struct ThreadStderrNotification: Codable, Sendable, Hashable {
     }
 }
 
+public struct ThreadSummaryChangedNotification: Codable, Sendable, Hashable {
+    public var summary: ThreadSummary
+
+    public init(summary: ThreadSummary) {
+        self.summary = summary
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case summary = "summary"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.summary = try c.decode(ThreadSummary.self, forKey: .summary)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(summary, forKey: .summary)
+    }
+}
+
 /// Server → client notifications, decoded by method name.
 public enum ServerNotification: Sendable, Hashable {
     case threadStarted(ThreadStartedNotification)
@@ -7114,9 +7055,10 @@ public enum ServerNotification: Sendable, Hashable {
     case threadRawEvent(ThreadRawEventNotification)
     case serverRequestResolved(ServerRequestResolvedNotification)
     case threadStderr(ThreadStderrNotification)
+    case threadSummaryChanged(ThreadSummaryChangedNotification)
     case unknown(method: String, params: JSONValue)
 
-    public static let methods: Set<String> = ["thread/started", "thread/updated", "thread/status/changed", "thread/closed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "turn/updated", "item/started", "item/updated", "item/completed", "item/agentMessage/delta", "item/reasoning/delta", "item/toolCall/inputDelta", "item/toolCall/progress", "task/updated", "thread/queuedInput", "thread/promptSuggestion", "thread/taskSuggested", "thread/commandsChanged", "thread/apiRetry", "thread/rateLimit", "thread/authStatus", "thread/notification", "thread/hook", "thread/rawEvent", "serverRequest/resolved", "thread/stderr"]
+    public static let methods: Set<String> = ["thread/started", "thread/updated", "thread/status/changed", "thread/closed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "turn/updated", "item/started", "item/updated", "item/completed", "item/agentMessage/delta", "item/reasoning/delta", "item/toolCall/inputDelta", "item/toolCall/progress", "task/updated", "thread/queuedInput", "thread/promptSuggestion", "thread/taskSuggested", "thread/commandsChanged", "thread/apiRetry", "thread/rateLimit", "thread/authStatus", "thread/notification", "thread/hook", "thread/rawEvent", "serverRequest/resolved", "thread/stderr", "thread/summaryChanged"]
 
     public init(method: String, params: Data, decoder: JSONDecoder = JSONDecoder()) throws {
         switch method {
@@ -7148,11 +7090,12 @@ public enum ServerNotification: Sendable, Hashable {
         case "thread/rawEvent": self = .threadRawEvent(try decoder.decode(ThreadRawEventNotification.self, from: params))
         case "serverRequest/resolved": self = .serverRequestResolved(try decoder.decode(ServerRequestResolvedNotification.self, from: params))
         case "thread/stderr": self = .threadStderr(try decoder.decode(ThreadStderrNotification.self, from: params))
+        case "thread/summaryChanged": self = .threadSummaryChanged(try decoder.decode(ThreadSummaryChangedNotification.self, from: params))
         default: self = .unknown(method: method, params: try decoder.decode(JSONValue.self, from: params))
         }
     }
 
-    /// Thread this notification belongs to, and its per-thread sequence number.
+    /// Thread this notification belongs to, and its per-thread sequence number; nil for a host-wide one.
     public var threadId: String? {
         switch self {
         case .threadStarted(let n): return n.threadId
@@ -7183,6 +7126,7 @@ public enum ServerNotification: Sendable, Hashable {
         case .threadRawEvent(let n): return n.threadId
         case .serverRequestResolved(let n): return n.threadId
         case .threadStderr(let n): return n.threadId
+        case .threadSummaryChanged: return nil
         case .unknown(_, let p): return p["threadId"]?.stringValue
         }
     }
@@ -7216,6 +7160,7 @@ public enum ServerNotification: Sendable, Hashable {
         case .threadRawEvent(let n): return n.seq
         case .serverRequestResolved(let n): return n.seq
         case .threadStderr(let n): return n.seq
+        case .threadSummaryChanged: return nil
         case .unknown(_, let p): return p["seq"]?.intValue
         }
     }
