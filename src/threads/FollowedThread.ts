@@ -8,8 +8,7 @@ import type { EffortLevel, Item, PermissionMode, TaskState, ThreadInfo, Turn } f
 import { EffortLevel as EffortLevelSchema, PermissionMode as PermissionModeSchema } from '../protocol/common.ts';
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
 import { isWakeup, Itemizer, type Emission } from './itemizer.ts';
-import type { Subscriber } from './LiveThread.ts';
-import { replayGap, seqOrigin } from './seq.ts';
+import { EventStream, type Subscriber, type WatchableThread } from './events.ts';
 import { readSessionHistory } from './history.ts';
 import { agentPromptReader, readRunJournal, readRunRecord, sessionDirSync, workflowAgentLocator } from './workflows.ts';
 
@@ -18,15 +17,6 @@ const MAX_BUFFERED_EVENTS = 2000;
 const COALESCE_MS = 150;
 /** How often a running workflow's files are read again while someone watches. */
 const WORKFLOW_POLL_MS = 5000;
-
-/** What `ClientSession` needs of a thread to attach a client to it. `LiveThread` satisfies it too. */
-export interface WatchableThread {
-  readonly id: string;
-  threadInfo(): ThreadInfo;
-  subscribe(sub: Subscriber, afterSeq?: number): { replayed: number; gap: boolean };
-  unsubscribe(sub: Subscriber): void;
-  readonly subscriberCount: number;
-}
 
 /**
  * A session another client owns (the desktop app, a terminal), followed by watching its
@@ -37,9 +27,7 @@ export class FollowedThread implements WatchableThread {
   readonly id: string;
   private readonly cwd: string;
   private readonly itemizer = new Itemizer(Date.now, true);
-  private readonly subscribers = new Set<Subscriber>();
-  private readonly buffer: { seq: number; method: string; params: unknown }[] = [];
-  private seq: number;
+  private readonly events: EventStream;
   private ingested = 0;
   private watcher?: FSWatcher;
   private path?: string;
@@ -56,7 +44,7 @@ export class FollowedThread implements WatchableThread {
   constructor(id: string, cwd: string, seqAfter?: number) {
     this.id = id;
     this.cwd = cwd;
-    this.seq = seqOrigin(seqAfter);
+    this.events = new EventStream(id, MAX_BUFFERED_EVENTS, seqAfter);
     this.itemizer.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(id));
     this.itemizer.readAgentPrompt = agentPromptReader(() => sessionDirSync(id));
   }
@@ -92,7 +80,7 @@ export class FollowedThread implements WatchableThread {
   private pollWorkflows() {
     if (this.workflowPoll) return;
     this.workflowPoll = setInterval(async () => {
-      if (this.subscribers.size === 0 || this.itemizer.unsettledWorkflowRuns().length === 0) {
+      if (this.events.subscribers.size === 0 || this.itemizer.unsettledWorkflowRuns().length === 0) {
         clearInterval(this.workflowPoll);
         this.workflowPoll = undefined;
         return;
@@ -136,7 +124,7 @@ export class FollowedThread implements WatchableThread {
       });
       this.ingested += msgs.length;
       this.emitAll(ingestHistory(this.itemizer, msgs, this.queued));
-      if (this.subscribers.size && this.itemizer.unsettledWorkflowRuns().length) this.pollWorkflows();
+      if (this.events.subscribers.size && this.itemizer.unsettledWorkflowRuns().length) this.pollWorkflows();
       if (msgs.length && (await this.updateSettings())) this.emit('thread/updated', { thread: this.threadInfo() });
     } catch {
       // The file may be mid-write or gone; the next change re-reads from the same offset.
@@ -154,14 +142,11 @@ export class FollowedThread implements WatchableThread {
   }
 
   private emit<N extends NotificationName>(method: N, body: NotificationBody<N>): void {
-    const params = { threadId: this.id, seq: ++this.seq, ...body } as Record<string, unknown>;
-    this.buffer.push({ seq: this.seq, method, params });
-    if (this.buffer.length > MAX_BUFFERED_EVENTS) this.buffer.splice(0, this.buffer.length - MAX_BUFFERED_EVENTS);
-    for (const s of this.subscribers) s.notify(method, params);
+    this.events.emit(method, body);
   }
 
   threadInfo(): ThreadInfo {
-    return { threadId: this.id, status: 'notLoaded', cwd: this.cwd, lastSeq: this.seq, ...this.settings };
+    return { threadId: this.id, status: 'notLoaded', cwd: this.cwd, lastSeq: this.events.lastSeq, ...this.settings };
   }
 
   /**
@@ -199,32 +184,21 @@ export class FollowedThread implements WatchableThread {
   }
 
   history(): { items: Item[]; turns: Turn[]; seq: number } {
-    return { ...this.itemizer.snapshot(), seq: this.seq };
+    return { ...this.itemizer.snapshot(), seq: this.events.lastSeq };
   }
 
   subscribe(sub: Subscriber, afterSeq?: number): { replayed: number; gap: boolean } {
-    let replayed = 0;
-    let gap = false;
-    if (afterSeq !== undefined) {
-      gap = replayGap(afterSeq, this.buffer[0]?.seq, this.seq);
-      for (const e of this.buffer) {
-        if (e.seq > afterSeq) {
-          sub.notify(e.method, e.params);
-          replayed++;
-        }
-      }
-    }
-    this.subscribers.add(sub);
+    const r = this.events.subscribe(sub, afterSeq);
     if (this.itemizer.unsettledWorkflowRuns().length) this.pollWorkflows();
-    return { replayed, gap };
+    return r;
   }
 
   unsubscribe(sub: Subscriber): void {
-    this.subscribers.delete(sub);
+    this.events.subscribers.delete(sub);
   }
 
   get subscriberCount(): number {
-    return this.subscribers.size;
+    return this.events.subscribers.size;
   }
 
   close(): void {
@@ -234,7 +208,7 @@ export class FollowedThread implements WatchableThread {
     this.pending = undefined;
     this.watcher?.close();
     this.watcher = undefined;
-    this.subscribers.clear();
+    this.events.subscribers.clear();
   }
 }
 

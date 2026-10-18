@@ -6,7 +6,7 @@ import type { Item, ToolCallItem } from '../src/protocol/index.ts';
 import { FollowedThread, recordedCwd, recordedSettings } from '../src/threads/FollowedThread.ts';
 import { Itemizer, parseTaskNotification } from '../src/threads/itemizer.ts';
 import { LiveThread } from '../src/threads/LiveThread.ts';
-import { replayGap } from '../src/threads/seq.ts';
+import { replayGap } from '../src/threads/events.ts';
 import { mergeHistory, pageOf, resumeSettings, ThreadManager } from '../src/threads/ThreadManager.ts';
 import { ErrorCodes } from '../src/rpc/connection.ts';
 
@@ -42,6 +42,20 @@ describe('event numbering across streams', () => {
     const earlier = Date.now() * 1000 + 5_000_000;
     const t = new LiveThread({ threadId: 'thread-1', cwd: '/tmp', claude, env: {}, mode: 'resume', seqAfter: earlier });
     expect(t.threadInfo().lastSeq).toBe(earlier + 1);
+  });
+
+  test('a full replay buffer still replays the latest events, and says when older ones are gone', () => {
+    const t = liveThread();
+    const first = t.threadInfo().lastSeq + 1;
+    for (let i = 0; i < 30_000; i++) t.emit('thread/stderr', { text: `line ${i}` });
+    const last = t.threadInfo().lastSeq;
+    const sent: number[] = [];
+    const client = { id: 'c', notify: (_: string, p: any) => sent.push(p.seq), request: () => new Promise(() => {}), cancelRequest() {} };
+    expect(t.subscribe(client, last - 100)).toEqual({ replayed: 100, gap: false });
+    expect(sent).toEqual(Array.from({ length: 100 }, (_, i) => last - 99 + i));
+    // At least the 20,000 latest are kept; the first are long gone.
+    expect(t.subscribe(client, last - 20_000).gap).toBe(false);
+    expect(t.subscribe(client, first).gap).toBe(true);
   });
 
   test('replayGap', () => {

@@ -32,7 +32,7 @@ import { Itemizer, type Emission } from './itemizer.ts';
 import { TranscriptExtras } from './FollowedThread.ts';
 import { agentPromptReader, runResultReader, sessionDirSync, workflowAgentLocator, workflowCallLocator } from './workflows.ts';
 import { PushQueue } from './pushQueue.ts';
-import { replayGap, seqOrigin } from './seq.ts';
+import { EventStream, type Subscriber } from './events.ts';
 import pkg from '../../package.json' with { type: 'json' };
 
 /** Set by `scripts/compile.ts`: the package version, or a `-dev.<time>` stamp for a local build. */
@@ -42,16 +42,6 @@ export const TETHER_VERSION: string = typeof TETHER_BUILD_VERSION === 'string' ?
  *  itself only when the running version differs, so that string has to move when Tether changes
  *  even if the SDK hasn't. */
 export const AGENT_SDK_VERSION: string = pkg.dependencies['@anthropic-ai/claude-agent-sdk'];
-
-/** A connected client that has subscribed to a thread. */
-export interface Subscriber {
-  readonly id: string;
-  notify(method: string, params: unknown): void;
-  request(method: string, params: unknown, id: string): Promise<unknown>;
-  cancelRequest(id: string): void;
-}
-
-type BufferedEvent = { seq: number; method: string; params: Record<string, unknown> };
 
 type PendingRequest = {
   requestId: string;
@@ -168,9 +158,7 @@ export class LiveThread {
   private q!: Query;
   private input = new PushQueue<SDKUserMessage>();
   private itemizer = new Itemizer();
-  private seq: number;
-  private buffer: BufferedEvent[] = [];
-  private subscribers = new Set<Subscriber>();
+  private readonly events: EventStream;
   private pending = new Map<string, PendingRequest>();
   private info: Omit<ThreadInfo, 'threadId' | 'status' | 'lastSeq' | 'cwd'> = {};
   private exited = false;
@@ -203,7 +191,7 @@ export class LiveThread {
     this.cwd = opts.cwd;
     this.sessionToolsEnabled = !!opts.sessionTools;
     this.generateTitle = !!opts.generateTitle;
-    this.seq = seqOrigin(opts.seqAfter);
+    this.events = new EventStream(opts.threadId, MAX_BUFFERED_EVENTS, opts.seqAfter);
     if (opts.model) this.info.model = opts.model;
     if (opts.effort) this.info.effort = opts.effort;
     if (opts.permissionMode) this.info.permissionMode = opts.permissionMode;
@@ -331,7 +319,7 @@ export class LiveThread {
 
   /** An unattended thread waiting on a person, with no client subscribed to be that person. */
   get waitingUnattended() {
-    return !!this.opts.unattended && this.pending.size > 0 && this.subscribers.size === 0;
+    return !!this.opts.unattended && this.pending.size > 0 && this.events.subscribers.size === 0;
   }
 
   /** Records on an unattended thread that it was stopped while it waited on a person. */
@@ -563,10 +551,7 @@ export class LiveThread {
   // ---------- events / replay ----------
 
   emit<N extends NotificationName>(method: N, body: NotificationBody<N>) {
-    const params = { threadId: this.id, seq: ++this.seq, ...body } as Record<string, unknown>;
-    this.buffer.push({ seq: this.seq, method, params });
-    if (this.buffer.length > MAX_BUFFERED_EVENTS) this.buffer.splice(0, this.buffer.length - MAX_BUFFERED_EVENTS);
-    for (const s of this.subscribers) s.notify(method, params);
+    this.events.emit(method, body);
     if (method === 'task/updated') this.opts.onTasks?.([(body as NotificationBody<'task/updated'>).task]);
   }
 
@@ -597,33 +582,22 @@ export class LiveThread {
   private shownStatus?: string;
 
   threadInfo(): ThreadInfo {
-    return { threadId: this.id, status: this.status, cwd: this.cwd, lastSeq: this.seq, ...this.info };
+    return { threadId: this.id, status: this.status, cwd: this.cwd, lastSeq: this.events.lastSeq, ...this.info };
   }
 
   /** Attach a client. Replays buffered events after `afterSeq` and re-sends pending requests. */
   subscribe(sub: Subscriber, afterSeq?: number): { replayed: number; gap: boolean } {
-    let replayed = 0;
-    let gap = false;
-    if (afterSeq !== undefined) {
-      gap = replayGap(afterSeq, this.buffer[0]?.seq, this.seq);
-      for (const e of this.buffer) {
-        if (e.seq > afterSeq) {
-          sub.notify(e.method, e.params);
-          replayed++;
-        }
-      }
-    }
-    this.subscribers.add(sub);
+    const r = this.events.subscribe(sub, afterSeq);
     for (const p of this.pending.values()) this.sendPendingTo(p, sub);
-    return { replayed, gap };
+    return r;
   }
 
   unsubscribe(sub: Subscriber) {
-    this.subscribers.delete(sub);
+    this.events.subscribers.delete(sub);
   }
 
   get subscriberCount() {
-    return this.subscribers.size;
+    return this.events.subscribers.size;
   }
 
   history() {
@@ -729,7 +703,7 @@ export class LiveThread {
       this.setStatus('requiresAction');
       signal?.addEventListener('abort', () => this.resolvePending(p, null, 'cancelled'), { once: true });
       if (this.opts.unattended) this.armDeadline(p, this.opts.unattended);
-      for (const s of this.subscribers) this.sendPendingTo(p, s);
+      for (const s of this.events.subscribers) this.sendPendingTo(p, s);
     });
   }
 
@@ -738,7 +712,7 @@ export class LiveThread {
     p.timer = setTimeout(() => {
       if (!this.pending.has(p.requestId)) return;
       // Someone is looking at it: theirs to answer, however long they take.
-      if (this.subscribers.size > 0) return this.armDeadline(p, u);
+      if (this.events.subscribers.size > 0) return this.armDeadline(p, u);
       u.onUnanswered(`No one answered its request for ${describeRequest(p)} within ${duration(u.requestTimeoutMs)}, so it was denied.`);
       const denial =
         p.method === 'permission/request'
