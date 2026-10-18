@@ -1054,8 +1054,9 @@ public enum Item: Codable, Sendable, Hashable {
         public var elapsedSeconds: Double?
         public var summary: String?
         public var skillInstructions: String?
+        public var edit: FileEdit?
 
-        public init(id: String, turnId: String? = nil, parentToolUseId: String? = nil, createdAt: Double, name: String, kind: ToolKind, input: JSONValue, status: ToolStatus, outputText: String? = nil, output: JSONValue? = nil, isError: Bool? = nil, mcpServer: String? = nil, elapsedSeconds: Double? = nil, summary: String? = nil, skillInstructions: String? = nil) {
+        public init(id: String, turnId: String? = nil, parentToolUseId: String? = nil, createdAt: Double, name: String, kind: ToolKind, input: JSONValue, status: ToolStatus, outputText: String? = nil, output: JSONValue? = nil, isError: Bool? = nil, mcpServer: String? = nil, elapsedSeconds: Double? = nil, summary: String? = nil, skillInstructions: String? = nil, edit: FileEdit? = nil) {
             self.id = id
             self.turnId = turnId
             self.parentToolUseId = parentToolUseId
@@ -1071,6 +1072,7 @@ public enum Item: Codable, Sendable, Hashable {
             self.elapsedSeconds = elapsedSeconds
             self.summary = summary
             self.skillInstructions = skillInstructions
+            self.edit = edit
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -1090,6 +1092,7 @@ public enum Item: Codable, Sendable, Hashable {
             case elapsedSeconds = "elapsedSeconds"
             case summary = "summary"
             case skillInstructions = "skillInstructions"
+            case edit = "edit"
         }
 
         public init(from decoder: any Decoder) throws {
@@ -1110,6 +1113,7 @@ public enum Item: Codable, Sendable, Hashable {
             self.elapsedSeconds = try c.decodeIfPresent(Double.self, forKey: .elapsedSeconds)
             self.summary = try c.decodeIfPresent(String.self, forKey: .summary)
             self.skillInstructions = try c.decodeIfPresent(String.self, forKey: .skillInstructions)
+            self.edit = try c.decodeIfPresent(FileEdit.self, forKey: .edit)
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -1130,6 +1134,7 @@ public enum Item: Codable, Sendable, Hashable {
             try c.encodeIfPresent(elapsedSeconds, forKey: .elapsedSeconds)
             try c.encodeIfPresent(summary, forKey: .summary)
             try c.encodeIfPresent(skillInstructions, forKey: .skillInstructions)
+            try c.encodeIfPresent(edit, forKey: .edit)
         }
     }
 
@@ -1374,6 +1379,100 @@ public struct ToolStatus: RawRepresentable, Codable, Sendable, Hashable, CaseIte
     public static let allCases: [ToolStatus] = [.pending, .running, .completed, .failed, .denied, .interrupted]
 }
 
+public struct FileEdit: Codable, Sendable, Hashable {
+    public var path: String
+    public var hunks: [DiffHunk]
+    public var added: Int
+    public var removed: Int
+    public var truncatedLines: Int?
+    public var created: Bool?
+
+    public init(path: String, hunks: [DiffHunk], added: Int, removed: Int, truncatedLines: Int? = nil, created: Bool? = nil) {
+        self.path = path
+        self.hunks = hunks
+        self.added = added
+        self.removed = removed
+        self.truncatedLines = truncatedLines
+        self.created = created
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path = "path"
+        case hunks = "hunks"
+        case added = "added"
+        case removed = "removed"
+        case truncatedLines = "truncatedLines"
+        case created = "created"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.path = try c.decode(String.self, forKey: .path)
+        self.hunks = try c.decode([DiffHunk].self, forKey: .hunks)
+        self.added = try c.decode(Int.self, forKey: .added)
+        self.removed = try c.decode(Int.self, forKey: .removed)
+        self.truncatedLines = try c.decodeIfPresent(Int.self, forKey: .truncatedLines)
+        self.created = try c.decodeIfPresent(Bool.self, forKey: .created)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(path, forKey: .path)
+        try c.encode(hunks, forKey: .hunks)
+        try c.encode(added, forKey: .added)
+        try c.encode(removed, forKey: .removed)
+        try c.encodeIfPresent(truncatedLines, forKey: .truncatedLines)
+        try c.encodeIfPresent(created, forKey: .created)
+    }
+}
+
+public struct DiffHunk: Codable, Sendable, Hashable {
+    public var oldStart: Int
+    public var oldLines: Int
+    public var newStart: Int
+    public var newLines: Int
+    public var lines: [String]
+    public var header: String?
+
+    public init(oldStart: Int, oldLines: Int, newStart: Int, newLines: Int, lines: [String], header: String? = nil) {
+        self.oldStart = oldStart
+        self.oldLines = oldLines
+        self.newStart = newStart
+        self.newLines = newLines
+        self.lines = lines
+        self.header = header
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case oldStart = "oldStart"
+        case oldLines = "oldLines"
+        case newStart = "newStart"
+        case newLines = "newLines"
+        case lines = "lines"
+        case header = "header"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.oldStart = try c.decode(Int.self, forKey: .oldStart)
+        self.oldLines = try c.decode(Int.self, forKey: .oldLines)
+        self.newStart = try c.decode(Int.self, forKey: .newStart)
+        self.newLines = try c.decode(Int.self, forKey: .newLines)
+        self.lines = try c.decode([String].self, forKey: .lines)
+        self.header = try c.decodeIfPresent(String.self, forKey: .header)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(oldStart, forKey: .oldStart)
+        try c.encode(oldLines, forKey: .oldLines)
+        try c.encode(newStart, forKey: .newStart)
+        try c.encode(newLines, forKey: .newLines)
+        try c.encode(lines, forKey: .lines)
+        try c.encodeIfPresent(header, forKey: .header)
+    }
+}
+
 public struct GoalNotice: Codable, Sendable, Hashable {
     public var condition: String
     public var event: GoalEvent
@@ -1436,13 +1535,15 @@ public struct Turn: Codable, Sendable, Hashable {
     public var startedAt: Double
     public var completedAt: Double?
     public var result: TurnResult?
+    public var edits: TurnEdits?
 
-    public init(id: String, status: TurnStatus, startedAt: Double, completedAt: Double? = nil, result: TurnResult? = nil) {
+    public init(id: String, status: TurnStatus, startedAt: Double, completedAt: Double? = nil, result: TurnResult? = nil, edits: TurnEdits? = nil) {
         self.id = id
         self.status = status
         self.startedAt = startedAt
         self.completedAt = completedAt
         self.result = result
+        self.edits = edits
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1451,6 +1552,7 @@ public struct Turn: Codable, Sendable, Hashable {
         case startedAt = "startedAt"
         case completedAt = "completedAt"
         case result = "result"
+        case edits = "edits"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -1460,6 +1562,7 @@ public struct Turn: Codable, Sendable, Hashable {
         self.startedAt = try c.decode(Double.self, forKey: .startedAt)
         self.completedAt = try c.decodeIfPresent(Double.self, forKey: .completedAt)
         self.result = try c.decodeIfPresent(TurnResult.self, forKey: .result)
+        self.edits = try c.decodeIfPresent(TurnEdits.self, forKey: .edits)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -1469,6 +1572,7 @@ public struct Turn: Codable, Sendable, Hashable {
         try c.encode(startedAt, forKey: .startedAt)
         try c.encodeIfPresent(completedAt, forKey: .completedAt)
         try c.encodeIfPresent(result, forKey: .result)
+        try c.encodeIfPresent(edits, forKey: .edits)
     }
 }
 
@@ -1649,6 +1753,38 @@ public struct ModelUsage: Codable, Sendable, Hashable {
         try c.encode(costUsd, forKey: .costUsd)
         try c.encodeIfPresent(contextWindow, forKey: .contextWindow)
         try c.encodeIfPresent(maxOutputTokens, forKey: .maxOutputTokens)
+    }
+}
+
+public struct TurnEdits: Codable, Sendable, Hashable {
+    public var files: Int
+    public var added: Int
+    public var removed: Int
+
+    public init(files: Int, added: Int, removed: Int) {
+        self.files = files
+        self.added = added
+        self.removed = removed
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case files = "files"
+        case added = "added"
+        case removed = "removed"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.files = try c.decode(Int.self, forKey: .files)
+        self.added = try c.decode(Int.self, forKey: .added)
+        self.removed = try c.decode(Int.self, forKey: .removed)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(files, forKey: .files)
+        try c.encode(added, forKey: .added)
+        try c.encode(removed, forKey: .removed)
     }
 }
 
@@ -6094,6 +6230,38 @@ public struct TurnCompletedNotification: Codable, Sendable, Hashable {
     }
 }
 
+public struct TurnUpdatedNotification: Codable, Sendable, Hashable {
+    public var threadId: String
+    public var seq: Int
+    public var turn: Turn
+
+    public init(threadId: String, seq: Int, turn: Turn) {
+        self.threadId = threadId
+        self.seq = seq
+        self.turn = turn
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case threadId = "threadId"
+        case seq = "seq"
+        case turn = "turn"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.threadId = try c.decode(String.self, forKey: .threadId)
+        self.seq = try c.decode(Int.self, forKey: .seq)
+        self.turn = try c.decode(Turn.self, forKey: .turn)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(threadId, forKey: .threadId)
+        try c.encode(seq, forKey: .seq)
+        try c.encode(turn, forKey: .turn)
+    }
+}
+
 public struct ItemStartedNotification: Codable, Sendable, Hashable {
     public var threadId: String
     public var seq: Int
@@ -6844,6 +7012,7 @@ public enum ServerNotification: Sendable, Hashable {
     case threadTokenUsageUpdated(ThreadTokenUsageUpdatedNotification)
     case turnStarted(TurnStartedNotification)
     case turnCompleted(TurnCompletedNotification)
+    case turnUpdated(TurnUpdatedNotification)
     case itemStarted(ItemStartedNotification)
     case itemUpdated(ItemUpdatedNotification)
     case itemCompleted(ItemCompletedNotification)
@@ -6866,7 +7035,7 @@ public enum ServerNotification: Sendable, Hashable {
     case threadStderr(ThreadStderrNotification)
     case unknown(method: String, params: JSONValue)
 
-    public static let methods: Set<String> = ["thread/started", "thread/updated", "thread/status/changed", "thread/closed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "item/started", "item/updated", "item/completed", "item/agentMessage/delta", "item/reasoning/delta", "item/toolCall/inputDelta", "item/toolCall/progress", "task/updated", "thread/queuedInput", "thread/promptSuggestion", "thread/taskSuggested", "thread/commandsChanged", "thread/apiRetry", "thread/rateLimit", "thread/authStatus", "thread/notification", "thread/hook", "thread/rawEvent", "serverRequest/resolved", "thread/stderr"]
+    public static let methods: Set<String> = ["thread/started", "thread/updated", "thread/status/changed", "thread/closed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "turn/updated", "item/started", "item/updated", "item/completed", "item/agentMessage/delta", "item/reasoning/delta", "item/toolCall/inputDelta", "item/toolCall/progress", "task/updated", "thread/queuedInput", "thread/promptSuggestion", "thread/taskSuggested", "thread/commandsChanged", "thread/apiRetry", "thread/rateLimit", "thread/authStatus", "thread/notification", "thread/hook", "thread/rawEvent", "serverRequest/resolved", "thread/stderr"]
 
     public init(method: String, params: Data, decoder: JSONDecoder = JSONDecoder()) throws {
         switch method {
@@ -6877,6 +7046,7 @@ public enum ServerNotification: Sendable, Hashable {
         case "thread/tokenUsage/updated": self = .threadTokenUsageUpdated(try decoder.decode(ThreadTokenUsageUpdatedNotification.self, from: params))
         case "turn/started": self = .turnStarted(try decoder.decode(TurnStartedNotification.self, from: params))
         case "turn/completed": self = .turnCompleted(try decoder.decode(TurnCompletedNotification.self, from: params))
+        case "turn/updated": self = .turnUpdated(try decoder.decode(TurnUpdatedNotification.self, from: params))
         case "item/started": self = .itemStarted(try decoder.decode(ItemStartedNotification.self, from: params))
         case "item/updated": self = .itemUpdated(try decoder.decode(ItemUpdatedNotification.self, from: params))
         case "item/completed": self = .itemCompleted(try decoder.decode(ItemCompletedNotification.self, from: params))
@@ -6911,6 +7081,7 @@ public enum ServerNotification: Sendable, Hashable {
         case .threadTokenUsageUpdated(let n): return n.threadId
         case .turnStarted(let n): return n.threadId
         case .turnCompleted(let n): return n.threadId
+        case .turnUpdated(let n): return n.threadId
         case .itemStarted(let n): return n.threadId
         case .itemUpdated(let n): return n.threadId
         case .itemCompleted(let n): return n.threadId
@@ -6943,6 +7114,7 @@ public enum ServerNotification: Sendable, Hashable {
         case .threadTokenUsageUpdated(let n): return n.seq
         case .turnStarted(let n): return n.seq
         case .turnCompleted(let n): return n.seq
+        case .turnUpdated(let n): return n.seq
         case .itemStarted(let n): return n.seq
         case .itemUpdated(let n): return n.seq
         case .itemCompleted(let n): return n.seq

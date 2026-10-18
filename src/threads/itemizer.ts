@@ -1,4 +1,5 @@
-import type { Item, SessionCron, TaskState, ToolCallItem, ToolKind, Turn, TurnResult, UserInput } from '../protocol/index.ts';
+import type { FileEdit, Item, SessionCron, TaskState, ToolCallItem, ToolKind, Turn, TurnResult, UserInput } from '../protocol/index.ts';
+import { editOf, isEditCall, totalsOf, trimmedEditOutput } from './edits.ts';
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
 import type { GoalNotice } from '../protocol/items.ts';
 import {
@@ -178,6 +179,8 @@ export class Itemizer {
   private processEnded = false;
   /** Something a task's state is made from changed since the states were last sent. */
   private tasksDirty = false;
+  /** Each turn's edits, by call id. */
+  private editsByTurn = new Map<string, Map<string, FileEdit>>();
   /** The messages taken as skills' instructions, by message id, and whose. */
   private skillMessages = new Map<string, string>();
   /** The latest item of the chat (null) and of each subagent, for what follows it. */
@@ -995,8 +998,13 @@ export class Itemizer {
     const deniedMsg = this.denied.get(t.id);
     t.status = deniedMsg !== undefined ? 'denied' : isError ? 'failed' : 'completed';
     t.outputText = text;
-    if (structured !== undefined) t.output = structured;
     if (isError) t.isError = true;
+    const out: Emission[] = [];
+    if (isEditCall(t)) {
+      const edit = editOf(t, structured);
+      if (edit) out.push(...this.noteEdit(t, edit));
+      if (structured !== undefined) t.output = trimmedEditOutput(structured);
+    } else if (structured !== undefined) t.output = structured;
     // A background agent's launch names the task its report and notification will come from.
     const agentId = (structured as AnyMsg)?.agentId ?? /^agentId: (\w+)/m.exec(text)?.[1];
     if (t.kind === 'subagent' && typeof agentId === 'string') {
@@ -1004,7 +1012,29 @@ export class Itemizer {
       this.linkTask(agentId, t.id);
     }
     if (t.name === 'Workflow' && !isError) this.noteWorkflowLaunch(t, structured, text);
-    return this.addCompleted(t);
+    return [...this.addCompleted(t), ...out];
+  }
+
+  /**
+   * An edit, counted in its turn's edits. A turn that has ended already (a background agent's edit
+   * after it) is sent again with its totals.
+   */
+  private noteEdit(t: ToolCallItem, edit: FileEdit): Emission[] {
+    t.edit = edit;
+    if (!t.turnId) return [];
+    let edits = this.editsByTurn.get(t.turnId);
+    if (!edits) this.editsByTurn.set(t.turnId, (edits = new Map()));
+    edits.set(t.id, edit);
+    const turn = this.turns.find((x) => x.id === t.turnId);
+    if (!turn || turn === this.turn || turn.status === 'inProgress') return [];
+    turn.edits = totalsOf(edits.values());
+    return [{ method: 'turn/updated', body: { turn: structuredClone(turn) } }];
+  }
+
+  /** A turn's edit totals, as it ends. */
+  private settleEdits(turn: Turn) {
+    const totals = totalsOf(this.editsByTurn.get(turn.id)?.values() ?? []);
+    if (totals) turn.edits = totals;
   }
 
   /** A Workflow call's launch names its task and run; history has only the text. */
@@ -1408,6 +1438,7 @@ export class Itemizer {
     if (this.interruptRequested && msg.subtype === 'success') turn.status = 'interrupted';
     turn.completedAt = this.stamp();
     turn.result = result;
+    this.settleEdits(turn);
     // Anything still in flight did not finish.
     for (const t of this.cutShort(turn.id)) {
       t.status = 'interrupted';
@@ -1462,6 +1493,7 @@ export class Itemizer {
       t.status = 'interrupted';
       out.push(...this.addCompleted(t));
     }
+    this.settleEdits(turn);
     out.push({ method: 'turn/completed', body: { turn: structuredClone(turn) } });
     this.lastTurnId = turn.id;
     this.turn = null;

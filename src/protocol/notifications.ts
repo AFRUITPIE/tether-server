@@ -29,6 +29,8 @@ export const Notifications = {
 
   'turn/started': z.object({ ...T, turn: Turn }),
   'turn/completed': z.object({ ...T, turn: Turn }),
+  /** A turn that has ended changed: its `edits`, when a background agent it launched edits a file after it. */
+  'turn/updated': z.object({ ...T, turn: Turn }),
 
   'item/started': z.object({ ...T, item: Item }),
   'item/updated': z.object({ ...T, item: Item }),

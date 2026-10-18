@@ -2315,6 +2315,28 @@
       ],
       "additionalProperties": false
     },
+    "turn/updated": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "turn": {
+          "$ref": "#/$defs/Turn"
+        }
+      },
+      "required": [
+        "threadId",
+        "seq",
+        "turn"
+      ],
+      "additionalProperties": false
+    },
     "item/started": {
       "type": "object",
       "properties": {
@@ -3960,6 +3982,9 @@
             },
             "skillInstructions": {
               "type": "string"
+            },
+            "edit": {
+              "$ref": "#/$defs/FileEdit"
             }
           },
           "required": [
@@ -4162,6 +4187,87 @@
         "interrupted"
       ]
     },
+    "FileEdit": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "hunks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiffHunk"
+          }
+        },
+        "added": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "removed": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "truncatedLines": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "created": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "hunks",
+        "added",
+        "removed"
+      ],
+      "additionalProperties": false
+    },
+    "DiffHunk": {
+      "type": "object",
+      "properties": {
+        "oldStart": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "oldLines": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "newStart": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "newLines": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "header": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "oldStart",
+        "oldLines",
+        "newStart",
+        "newLines",
+        "lines"
+      ],
+      "additionalProperties": false
+    },
     "GoalNotice": {
       "type": "object",
       "properties": {
@@ -4214,6 +4320,9 @@
         },
         "result": {
           "$ref": "#/$defs/TurnResult"
+        },
+        "edits": {
+          "$ref": "#/$defs/TurnEdits"
         }
       },
       "required": [
@@ -4352,6 +4461,32 @@
         "cacheReadInputTokens",
         "cacheCreationInputTokens",
         "costUsd"
+      ],
+      "additionalProperties": false
+    },
+    "TurnEdits": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "added": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "removed": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "files",
+        "added",
+        "removed"
       ],
       "additionalProperties": false
     },

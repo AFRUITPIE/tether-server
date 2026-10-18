@@ -33,6 +33,44 @@ export const ToolStatus = z
   .meta({ id: 'ToolStatus' });
 export type ToolStatus = z.infer<typeof ToolStatus>;
 
+/**
+ * A hunk of a line diff, as Claude Code's `structuredPatch` and a unified diff have it: each line
+ * prefixed `' '` (context), `'+'` (added) or `'-'` (removed), or `'\\'` ("No newline at end of
+ * file"). `oldStart`/`newStart` are 1-based; 0 where the position in the file isn't known (an edit
+ * compared from its own old and new text).
+ */
+export const DiffHunk = z
+  .object({
+    oldStart: z.number().int(),
+    oldLines: z.number().int(),
+    newStart: z.number().int(),
+    newLines: z.number().int(),
+    lines: z.array(z.string()),
+    /** What git says the hunk is in ("func body()"), after its `@@ … @@`. */
+    header: z.string().optional(),
+  })
+  .meta({ id: 'DiffHunk' });
+export type DiffHunk = z.infer<typeof DiffHunk>;
+
+/**
+ * What a finished Edit, MultiEdit, Write or NotebookEdit call changed in its file: Claude Code's
+ * patch, else (a call it reported no patch for) the call's own old and new text compared. Lines
+ * past 5,000 are counted in `added`/`removed` but not kept (`truncatedLines`); a line is cut at
+ * 1,000 characters ("…").
+ */
+export const FileEdit = z
+  .object({
+    path: z.string(),
+    hunks: z.array(DiffHunk),
+    added: z.number().int(),
+    removed: z.number().int(),
+    truncatedLines: z.number().int().optional(),
+    /** The call made the file (a Write of a file that wasn't there). */
+    created: z.boolean().optional(),
+  })
+  .meta({ id: 'FileEdit' });
+export type FileEdit = z.infer<typeof FileEdit>;
+
 const base = {
   id: z.string(),
   turnId: z.string().nullable(),
@@ -105,6 +143,12 @@ export const ToolCallItem = z.object({
    * message of its own right after the call. It is the call's, never a message of the chat.
    */
   skillInstructions: z.string().optional(),
+  /**
+   * A finished Edit, MultiEdit, Write or NotebookEdit's change to its file (none for one that
+   * failed, was denied or stopped). Its `output` then leaves out what `edit` holds and the file's
+   * whole text (`structuredPatch`, `originalFile`, `content`).
+   */
+  edit: FileEdit.optional(),
 });
 
 export const CompactionItem = z.object({
@@ -187,6 +231,12 @@ export const TurnResult = z
   .meta({ id: 'TurnResult' });
 export type TurnResult = z.infer<typeof TurnResult>;
 
+/** What a turn's edits (its calls' and its subagents') changed: how many files, lines added and removed. */
+export const TurnEdits = z
+  .object({ files: z.number().int(), added: z.number().int(), removed: z.number().int() })
+  .meta({ id: 'TurnEdits' });
+export type TurnEdits = z.infer<typeof TurnEdits>;
+
 export const Turn = z
   .object({
     id: z.string(),
@@ -194,6 +244,11 @@ export const Turn = z
     startedAt: z.number(),
     completedAt: z.number().optional(),
     result: TurnResult.optional(),
+    /**
+     * Once it has ended, what its edits changed (from each call's `edit`), when it changed any. A
+     * background agent's edit after the turn ended updates it (`turn/updated`).
+     */
+    edits: TurnEdits.optional(),
   })
   .meta({ id: 'Turn' });
 export type Turn = z.infer<typeof Turn>;

@@ -402,6 +402,12 @@ export class TranscriptExtras {
   private read = new Set<string>();
   /** How far into the file has been read. */
   offset = 0;
+  /**
+   * Edit calls' results as the transcript keeps them (`toolUseResult`, with Claude Code's
+   * `structuredPatch`), by tool use id: getSessionMessages drops them, and a call's `edit` is made
+   * of them (`withResult`).
+   */
+  private results = new Map<string, Record<string, unknown>>();
 
   /** Reads what the file holds from `offset` on. */
   async readFile(path: string): Promise<void> {
@@ -427,13 +433,15 @@ export class TranscriptExtras {
 
   add(lines: string[]): void {
     for (const line of lines) {
-      if (!line.includes('"attachment"') && !line.includes('"isMeta":true') && !line.includes('"local_command"')) continue;
+      const patch = line.includes('"structuredPatch"');
+      if (!patch && !line.includes('"attachment"') && !line.includes('"isMeta":true') && !line.includes('"local_command"')) continue;
       let o: any;
       try {
         o = JSON.parse(line);
       } catch {
         continue;
       }
+      if (patch) this.keepResult(o);
       if (!o || o.isSidechain || typeof o.uuid !== 'string') continue;
       const dropped = o.type === 'attachment' || (o.type === 'user' && o.isMeta === true);
       if (dropped && typeof o.parentUuid === 'string') this.parentOf.set(o.uuid, o.parentUuid);
@@ -478,7 +486,25 @@ export class TranscriptExtras {
     const out = this.found;
     this.found = [];
     this.waiting.clear();
+    // The stream carries results itself.
+    this.results.clear();
     return out;
+  }
+
+  private keepResult(o: any) {
+    const r = o?.toolUseResult;
+    const blocks = o?.message?.content;
+    if (o?.type !== 'user' || !r || typeof r !== 'object' || !Array.isArray(blocks)) return;
+    const id = blocks.find((b: any) => b?.type === 'tool_result')?.tool_use_id;
+    if (typeof id === 'string') this.results.set(id, { type: r.type, filePath: r.filePath, structuredPatch: r.structuredPatch });
+  }
+
+  /** A history message with its edit call's result put back, which getSessionMessages leaves out. */
+  withResult(m: Record<string, any>): Record<string, any> {
+    if (m?.type !== 'user' || m.tool_use_result !== undefined || !Array.isArray(m.message?.content)) return m;
+    const results = m.message.content.filter((b: any) => b?.type === 'tool_result');
+    const r = results.length === 1 ? this.results.get(results[0].tool_use_id) : undefined;
+    return r ? { ...m, tool_use_result: r } : m;
   }
 }
 
@@ -514,7 +540,7 @@ export function ingestHistory(iz: Itemizer, msgs: readonly unknown[], extras?: T
   const out: Emission[] = [];
   if (extras) for (const r of extras.late()) out.push(...iz.ingestExtra(r));
   for (const m of msgs as Record<string, any>[]) {
-    out.push(...iz.ingest(m));
+    out.push(...iz.ingest(extras ? extras.withResult(m) : m));
     if (extras) for (const r of extras.after(m.uuid)) out.push(...iz.ingestExtra(r));
   }
   return out;
