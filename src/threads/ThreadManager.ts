@@ -740,29 +740,20 @@ type ChatState = { view: () => Snapshot; changing: (x: Item | Turn) => boolean; 
 export function mergeHistory(stored: Snapshot, live: Snapshot): Snapshot {
   const liveById = new Map(live.items.map((i) => [i.id, i]));
   const storedIds = new Set(stored.items.map((i) => i.id));
-  // The live-only items that follow each item (null: the first).
-  const following = new Map<string | null, Item[]>();
-  let previous: string | null = null;
+  // Each run of live-only items, by the stored item it followed in the live thread (null: none).
+  const runs = new Map<string | null, Item[]>();
+  let after: string | null = null;
   for (const item of live.items) {
-    if (!storedIds.has(item.id)) following.set(previous, [...(following.get(previous) ?? []), item]);
-    previous = item.id;
-  }
-  const items: Item[] = [];
-  const pending: Item[] = [...(following.get(null) ?? [])].reverse();
-  const place = () => {
-    while (pending.length) {
-      const item = pending.pop()!;
-      items.push(item);
-      pending.push(...[...(following.get(item.id) ?? [])].reverse());
+    if (storedIds.has(item.id)) {
+      after = item.id;
+      continue;
     }
-  };
-  place();
-  for (const s of stored.items) {
-    const item = liveById.get(s.id) ?? s;
-    items.push(item);
-    pending.push(...[...(following.get(item.id) ?? [])].reverse());
-    place();
+    const run = runs.get(after);
+    if (run) run.push(item);
+    else runs.set(after, [item]);
   }
+  const items = [...(runs.get(null) ?? [])];
+  for (const s of stored.items) items.push(liveById.get(s.id) ?? s, ...(runs.get(s.id) ?? []));
   const used = new Set(items.map((i) => i.turnId));
   const liveTurns = new Set(live.turns.map((t) => t.id));
   const turns = [...stored.turns.filter((t) => !liveTurns.has(t.id) && used.has(t.id)), ...live.turns];
