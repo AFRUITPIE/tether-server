@@ -5,8 +5,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { resolveClaude } from '../claude.ts';
+import { PROTOCOL_VERSION } from '../protocol/index.ts';
 import { Connection } from '../rpc/connection.ts';
-import { ClientSession } from '../server/session.ts';
+import { ClientSession, UPGRADE_CLIENT } from '../server/session.ts';
 import { TETHER_VERSION } from '../threads/LiveThread.ts';
 import { Scheduler } from '../threads/Scheduler.ts';
 import { ThreadManager } from '../threads/ThreadManager.ts';
@@ -150,7 +151,7 @@ async function tryUpgrade(meta: DaemonMeta) {
     });
     const conn = new Connection(sock, sock, 'upgrade');
     conn.start({ onRequest: async () => ({}), onNotification: () => {}, onClose: () => {} });
-    await conn.request('initialize', { clientInfo: { name: 'tether-upgrade', version: TETHER_VERSION } }, 'u1');
+    await conn.request('initialize', { clientInfo: { name: UPGRADE_CLIENT, version: TETHER_VERSION }, protocolVersion: PROTOCOL_VERSION }, 'u1');
     const r = (await conn.request('host/requestShutdown', { reason: `upgrade to ${TETHER_VERSION}` }, 'u2')) as {
       accepted: boolean;
     };

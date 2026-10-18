@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
+import { PROTOCOL_VERSION } from '../src/protocol/index.ts';
 import { Connection, ErrorCodes } from '../src/rpc/connection.ts';
 import { installPlugin, listPlugins, setPluginEnabled, uninstallPlugin } from '../src/server/plugins.ts';
 import { ClientSession } from '../src/server/session.ts';
@@ -60,7 +61,7 @@ describe('plugins', () => {
     new ClientSession(new Connection(toServer, toClient, 'server'), new ThreadManager({ path: '/usr/bin/false', version: '0' }), 'stdio').start();
     const client = new Connection(toClient, toServer, 'client');
     client.start({ onRequest: async () => ({}), onNotification: () => {}, onClose: () => {} });
-    await client.request('initialize', { clientInfo: { name: 'test', version: '0' } }, 'c1');
+    await client.request('initialize', { clientInfo: { name: 'test', version: '0' }, protocolVersion: PROTOCOL_VERSION }, 'c1');
     for (const [method, params] of [
       ['plugin/uninstall', { pluginId: 'a@m', scope: 'everywhere' }],
       ['plugin/setEnabled', { pluginId: 'a@m', enabled: true, scope: '--help' }],

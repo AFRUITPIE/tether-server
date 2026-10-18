@@ -2,9 +2,9 @@
 // swiftlint:disable all
 import Foundation
 
-public let tetherProtocolVersion = 1
+public let tetherProtocolVersion = 2
 /// The oldest client protocol the server this was generated from still serves.
-public let tetherMinClientProtocol = 1
+public let tetherMinClientProtocol = 2
 
 public typealias EnvOverrides = [String: String]
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Tether protocol",
-  "protocolVersion": 1,
-  "minClientProtocol": 1,
+  "protocolVersion": 2,
+  "minClientProtocol": 2,
   "methods": {
     "initialize": {
       "params": {

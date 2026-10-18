@@ -28,7 +28,7 @@ export const Methods = {
   initialize: {
     params: z.object({
       clientInfo: z.object({ name: z.string(), title: z.string().optional(), version: z.string() }),
-      /** The client's protocol. Clients that predate it send none and are served as protocol 1. */
+      /** The client's protocol. A client that sends none is taken to speak protocol 1, and refused. */
       protocolVersion: z.number().int().optional(),
       capabilities: z
         .object({
@@ -44,7 +44,7 @@ export const Methods = {
       protocolVersion: z.number().int(),
       /**
        * The oldest client protocol this server serves; an older client is refused with
-       * `incompatibleProtocol`. Absent from servers that predate it, which serve protocol 1.
+       * `incompatibleProtocol`.
        */
       minClientProtocol: z.number().int().optional(),
       host: z.object({

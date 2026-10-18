@@ -36,7 +36,7 @@ c.onServerRequest = (method, params) => {
 };
 
 const init = await c.initialize();
-ok(init.claude.version && init.protocolVersion === 1, `initialize (claude ${init.claude.version})`);
+ok(init.claude.version && init.protocolVersion === 2, `initialize (claude ${init.claude.version})`);
 const models = await c.call('model/list', { cwd });
 ok(models.models.length > 0, `model/list returned ${models.models.length} models`);
 

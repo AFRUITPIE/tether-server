@@ -27,9 +27,12 @@ describe('protocol handshake', () => {
     expect(r.minClientProtocol).toBe(MIN_CLIENT_PROTOCOL);
   });
 
-  test('a client that predates the field is served as protocol 1', async () => {
-    const r: any = await connect().request('initialize', { clientInfo }, 'c1');
-    expect(r.protocolVersion).toBe(PROTOCOL_VERSION);
+  test('a client that predates the field speaks protocol 1, and is refused', async () => {
+    const e: any = await connect()
+      .request('initialize', { clientInfo }, 'c1')
+      .catch((e) => e);
+    expect(e.code).toBe(ErrorCodes.incompatibleProtocol);
+    expect(MIN_CLIENT_PROTOCOL).toBe(2);
   });
 
   test('a client older than the server serves is refused with both numbers', async () => {
@@ -38,6 +41,16 @@ describe('protocol handshake', () => {
       .catch((e) => e);
     expect(e.code).toBe(ErrorCodes.incompatibleProtocol);
     expect(e.data).toEqual({ protocolVersion: PROTOCOL_VERSION, minClientProtocol: MIN_CLIENT_PROTOCOL });
+  });
+
+  test("an older release's `connect` can still ask the daemon to make way, and nothing else", async () => {
+    const c = connect();
+    const r: any = await c.request('initialize', { clientInfo: { name: 'tether-upgrade', version: '0.5.22' } }, 'c1');
+    expect(r.protocolVersion).toBe(PROTOCOL_VERSION);
+    // serve --stdio has no daemon to stop, but the method is served.
+    expect(await c.request<any>('host/requestShutdown', { reason: 'upgrade' }, 'c2')).toEqual({ accepted: false });
+    const e: any = await c.request('thread/list', {}, 'c3').catch((e) => e);
+    expect(e.code).toBe(ErrorCodes.incompatibleProtocol);
   });
 
   test('`tether version --json` names this machine’s release asset', () => {

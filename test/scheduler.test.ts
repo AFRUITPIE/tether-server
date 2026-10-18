@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ScheduledTask } from '../src/protocol/index.ts';
+import { PROTOCOL_VERSION, ScheduledTask } from '../src/protocol/index.ts';
 import { LiveThread } from '../src/threads/LiveThread.ts';
 import { loadTasks, nextRun, Scheduler } from '../src/threads/Scheduler.ts';
 import { ThreadManager } from '../src/threads/ThreadManager.ts';
@@ -299,7 +299,7 @@ describe('unattended runs', () => {
       new ClientSession(new Connection(toServer, toClient, 'server'), mgr, 'daemon').start();
       const client = new Connection(toClient, toServer, 'client');
       client.start({ onRequest: async () => ({}), onNotification: () => {}, onClose: () => {} });
-      await client.request('initialize', { clientInfo: { name: 'test', version: '0' }, ...params }, 'c1');
+      await client.request('initialize', { clientInfo: { name: 'test', version: '0' }, protocolVersion: PROTOCOL_VERSION, ...params }, 'c1');
     };
     await initialize({ env: { AWS_PROFILE: 'work' } });
     await initialize({});

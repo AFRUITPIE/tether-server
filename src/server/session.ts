@@ -14,6 +14,14 @@ type Handler<M extends MethodName> = (p: Params<M>) => Promise<Result<M>> | Resu
 const SIDE_QUESTION_TIMEOUT_MS = 60_000;
 
 /**
+ * The client `tether connect` is when it asks a daemon of another version to make way. Served
+ * whatever protocol it speaks, for that alone (`host/requestShutdown`): a release's `connect`
+ * must be able to replace any other release's daemon, an older app's included.
+ */
+export const UPGRADE_CLIENT = 'tether-upgrade';
+const UPGRADE_METHODS = new Set(['initialize', 'host/requestShutdown']);
+
+/**
  * A side question (the CLI's /btw), given up on after `timeoutMs`: the request is cancelled in
  * Claude Code and the client told, rather than left waiting on an answer that may never come.
  */
@@ -44,6 +52,8 @@ export async function askSideQuestion(query: unknown, question: string, timeoutM
 export class ClientSession implements Subscriber {
   readonly id = randomUUID();
   private initialized = false;
+  /** Initialized as `tether connect`'s upgrade client with a protocol this server doesn't serve. */
+  private upgradeOnly = false;
   private env: Record<string, string> = {};
   private optOut = new Set<string>();
   private experimental = false;
@@ -106,6 +116,11 @@ export class ClientSession implements Subscriber {
     const spec = (Methods as Record<string, { params: any }>)[method];
     if (!spec) throw new RpcError(ErrorCodes.methodNotFound, `unknown method ${method}`);
     if (method !== 'initialize' && !this.initialized) throw new RpcError(ErrorCodes.notInitialized, 'Not initialized');
+    if (this.upgradeOnly && !UPGRADE_METHODS.has(method))
+      throw new RpcError(ErrorCodes.incompatibleProtocol, 'only an upgrade is served at this protocol', {
+        protocolVersion: PROTOCOL_VERSION,
+        minClientProtocol: MIN_CLIENT_PROTOCOL,
+      });
     const parsed = spec.params.safeParse(raw ?? {});
     if (!parsed.success) throw new RpcError(ErrorCodes.invalidParams, parsed.error.message);
     const handler = (this.handlers as Record<string, (p: unknown) => unknown>)[method];
@@ -121,7 +136,8 @@ export class ClientSession implements Subscriber {
     initialize: async (p) => {
       if (this.initialized) throw new RpcError(ErrorCodes.alreadyInitialized, 'Already initialized');
       const clientProtocol = p.protocolVersion ?? 1;
-      if (clientProtocol < MIN_CLIENT_PROTOCOL) {
+      this.upgradeOnly = clientProtocol < MIN_CLIENT_PROTOCOL && p.clientInfo.name === UPGRADE_CLIENT;
+      if (clientProtocol < MIN_CLIENT_PROTOCOL && !this.upgradeOnly) {
         this.log(`client ${this.id} refused: ${p.clientInfo.name} ${p.clientInfo.version} speaks protocol ${clientProtocol}`);
         throw new RpcError(
           ErrorCodes.incompatibleProtocol,

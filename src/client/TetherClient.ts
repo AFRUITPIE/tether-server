@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Connection } from '../rpc/connection.ts';
-import type { MethodName, Params, Result } from '../protocol/index.ts';
+import { PROTOCOL_VERSION, type MethodName, type Params, type Result } from '../protocol/index.ts';
 
 type ServerRequestHandler = (method: string, params: any) => Promise<unknown> | unknown;
 
@@ -63,6 +63,7 @@ export class TetherClient {
   async initialize(env?: Record<string, string>) {
     const r = await this.call('initialize', {
       clientInfo: { name: 'tether-test', version: '0' },
+      protocolVersion: PROTOCOL_VERSION,
       capabilities: { experimentalApi: true },
       ...(env ? { env } : {}),
     });

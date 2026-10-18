@@ -108,7 +108,7 @@ describe('a single-client server', () => {
   });
 
   test('says which kind of server it is', async () => {
-    const r = await connect().call('initialize', { clientInfo });
+    const r = await connect().call('initialize', { clientInfo, protocolVersion: PROTOCOL_VERSION });
     expect(r.host.mode).toBe('stdio');
     expect(r.host.pid).toBe(process.pid);
     expect(r.claude).toEqual(claude);
