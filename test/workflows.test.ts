@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Item } from '../src/protocol/index.ts';
@@ -15,6 +15,7 @@ import {
   settleAgents,
   scriptMeta,
   workflowAgentLocator,
+  workflowCallLocator,
   workflowCallName,
 } from '../src/threads/workflows.ts';
 
@@ -436,5 +437,24 @@ describe('workflow tasks read with the chat', async () => {
   test('path traversal is refused', async () => {
     await expect(mgr.workflowAgentItems(sid, RUN, '../agent-a7967148a35efb746')).rejects.toThrow();
     await expect(mgr.workflowAgentItems('../x', RUN, 'a7967148a35efb746')).rejects.toThrow();
+  });
+});
+
+describe('finding the agent that made a call', () => {
+  test('a call written after the first look is found, each transcript read on from where it was looked at', () => {
+    const session = mkdtempSync(join(tmpdir(), 'tether-locate-'));
+    const run = join(session, 'subagents', 'workflows', 'wf_run-1');
+    mkdirSync(run, { recursive: true });
+    const a = join(run, 'agent-a1.jsonl');
+    const b = join(run, 'agent-b2.jsonl');
+    writeFileSync(a, '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_other"}]}}\n');
+    writeFileSync(b, '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tool');
+    const locate = workflowCallLocator(session);
+    expect(locate('toolu_mine', ['wf_run-1'])).toBeUndefined();
+    // The id split across two writes is still found.
+    appendFileSync(b, 'u_mine"}]}}\n');
+    expect(locate('toolu_mine', ['wf_run-1'])).toEqual({ runId: 'wf_run-1', agentId: 'b2' });
+    expect(locate('toolu_other', ['wf_run-1'])).toEqual({ runId: 'wf_run-1', agentId: 'a1' });
+    expect(locate('../x', ['wf_run-1'])).toBeUndefined();
   });
 });

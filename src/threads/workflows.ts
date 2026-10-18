@@ -1,4 +1,4 @@
-import { closeSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import type { Item } from '../protocol/index.ts';
@@ -311,15 +311,21 @@ export function workflowAgentLocator(sessionDir: string | (() => string | undefi
 /**
  * Which agent of the given runs made a tool call, by the call's id in the agents' transcripts: for a
  * task a workflow agent started (its own background command), which the stream reports with the
- * call's id alone. Read when asked, since a call is written as the agent makes it.
+ * call's id alone. Asked again on each of the task's events until found, since a call is written as
+ * the agent makes it; each transcript only grows, so each look reads only what was written since
+ * the last one for that call.
  */
 export function workflowCallLocator(
   sessionDir: string | (() => string | undefined),
 ): (toolUseId: string, runIds: string[]) => { runId: string; agentId: string } | undefined {
+  /** For each call still looked for, how far into each agent's transcript it was looked for. */
+  const searched = new Map<string, Map<string, number>>();
   return (toolUseId, runIds) => {
     const dir = typeof sessionDir === 'string' ? sessionDir : sessionDir();
     if (!dir || !isSafeId(toolUseId)) return undefined;
-    const needle = `"id":"${toolUseId}"`;
+    const needle = Buffer.from(`"id":"${toolUseId}"`);
+    let upTo = searched.get(toolUseId);
+    if (!upTo) searched.set(toolUseId, (upTo = new Map()));
     for (const runId of runIds) {
       if (!isSafeId(runId)) continue;
       let files: string[] = [];
@@ -331,8 +337,24 @@ export function workflowCallLocator(
       for (const f of files) {
         const m = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(f);
         if (!m) continue;
+        const path = join(runDir(dir, runId), f);
         try {
-          if (readFileSync(join(runDir(dir, runId), f), 'utf8').includes(needle)) return { runId, agentId: m[1]! };
+          const fd = openSync(path, 'r');
+          try {
+            const size = fstatSync(fd).size;
+            const seen = upTo.get(path) ?? 0;
+            // From a needle's length back, for a match cut by the last look's end; all of it, if rewritten.
+            const start = seen > size ? 0 : Math.max(0, seen - needle.length + 1);
+            const buf = Buffer.allocUnsafe(size - start);
+            const read = readSync(fd, buf, 0, buf.length, start);
+            if (buf.subarray(0, read).includes(needle)) {
+              searched.delete(toolUseId);
+              return { runId, agentId: m[1]! };
+            }
+            upTo.set(path, start + read);
+          } finally {
+            closeSync(fd);
+          }
         } catch {
           // gone or unreadable: not this one
         }
