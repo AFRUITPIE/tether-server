@@ -24,6 +24,7 @@ npx -y tether-server@<version> connect
 Version 2 (`PROTOCOL_VERSION`; clients must send `protocolVersion: 2` in `initialize`). `schema/tether.schema.json` has every method, notification and type; `AGENTS.md` ("Protocol 2") what each means. In short:
 
 - Every thread-scoped notification carries `threadId` and a per-thread `seq`; a read's `historySeq` says which events its snapshot includes, and `thread/subscribe` with `afterSeq` replays the rest (`gap` when it can't).
+- `thread/start` with a prompt returns its item's `messageId` (and `turnId`); that item is on the chat's stream before the result.
 - **Tasks** are typed state: `TaskState` (agents, commands, monitors, MCP tools, workflows and their agents, schedules, goals; each with its `parentId`, `status`, usage and kind-specific fields). `thread/read`, `thread/resume` (with history) and `thread/subscribe` return all of a chat's `tasks`, finished ones included, kept by the daemon across reloads and restarts; `task/updated` sends a task's whole state each time it changes.
 
 ## Development (Bun via mise)

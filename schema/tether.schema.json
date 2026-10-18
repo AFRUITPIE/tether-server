@@ -604,6 +604,12 @@
         "properties": {
           "thread": {
             "$ref": "#/$defs/ThreadInfo"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": "string"
           }
         },
         "required": [

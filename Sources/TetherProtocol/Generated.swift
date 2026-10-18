@@ -3206,23 +3206,33 @@ public struct ThreadStartParams: Codable, Sendable, Hashable {
 
 public struct ThreadStartResult: Codable, Sendable, Hashable {
     public var thread: ThreadInfo
+    public var messageId: String?
+    public var turnId: String?
 
-    public init(thread: ThreadInfo) {
+    public init(thread: ThreadInfo, messageId: String? = nil, turnId: String? = nil) {
         self.thread = thread
+        self.messageId = messageId
+        self.turnId = turnId
     }
 
     private enum CodingKeys: String, CodingKey {
         case thread = "thread"
+        case messageId = "messageId"
+        case turnId = "turnId"
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.thread = try c.decode(ThreadInfo.self, forKey: .thread)
+        self.messageId = try c.decodeIfPresent(String.self, forKey: .messageId)
+        self.turnId = try c.decodeIfPresent(String.self, forKey: .turnId)
     }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(thread, forKey: .thread)
+        try c.encodeIfPresent(messageId, forKey: .messageId)
+        try c.encodeIfPresent(turnId, forKey: .turnId)
     }
 }
 

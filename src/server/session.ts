@@ -226,8 +226,9 @@ export class ClientSession implements Subscriber {
     'thread/start': async (p) => {
       const t = await this.mgr.start(p, this.env);
       this.subscribe(t, 0);
-      if (p.input?.length) t.send(p.input);
-      return { thread: t.threadInfo() };
+      // Sent to this client as it is emitted, so the prompt's item is on the wire before the result.
+      const sent = p.input?.length ? t.send(p.input) : undefined;
+      return { thread: t.threadInfo(), ...(sent ? { messageId: sent.messageId, turnId: sent.turnId } : {}) };
     },
 
     'thread/resume': async (p) => {

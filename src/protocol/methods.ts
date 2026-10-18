@@ -178,7 +178,12 @@ export const Methods = {
        */
       generateTitle: z.boolean().optional(),
     }),
-    result: z.object({ thread: ThreadInfo }),
+    /**
+     * With `input`: the id of the prompt's `userMessage` item and of the turn it starts. The prompt's
+     * item (`item/started`, `item/completed`) and its `turn/started` are on the chat's stream before
+     * this result: a client that has the result has the item.
+     */
+    result: z.object({ thread: ThreadInfo, messageId: z.string().optional(), turnId: z.string().optional() }),
   },
 
   'thread/resume': {
