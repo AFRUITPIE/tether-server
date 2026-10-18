@@ -168,8 +168,11 @@ export class Itemizer {
   private editsByTurn = new Map<string, Map<string, FileEdit>>();
   /** The messages taken as skills' instructions, by message id, and whose. */
   private skillMessages = new Map<string, string>();
-  /** The latest item of the chat (null) and of each subagent, for what follows it. */
-  private lastItemOf = new Map<string | null, string>();
+  /**
+   * The Skill calls still awaiting their instructions, by level (null: the chat; else the subagent
+   * that made them), earliest first, each with the assistant message that made it.
+   */
+  private awaitingSkills = new Map<string | null, { callId: string; messageId: string }[]>();
   /** Each task's state as last sent, as JSON. */
   private sentTasks = new Map<string, string>();
   /** Workflow agents' whole prompts, once read, by run and agent id; and when one was last looked for in vain. */
@@ -795,10 +798,7 @@ export class Itemizer {
   // ---- items ----
 
   private upsert(item: Item) {
-    if (!this.items.has(item.id)) {
-      this.order.push(item.id);
-      this.lastItemOf.set(item.parentToolUseId, item.id);
-    }
+    if (!this.items.has(item.id)) this.order.push(item.id);
     this.items.set(item.id, item);
     if (item.type === 'toolCall' && isTaskCall(item)) this.taskCalls.add(item.id);
     if (concernsSchedules(item)) this.scheduleItems.add(item.id);
@@ -847,6 +847,7 @@ export class Itemizer {
         if (parent === null) out.push(...this.flushFinishes());
         const id = ev.message?.id ?? `msg_${++this.fallbackCounter}`;
         this.currentStreamMsgId.set(parent, id);
+        this.newAssistantMessage(parent, id);
         if (!this.streams.has(id)) this.streams.set(id, []);
         break;
       }
@@ -876,6 +877,7 @@ export class Itemizer {
             status: 'pending',
           };
           this.setCall(t);
+          this.awaitSkill(t, msgId);
           item = t;
         }
         if (item) {
@@ -922,6 +924,7 @@ export class Itemizer {
     const m = msg.message ?? {};
     const msgId: string = m.id ?? msg.uuid ?? `msg_${++this.fallbackCounter}`;
     const parent: string | null = msg.parent_tool_use_id ?? null;
+    this.newAssistantMessage(parent, msgId);
     const out: Emission[] = parent === null && !this.streams.has(msgId) ? this.flushFinishes() : [];
     const placed = this.turnFor(parent, msgId);
     out.push(...placed.out);
@@ -995,6 +998,7 @@ export class Itemizer {
           ...(name.startsWith('mcp__') ? { mcpServer: name.split('__')[1] } : {}),
         };
         this.setCall(item);
+        if (!prev) this.awaitSkill(item, msgId);
         const isNew = !this.items.has(item.id);
         this.upsert(item);
         out.push(...this.itemEvent(isNew ? 'item/started' : 'item/updated', item));
@@ -1012,6 +1016,8 @@ export class Itemizer {
     this.noteOpen(t);
     t.outputText = text;
     if (isError) t.isError = true;
+    // A Skill call that failed or was denied loaded nothing: no instructions follow it.
+    if (t.kind === 'skill' && t.status !== 'completed') this.stopAwaiting(t);
     const out: Emission[] = [];
     if (isEditCall(t)) {
       const edit = editOf(t, structured);
@@ -1241,7 +1247,10 @@ export class Itemizer {
       (msg.isSynthetic === true || msg.isMeta === true) &&
       !['human', 'peer', 'task-notification', 'channel', 'subagent'].includes(sender) &&
       !/^\s*(<[a-z-]+>|\[Request interrupted)/.test(text);
-    const candidate = named ?? (plain ? this.lastItemOf.get(parent) : undefined);
+    // The stream doesn't name the call: it is the earliest Skill call of the same agent still
+    // awaiting its instructions. Claude often makes it beside other calls in one message (Bash,
+    // Skill and Agent at once), whose blocks and results come in between, so it needn't be the last item.
+    const candidate = named ?? (plain ? this.awaitingSkills.get(parent)?.[0]?.callId : undefined);
     const call = candidate ? this.toolItems.get(candidate) : undefined;
     if (!call || call.kind !== 'skill' || call.parentToolUseId !== parent) return undefined;
     if (!named && call.skillInstructions !== undefined) return undefined;
@@ -1253,10 +1262,51 @@ export class Itemizer {
     const call = this.toolItems.get(callId);
     if (!call || call.kind !== 'skill') return [];
     if (typeof msg.uuid === 'string') this.skillMessages.set(msg.uuid, callId);
+    this.stopAwaiting(call);
     const text = contentToText(msg.message?.content).trim();
     if (!text || call.skillInstructions === text) return [];
     call.skillInstructions = text;
     return this.itemEvent('item/updated', call);
+  }
+
+  /**
+   * A Skill call, new, awaits its instructions: Claude Code puts them in the conversation once the
+   * call has run, before Claude writes again at its level (`newAssistantMessage`).
+   */
+  private awaitSkill(t: ToolCallItem, messageId: string) {
+    if (t.kind !== 'skill') return;
+    const waiting = this.awaitingSkills.get(t.parentToolUseId) ?? [];
+    if (waiting.some((w) => w.callId === t.id)) return;
+    waiting.push({ callId: t.id, messageId });
+    this.awaitingSkills.set(t.parentToolUseId, waiting);
+  }
+
+  /**
+   * Claude writing at a level. A new message there means the calls of the one before have run, so
+   * their Skill calls' instructions, if any, are in: they await none. The same message again (its
+   * parallel blocks, each its own SDK message with the message's id) changes nothing.
+   */
+  private newAssistantMessage(parent: string | null, messageId: string) {
+    if (this.awaitingSkills.has(parent)) this.keepAwaiting(parent, (w) => w.messageId === messageId);
+  }
+
+  private stopAwaiting(call: ToolCallItem) {
+    this.keepAwaiting(call.parentToolUseId, (w) => w.callId !== call.id);
+  }
+
+  /** A turn has ended: its Skill calls await nothing more, except a background subagent's, which goes on. */
+  private stopAwaitingTurn(turnId: string) {
+    for (const parent of [...this.awaitingSkills.keys()])
+      this.keepAwaiting(parent, (w) => {
+        const call = this.toolItems.get(w.callId);
+        return !!call && !(call.turnId === turnId && this.endsWithTurn(call));
+      });
+  }
+
+  private keepAwaiting(parent: string | null, keep: (w: { callId: string; messageId: string }) => boolean) {
+    const still = this.awaitingSkills.get(parent)?.filter(keep);
+    if (still?.length) this.awaitingSkills.set(parent, still);
+    else this.awaitingSkills.delete(parent);
   }
 
   /** A local command's output: a /goal set or cleared is the goal's, anything else a plain notice. */
@@ -1457,6 +1507,7 @@ export class Itemizer {
     turn.completedAt = this.stamp();
     turn.result = result;
     this.settleEdits(turn);
+    this.stopAwaitingTurn(turn.id);
     // Anything still in flight did not finish.
     for (const t of this.cutShort(turn.id)) {
       t.status = 'interrupted';
@@ -1496,6 +1547,7 @@ export class Itemizer {
       out.push(...this.addCompleted(t));
     }
     this.backgroundTaskIds.clear();
+    this.awaitingSkills.clear();
     return this.withTasks(out);
   }
 
@@ -1514,6 +1566,7 @@ export class Itemizer {
       out.push(...this.addCompleted(t));
     }
     this.settleEdits(turn);
+    this.stopAwaitingTurn(turn.id);
     out.push(...this.turnEvent('turn/completed', turn));
     this.lastTurnId = turn.id;
     this.turn = null;

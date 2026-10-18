@@ -146,6 +146,78 @@ describe('skill instructions', () => {
     expect((iz.items.get('skill1') as ToolCallItem).skillInstructions).toBeUndefined();
   });
 
+  // As the stream says one message of parallel calls: its blocks start streaming, and each block
+  // comes as an SDK message of its own with the message's id, a result possibly in between.
+  const messageStart = (id: string) => ({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: { id } } });
+  const blockStart = (index: number, id: string, name: string) => ({
+    type: 'stream_event',
+    parent_tool_use_id: null,
+    event: { type: 'content_block_start', index, content_block: { type: 'tool_use', id, name, input: {} } },
+  });
+  const userMessages = (iz: Itemizer) => [...iz.items.values()].filter((i) => i.type === 'userMessage').map((i) => i.id);
+
+  test("beside other calls in one message, the instructions are the Skill call's, whatever came between", () => {
+    for (const results of [
+      ['bash1', 'skill1', 'body1', 'agent1'],
+      ['agent1', 'bash1', 'skill1', 'body1'],
+      ['skill1', 'body1', 'bash1', 'agent1'],
+    ]) {
+      const iz = new Itemizer(() => 1);
+      iz.beginUserTurn('u1', [{ type: 'text', text: 'write a workflow' }], false);
+      iz.ingest(messageStart('m1'));
+      iz.ingest(blockStart(0, 'bash1', 'Bash'));
+      iz.ingest(assistant('m1', [{ type: 'tool_use', id: 'bash1', name: 'Bash', input: { command: 'ls' } }]));
+      iz.ingest(blockStart(1, 'skill1', 'Skill'));
+      iz.ingest(blockStart(2, 'agent1', 'Agent'));
+      iz.ingest(assistant('m1', [{ type: 'tool_use', id: 'skill1', name: 'Skill', input: { skill: 'workflow-authoring' } }]));
+      iz.ingest(assistant('m1', [{ type: 'tool_use', id: 'agent1', name: 'Agent', input: { description: 'Look around', prompt: 'x' } }]));
+      for (const r of results) {
+        if (r === 'body1') iz.ingest({ ...body, message: { content: [{ type: 'text', text: '# Workflow authoring reference' }] } });
+        else if (r === 'skill1') iz.ingest(launched);
+        else iz.ingest(result(r, 'ok'));
+      }
+      expect((iz.items.get('skill1') as ToolCallItem).skillInstructions).toBe('# Workflow authoring reference');
+      expect(userMessages(iz)).toEqual(['u1']);
+    }
+  });
+
+  test('two Skill calls in one message take their instructions in order', () => {
+    const iz = new Itemizer(() => 1);
+    iz.beginUserTurn('u1', [{ type: 'text', text: 'go' }], false);
+    iz.ingest(assistant('m1', [{ type: 'tool_use', id: 'skill1', name: 'Skill', input: { skill: 'pdf' } }]));
+    iz.ingest(assistant('m1', [{ type: 'tool_use', id: 'skill2', name: 'Skill', input: { skill: 'xlsx' } }]));
+    iz.ingest(launched);
+    iz.ingest({ ...body, uuid: 'body1', message: { content: [{ type: 'text', text: '# PDF' }] } });
+    iz.ingest(result('skill2', 'Launching skill: xlsx', { success: true, commandName: 'xlsx' }));
+    iz.ingest({ ...body, uuid: 'body2', message: { content: [{ type: 'text', text: '# XLSX' }] } });
+    expect((iz.items.get('skill1') as ToolCallItem).skillInstructions).toBe('# PDF');
+    expect((iz.items.get('skill2') as ToolCallItem).skillInstructions).toBe('# XLSX');
+    expect(userMessages(iz)).toEqual(['u1']);
+  });
+
+  test('a Skill call that failed takes no message as its instructions', () => {
+    const iz = new Itemizer(() => 1);
+    iz.beginUserTurn('u1', [{ type: 'text', text: 'go' }], false);
+    iz.ingest(assistant('m1', [{ type: 'tool_use', id: 'skill1', name: 'Skill', input: { skill: 'nope' } }]));
+    iz.ingest(assistant('m1', [{ type: 'tool_use', id: 'bash1', name: 'Bash', input: { command: 'ls' } }]));
+    iz.ingest({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'skill1', content: 'Unknown skill: nope', is_error: true }] } });
+    iz.ingest(result('bash1', 'ok'));
+    iz.ingest({ ...body, uuid: 'other' });
+    expect((iz.items.get('skill1') as ToolCallItem).skillInstructions).toBeUndefined();
+    expect(iz.items.get('other')?.type).toBe('userMessage');
+  });
+
+  test('once its turn is over, a Skill call awaits nothing', () => {
+    const iz = new Itemizer(() => 1);
+    iz.beginUserTurn('u1', [{ type: 'text', text: 'go' }], false);
+    iz.ingest(skillCall);
+    iz.ingest(done());
+    iz.beginUserTurn('u2', [{ type: 'text', text: 'again' }], false);
+    iz.ingest({ ...body, uuid: 'other' });
+    expect((iz.items.get('skill1') as ToolCallItem).skillInstructions).toBeUndefined();
+    expect(iz.items.get('other')?.type).toBe('userMessage');
+  });
+
   test('history reads it from the transcript, which names its call', () => {
     const iz = new Itemizer(() => 1, true);
     const extras = new TranscriptExtras();
