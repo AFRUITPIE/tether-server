@@ -866,10 +866,11 @@ public enum Item: Codable, Sendable, Hashable {
         public var queued: Bool?
         public var synthetic: Bool?
         public var origin: String?
+        public var fromLoop: Bool?
         public var originName: String?
         public var originSession: String?
 
-        public init(id: String, turnId: String? = nil, parentToolUseId: String? = nil, createdAt: Double, content: [UserInput], queued: Bool? = nil, synthetic: Bool? = nil, origin: String? = nil, originName: String? = nil, originSession: String? = nil) {
+        public init(id: String, turnId: String? = nil, parentToolUseId: String? = nil, createdAt: Double, content: [UserInput], queued: Bool? = nil, synthetic: Bool? = nil, origin: String? = nil, fromLoop: Bool? = nil, originName: String? = nil, originSession: String? = nil) {
             self.id = id
             self.turnId = turnId
             self.parentToolUseId = parentToolUseId
@@ -878,6 +879,7 @@ public enum Item: Codable, Sendable, Hashable {
             self.queued = queued
             self.synthetic = synthetic
             self.origin = origin
+            self.fromLoop = fromLoop
             self.originName = originName
             self.originSession = originSession
         }
@@ -892,6 +894,7 @@ public enum Item: Codable, Sendable, Hashable {
             case queued = "queued"
             case synthetic = "synthetic"
             case origin = "origin"
+            case fromLoop = "fromLoop"
             case originName = "originName"
             case originSession = "originSession"
         }
@@ -907,6 +910,7 @@ public enum Item: Codable, Sendable, Hashable {
             self.queued = try c.decodeIfPresent(Bool.self, forKey: .queued)
             self.synthetic = try c.decodeIfPresent(Bool.self, forKey: .synthetic)
             self.origin = try c.decodeIfPresent(String.self, forKey: .origin)
+            self.fromLoop = try c.decodeIfPresent(Bool.self, forKey: .fromLoop)
             self.originName = try c.decodeIfPresent(String.self, forKey: .originName)
             self.originSession = try c.decodeIfPresent(String.self, forKey: .originSession)
         }
@@ -922,6 +926,7 @@ public enum Item: Codable, Sendable, Hashable {
             try c.encodeIfPresent(queued, forKey: .queued)
             try c.encodeIfPresent(synthetic, forKey: .synthetic)
             try c.encodeIfPresent(origin, forKey: .origin)
+            try c.encodeIfPresent(fromLoop, forKey: .fromLoop)
             try c.encodeIfPresent(originName, forKey: .originName)
             try c.encodeIfPresent(originSession, forKey: .originSession)
         }
@@ -1048,8 +1053,9 @@ public enum Item: Codable, Sendable, Hashable {
         public var mcpServer: String?
         public var elapsedSeconds: Double?
         public var summary: String?
+        public var skillInstructions: String?
 
-        public init(id: String, turnId: String? = nil, parentToolUseId: String? = nil, createdAt: Double, name: String, kind: ToolKind, input: JSONValue, status: ToolStatus, outputText: String? = nil, output: JSONValue? = nil, isError: Bool? = nil, mcpServer: String? = nil, elapsedSeconds: Double? = nil, summary: String? = nil) {
+        public init(id: String, turnId: String? = nil, parentToolUseId: String? = nil, createdAt: Double, name: String, kind: ToolKind, input: JSONValue, status: ToolStatus, outputText: String? = nil, output: JSONValue? = nil, isError: Bool? = nil, mcpServer: String? = nil, elapsedSeconds: Double? = nil, summary: String? = nil, skillInstructions: String? = nil) {
             self.id = id
             self.turnId = turnId
             self.parentToolUseId = parentToolUseId
@@ -1064,6 +1070,7 @@ public enum Item: Codable, Sendable, Hashable {
             self.mcpServer = mcpServer
             self.elapsedSeconds = elapsedSeconds
             self.summary = summary
+            self.skillInstructions = skillInstructions
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -1082,6 +1089,7 @@ public enum Item: Codable, Sendable, Hashable {
             case mcpServer = "mcpServer"
             case elapsedSeconds = "elapsedSeconds"
             case summary = "summary"
+            case skillInstructions = "skillInstructions"
         }
 
         public init(from decoder: any Decoder) throws {
@@ -1101,6 +1109,7 @@ public enum Item: Codable, Sendable, Hashable {
             self.mcpServer = try c.decodeIfPresent(String.self, forKey: .mcpServer)
             self.elapsedSeconds = try c.decodeIfPresent(Double.self, forKey: .elapsedSeconds)
             self.summary = try c.decodeIfPresent(String.self, forKey: .summary)
+            self.skillInstructions = try c.decodeIfPresent(String.self, forKey: .skillInstructions)
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -1120,6 +1129,7 @@ public enum Item: Codable, Sendable, Hashable {
             try c.encodeIfPresent(mcpServer, forKey: .mcpServer)
             try c.encodeIfPresent(elapsedSeconds, forKey: .elapsedSeconds)
             try c.encodeIfPresent(summary, forKey: .summary)
+            try c.encodeIfPresent(skillInstructions, forKey: .skillInstructions)
         }
     }
 
@@ -1642,48 +1652,218 @@ public struct ModelUsage: Codable, Sendable, Hashable {
     }
 }
 
-public struct WorkflowSnapshot: Codable, Sendable, Hashable {
+public struct TaskState: Codable, Sendable, Hashable {
+    public var id: String
+    public var parentId: String?
+    public var toolUseId: String?
+    public var taskId: String?
+    public var kind: TaskKind
+    public var taskType: String?
+    public var title: String
+    public var status: TaskStatus
+    /// ms since epoch
+    public var startedAt: Double?
+    /// ms since epoch
+    public var endedAt: Double?
+    public var backgrounded: Bool?
+    public var canBackground: Bool?
+    public var summary: String?
+    public var error: String?
+    public var output: String?
+    public var outputFile: String?
+    public var usage: TaskUsage?
+    public var workflow: WorkflowTaskInfo?
+    public var workflowAgent: WorkflowAgentTaskInfo?
+    public var schedule: ScheduleTaskInfo?
+    public var goal: GoalTaskInfo?
+
+    public init(id: String, parentId: String? = nil, toolUseId: String? = nil, taskId: String? = nil, kind: TaskKind, taskType: String? = nil, title: String, status: TaskStatus, startedAt: Double? = nil, endedAt: Double? = nil, backgrounded: Bool? = nil, canBackground: Bool? = nil, summary: String? = nil, error: String? = nil, output: String? = nil, outputFile: String? = nil, usage: TaskUsage? = nil, workflow: WorkflowTaskInfo? = nil, workflowAgent: WorkflowAgentTaskInfo? = nil, schedule: ScheduleTaskInfo? = nil, goal: GoalTaskInfo? = nil) {
+        self.id = id
+        self.parentId = parentId
+        self.toolUseId = toolUseId
+        self.taskId = taskId
+        self.kind = kind
+        self.taskType = taskType
+        self.title = title
+        self.status = status
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.backgrounded = backgrounded
+        self.canBackground = canBackground
+        self.summary = summary
+        self.error = error
+        self.output = output
+        self.outputFile = outputFile
+        self.usage = usage
+        self.workflow = workflow
+        self.workflowAgent = workflowAgent
+        self.schedule = schedule
+        self.goal = goal
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case parentId = "parentId"
+        case toolUseId = "toolUseId"
+        case taskId = "taskId"
+        case kind = "kind"
+        case taskType = "taskType"
+        case title = "title"
+        case status = "status"
+        case startedAt = "startedAt"
+        case endedAt = "endedAt"
+        case backgrounded = "backgrounded"
+        case canBackground = "canBackground"
+        case summary = "summary"
+        case error = "error"
+        case output = "output"
+        case outputFile = "outputFile"
+        case usage = "usage"
+        case workflow = "workflow"
+        case workflowAgent = "workflowAgent"
+        case schedule = "schedule"
+        case goal = "goal"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.parentId = try c.decodeIfPresent(String.self, forKey: .parentId)
+        self.toolUseId = try c.decodeIfPresent(String.self, forKey: .toolUseId)
+        self.taskId = try c.decodeIfPresent(String.self, forKey: .taskId)
+        self.kind = try c.decode(TaskKind.self, forKey: .kind)
+        self.taskType = try c.decodeIfPresent(String.self, forKey: .taskType)
+        self.title = try c.decode(String.self, forKey: .title)
+        self.status = try c.decode(TaskStatus.self, forKey: .status)
+        self.startedAt = try c.decodeIfPresent(Double.self, forKey: .startedAt)
+        self.endedAt = try c.decodeIfPresent(Double.self, forKey: .endedAt)
+        self.backgrounded = try c.decodeIfPresent(Bool.self, forKey: .backgrounded)
+        self.canBackground = try c.decodeIfPresent(Bool.self, forKey: .canBackground)
+        self.summary = try c.decodeIfPresent(String.self, forKey: .summary)
+        self.error = try c.decodeIfPresent(String.self, forKey: .error)
+        self.output = try c.decodeIfPresent(String.self, forKey: .output)
+        self.outputFile = try c.decodeIfPresent(String.self, forKey: .outputFile)
+        self.usage = try c.decodeIfPresent(TaskUsage.self, forKey: .usage)
+        self.workflow = try c.decodeIfPresent(WorkflowTaskInfo.self, forKey: .workflow)
+        self.workflowAgent = try c.decodeIfPresent(WorkflowAgentTaskInfo.self, forKey: .workflowAgent)
+        self.schedule = try c.decodeIfPresent(ScheduleTaskInfo.self, forKey: .schedule)
+        self.goal = try c.decodeIfPresent(GoalTaskInfo.self, forKey: .goal)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(parentId, forKey: .parentId)
+        try c.encodeIfPresent(toolUseId, forKey: .toolUseId)
+        try c.encodeIfPresent(taskId, forKey: .taskId)
+        try c.encode(kind, forKey: .kind)
+        try c.encodeIfPresent(taskType, forKey: .taskType)
+        try c.encode(title, forKey: .title)
+        try c.encode(status, forKey: .status)
+        try c.encodeIfPresent(startedAt, forKey: .startedAt)
+        try c.encodeIfPresent(endedAt, forKey: .endedAt)
+        try c.encodeIfPresent(backgrounded, forKey: .backgrounded)
+        try c.encodeIfPresent(canBackground, forKey: .canBackground)
+        try c.encodeIfPresent(summary, forKey: .summary)
+        try c.encodeIfPresent(error, forKey: .error)
+        try c.encodeIfPresent(output, forKey: .output)
+        try c.encodeIfPresent(outputFile, forKey: .outputFile)
+        try c.encodeIfPresent(usage, forKey: .usage)
+        try c.encodeIfPresent(workflow, forKey: .workflow)
+        try c.encodeIfPresent(workflowAgent, forKey: .workflowAgent)
+        try c.encodeIfPresent(schedule, forKey: .schedule)
+        try c.encodeIfPresent(goal, forKey: .goal)
+    }
+}
+
+public struct TaskKind: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public init(stringLiteral value: String) { self.rawValue = value }
+    public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
+    public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
+    public static let agent = TaskKind(rawValue: "agent")
+    public static let command = TaskKind(rawValue: "command")
+    public static let monitor = TaskKind(rawValue: "monitor")
+    public static let mcpTool = TaskKind(rawValue: "mcpTool")
+    public static let workflow = TaskKind(rawValue: "workflow")
+    public static let workflowAgent = TaskKind(rawValue: "workflowAgent")
+    public static let schedule = TaskKind(rawValue: "schedule")
+    public static let goal = TaskKind(rawValue: "goal")
+    public static let other = TaskKind(rawValue: "other")
+    public static let allCases: [TaskKind] = [.agent, .command, .monitor, .mcpTool, .workflow, .workflowAgent, .schedule, .goal, .other]
+}
+
+public struct TaskStatus: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public init(stringLiteral value: String) { self.rawValue = value }
+    public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
+    public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
+    public static let waiting = TaskStatus(rawValue: "waiting")
+    public static let running = TaskStatus(rawValue: "running")
+    public static let done = TaskStatus(rawValue: "done")
+    public static let failed = TaskStatus(rawValue: "failed")
+    public static let stopped = TaskStatus(rawValue: "stopped")
+    public static let allCases: [TaskStatus] = [.waiting, .running, .done, .failed, .stopped]
+}
+
+public struct TaskUsage: Codable, Sendable, Hashable {
+    public var durationMs: Double?
+    public var totalTokens: Double?
+    public var toolUses: Double?
+
+    public init(durationMs: Double? = nil, totalTokens: Double? = nil, toolUses: Double? = nil) {
+        self.durationMs = durationMs
+        self.totalTokens = totalTokens
+        self.toolUses = toolUses
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case durationMs = "durationMs"
+        case totalTokens = "totalTokens"
+        case toolUses = "toolUses"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.durationMs = try c.decodeIfPresent(Double.self, forKey: .durationMs)
+        self.totalTokens = try c.decodeIfPresent(Double.self, forKey: .totalTokens)
+        self.toolUses = try c.decodeIfPresent(Double.self, forKey: .toolUses)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(durationMs, forKey: .durationMs)
+        try c.encodeIfPresent(totalTokens, forKey: .totalTokens)
+        try c.encodeIfPresent(toolUses, forKey: .toolUses)
+    }
+}
+
+public struct WorkflowTaskInfo: Codable, Sendable, Hashable {
     public var runId: String?
     public var name: String?
     public var description: String?
-    public var status: String?
+    public var phases: [TaskPhase]
     public var activity: String?
-    public var phases: [WorkflowPhase]
-    public var agents: [WorkflowAgent]
-    public var totalTokens: Double?
-    public var toolUses: Double?
-    public var durationMs: Double?
     public var result: String?
-    public var error: String?
 
-    public init(runId: String? = nil, name: String? = nil, description: String? = nil, status: String? = nil, activity: String? = nil, phases: [WorkflowPhase], agents: [WorkflowAgent], totalTokens: Double? = nil, toolUses: Double? = nil, durationMs: Double? = nil, result: String? = nil, error: String? = nil) {
+    public init(runId: String? = nil, name: String? = nil, description: String? = nil, phases: [TaskPhase], activity: String? = nil, result: String? = nil) {
         self.runId = runId
         self.name = name
         self.description = description
-        self.status = status
-        self.activity = activity
         self.phases = phases
-        self.agents = agents
-        self.totalTokens = totalTokens
-        self.toolUses = toolUses
-        self.durationMs = durationMs
+        self.activity = activity
         self.result = result
-        self.error = error
     }
 
     private enum CodingKeys: String, CodingKey {
         case runId = "runId"
         case name = "name"
         case description = "description"
-        case status = "status"
-        case activity = "activity"
         case phases = "phases"
-        case agents = "agents"
-        case totalTokens = "totalTokens"
-        case toolUses = "toolUses"
-        case durationMs = "durationMs"
+        case activity = "activity"
         case result = "result"
-        case error = "error"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -1691,15 +1871,9 @@ public struct WorkflowSnapshot: Codable, Sendable, Hashable {
         self.runId = try c.decodeIfPresent(String.self, forKey: .runId)
         self.name = try c.decodeIfPresent(String.self, forKey: .name)
         self.description = try c.decodeIfPresent(String.self, forKey: .description)
-        self.status = try c.decodeIfPresent(String.self, forKey: .status)
+        self.phases = try c.decode([TaskPhase].self, forKey: .phases)
         self.activity = try c.decodeIfPresent(String.self, forKey: .activity)
-        self.phases = try c.decode([WorkflowPhase].self, forKey: .phases)
-        self.agents = try c.decode([WorkflowAgent].self, forKey: .agents)
-        self.totalTokens = try c.decodeIfPresent(Double.self, forKey: .totalTokens)
-        self.toolUses = try c.decodeIfPresent(Double.self, forKey: .toolUses)
-        self.durationMs = try c.decodeIfPresent(Double.self, forKey: .durationMs)
         self.result = try c.decodeIfPresent(String.self, forKey: .result)
-        self.error = try c.decodeIfPresent(String.self, forKey: .error)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -1707,164 +1881,246 @@ public struct WorkflowSnapshot: Codable, Sendable, Hashable {
         try c.encodeIfPresent(runId, forKey: .runId)
         try c.encodeIfPresent(name, forKey: .name)
         try c.encodeIfPresent(description, forKey: .description)
-        try c.encodeIfPresent(status, forKey: .status)
-        try c.encodeIfPresent(activity, forKey: .activity)
         try c.encode(phases, forKey: .phases)
-        try c.encode(agents, forKey: .agents)
-        try c.encodeIfPresent(totalTokens, forKey: .totalTokens)
-        try c.encodeIfPresent(toolUses, forKey: .toolUses)
-        try c.encodeIfPresent(durationMs, forKey: .durationMs)
+        try c.encodeIfPresent(activity, forKey: .activity)
         try c.encodeIfPresent(result, forKey: .result)
-        try c.encodeIfPresent(error, forKey: .error)
     }
 }
 
-public struct WorkflowPhase: Codable, Sendable, Hashable {
-    public var index: Double
+public struct TaskPhase: Codable, Sendable, Hashable {
+    public var index: Int
     public var title: String
-    public var detail: String?
+    public var status: TaskStatus
 
-    public init(index: Double, title: String, detail: String? = nil) {
+    public init(index: Int, title: String, status: TaskStatus) {
         self.index = index
         self.title = title
-        self.detail = detail
+        self.status = status
     }
 
     private enum CodingKeys: String, CodingKey {
         case index = "index"
         case title = "title"
-        case detail = "detail"
+        case status = "status"
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.index = try c.decode(Double.self, forKey: .index)
+        self.index = try c.decode(Int.self, forKey: .index)
         self.title = try c.decode(String.self, forKey: .title)
-        self.detail = try c.decodeIfPresent(String.self, forKey: .detail)
+        self.status = try c.decode(TaskStatus.self, forKey: .status)
     }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(index, forKey: .index)
         try c.encode(title, forKey: .title)
-        try c.encodeIfPresent(detail, forKey: .detail)
+        try c.encode(status, forKey: .status)
     }
 }
 
-public struct WorkflowAgent: Codable, Sendable, Hashable {
-    public var index: Double
-    public var label: String
-    public var phaseIndex: Double?
-    public var phaseTitle: String?
+public struct WorkflowAgentTaskInfo: Codable, Sendable, Hashable {
+    public var runId: String?
+    public var index: Int
     public var agentId: String?
+    public var phase: String?
+    public var phaseIndex: Int?
+    public var prompt: String?
     public var model: String?
-    public var state: String
-    public var skipped: Bool?
-    public var cached: Bool?
-    public var blocked: Bool?
-    public var queuedAt: Double?
-    public var startedAt: Double?
-    public var durationMs: Double?
-    public var tokens: Double?
-    public var toolCalls: Double?
     public var lastToolName: String?
-    public var lastToolSummary: String?
-    public var promptPreview: String?
-    public var resultPreview: String?
-    public var error: String?
 
-    public init(index: Double, label: String, phaseIndex: Double? = nil, phaseTitle: String? = nil, agentId: String? = nil, model: String? = nil, state: String, skipped: Bool? = nil, cached: Bool? = nil, blocked: Bool? = nil, queuedAt: Double? = nil, startedAt: Double? = nil, durationMs: Double? = nil, tokens: Double? = nil, toolCalls: Double? = nil, lastToolName: String? = nil, lastToolSummary: String? = nil, promptPreview: String? = nil, resultPreview: String? = nil, error: String? = nil) {
+    public init(runId: String? = nil, index: Int, agentId: String? = nil, phase: String? = nil, phaseIndex: Int? = nil, prompt: String? = nil, model: String? = nil, lastToolName: String? = nil) {
+        self.runId = runId
         self.index = index
-        self.label = label
-        self.phaseIndex = phaseIndex
-        self.phaseTitle = phaseTitle
         self.agentId = agentId
+        self.phase = phase
+        self.phaseIndex = phaseIndex
+        self.prompt = prompt
         self.model = model
-        self.state = state
-        self.skipped = skipped
-        self.cached = cached
-        self.blocked = blocked
-        self.queuedAt = queuedAt
-        self.startedAt = startedAt
-        self.durationMs = durationMs
-        self.tokens = tokens
-        self.toolCalls = toolCalls
         self.lastToolName = lastToolName
-        self.lastToolSummary = lastToolSummary
-        self.promptPreview = promptPreview
-        self.resultPreview = resultPreview
-        self.error = error
     }
 
     private enum CodingKeys: String, CodingKey {
+        case runId = "runId"
         case index = "index"
-        case label = "label"
-        case phaseIndex = "phaseIndex"
-        case phaseTitle = "phaseTitle"
         case agentId = "agentId"
+        case phase = "phase"
+        case phaseIndex = "phaseIndex"
+        case prompt = "prompt"
         case model = "model"
-        case state = "state"
-        case skipped = "skipped"
-        case cached = "cached"
-        case blocked = "blocked"
-        case queuedAt = "queuedAt"
-        case startedAt = "startedAt"
-        case durationMs = "durationMs"
-        case tokens = "tokens"
-        case toolCalls = "toolCalls"
         case lastToolName = "lastToolName"
-        case lastToolSummary = "lastToolSummary"
-        case promptPreview = "promptPreview"
-        case resultPreview = "resultPreview"
-        case error = "error"
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.index = try c.decode(Double.self, forKey: .index)
-        self.label = try c.decode(String.self, forKey: .label)
-        self.phaseIndex = try c.decodeIfPresent(Double.self, forKey: .phaseIndex)
-        self.phaseTitle = try c.decodeIfPresent(String.self, forKey: .phaseTitle)
+        self.runId = try c.decodeIfPresent(String.self, forKey: .runId)
+        self.index = try c.decode(Int.self, forKey: .index)
         self.agentId = try c.decodeIfPresent(String.self, forKey: .agentId)
+        self.phase = try c.decodeIfPresent(String.self, forKey: .phase)
+        self.phaseIndex = try c.decodeIfPresent(Int.self, forKey: .phaseIndex)
+        self.prompt = try c.decodeIfPresent(String.self, forKey: .prompt)
         self.model = try c.decodeIfPresent(String.self, forKey: .model)
-        self.state = try c.decode(String.self, forKey: .state)
-        self.skipped = try c.decodeIfPresent(Bool.self, forKey: .skipped)
-        self.cached = try c.decodeIfPresent(Bool.self, forKey: .cached)
-        self.blocked = try c.decodeIfPresent(Bool.self, forKey: .blocked)
-        self.queuedAt = try c.decodeIfPresent(Double.self, forKey: .queuedAt)
-        self.startedAt = try c.decodeIfPresent(Double.self, forKey: .startedAt)
-        self.durationMs = try c.decodeIfPresent(Double.self, forKey: .durationMs)
-        self.tokens = try c.decodeIfPresent(Double.self, forKey: .tokens)
-        self.toolCalls = try c.decodeIfPresent(Double.self, forKey: .toolCalls)
         self.lastToolName = try c.decodeIfPresent(String.self, forKey: .lastToolName)
-        self.lastToolSummary = try c.decodeIfPresent(String.self, forKey: .lastToolSummary)
-        self.promptPreview = try c.decodeIfPresent(String.self, forKey: .promptPreview)
-        self.resultPreview = try c.decodeIfPresent(String.self, forKey: .resultPreview)
-        self.error = try c.decodeIfPresent(String.self, forKey: .error)
     }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(runId, forKey: .runId)
         try c.encode(index, forKey: .index)
-        try c.encode(label, forKey: .label)
-        try c.encodeIfPresent(phaseIndex, forKey: .phaseIndex)
-        try c.encodeIfPresent(phaseTitle, forKey: .phaseTitle)
         try c.encodeIfPresent(agentId, forKey: .agentId)
+        try c.encodeIfPresent(phase, forKey: .phase)
+        try c.encodeIfPresent(phaseIndex, forKey: .phaseIndex)
+        try c.encodeIfPresent(prompt, forKey: .prompt)
         try c.encodeIfPresent(model, forKey: .model)
-        try c.encode(state, forKey: .state)
-        try c.encodeIfPresent(skipped, forKey: .skipped)
-        try c.encodeIfPresent(cached, forKey: .cached)
-        try c.encodeIfPresent(blocked, forKey: .blocked)
-        try c.encodeIfPresent(queuedAt, forKey: .queuedAt)
-        try c.encodeIfPresent(startedAt, forKey: .startedAt)
-        try c.encodeIfPresent(durationMs, forKey: .durationMs)
-        try c.encodeIfPresent(tokens, forKey: .tokens)
-        try c.encodeIfPresent(toolCalls, forKey: .toolCalls)
         try c.encodeIfPresent(lastToolName, forKey: .lastToolName)
-        try c.encodeIfPresent(lastToolSummary, forKey: .lastToolSummary)
-        try c.encodeIfPresent(promptPreview, forKey: .promptPreview)
-        try c.encodeIfPresent(resultPreview, forKey: .resultPreview)
-        try c.encodeIfPresent(error, forKey: .error)
+    }
+}
+
+public struct ScheduleTaskInfo: Codable, Sendable, Hashable {
+    public var jobId: String?
+    public var cron: String?
+    public var description: String?
+    public var prompt: String
+    public var recurring: Bool
+    public var durable: Bool
+    public var wakeup: Bool
+    public var fromLoop: Bool
+    public var firedCount: Int
+    public var lastFiredAt: Double?
+    public var nextFireAt: Double?
+    public var ended: Ended?
+
+    public init(jobId: String? = nil, cron: String? = nil, description: String? = nil, prompt: String, recurring: Bool, durable: Bool, wakeup: Bool, fromLoop: Bool, firedCount: Int, lastFiredAt: Double? = nil, nextFireAt: Double? = nil, ended: Ended? = nil) {
+        self.jobId = jobId
+        self.cron = cron
+        self.description = description
+        self.prompt = prompt
+        self.recurring = recurring
+        self.durable = durable
+        self.wakeup = wakeup
+        self.fromLoop = fromLoop
+        self.firedCount = firedCount
+        self.lastFiredAt = lastFiredAt
+        self.nextFireAt = nextFireAt
+        self.ended = ended
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case jobId = "jobId"
+        case cron = "cron"
+        case description = "description"
+        case prompt = "prompt"
+        case recurring = "recurring"
+        case durable = "durable"
+        case wakeup = "wakeup"
+        case fromLoop = "fromLoop"
+        case firedCount = "firedCount"
+        case lastFiredAt = "lastFiredAt"
+        case nextFireAt = "nextFireAt"
+        case ended = "ended"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.jobId = try c.decodeIfPresent(String.self, forKey: .jobId)
+        self.cron = try c.decodeIfPresent(String.self, forKey: .cron)
+        self.description = try c.decodeIfPresent(String.self, forKey: .description)
+        self.prompt = try c.decode(String.self, forKey: .prompt)
+        self.recurring = try c.decode(Bool.self, forKey: .recurring)
+        self.durable = try c.decode(Bool.self, forKey: .durable)
+        self.wakeup = try c.decode(Bool.self, forKey: .wakeup)
+        self.fromLoop = try c.decode(Bool.self, forKey: .fromLoop)
+        self.firedCount = try c.decode(Int.self, forKey: .firedCount)
+        self.lastFiredAt = try c.decodeIfPresent(Double.self, forKey: .lastFiredAt)
+        self.nextFireAt = try c.decodeIfPresent(Double.self, forKey: .nextFireAt)
+        self.ended = try c.decodeIfPresent(Ended.self, forKey: .ended)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(jobId, forKey: .jobId)
+        try c.encodeIfPresent(cron, forKey: .cron)
+        try c.encodeIfPresent(description, forKey: .description)
+        try c.encode(prompt, forKey: .prompt)
+        try c.encode(recurring, forKey: .recurring)
+        try c.encode(durable, forKey: .durable)
+        try c.encode(wakeup, forKey: .wakeup)
+        try c.encode(fromLoop, forKey: .fromLoop)
+        try c.encode(firedCount, forKey: .firedCount)
+        try c.encodeIfPresent(lastFiredAt, forKey: .lastFiredAt)
+        try c.encodeIfPresent(nextFireAt, forKey: .nextFireAt)
+        try c.encodeIfPresent(ended, forKey: .ended)
+    }
+
+    public struct Ended: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
+        public let rawValue: String
+        public init(rawValue: String) { self.rawValue = rawValue }
+        public init(stringLiteral value: String) { self.rawValue = value }
+        public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
+        public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
+        public static let fired = Ended(rawValue: "fired")
+        public static let deleted = Ended(rawValue: "deleted")
+        public static let sessionEnded = Ended(rawValue: "sessionEnded")
+        public static let allCases: [Ended] = [.fired, .deleted, .sessionEnded]
+    }
+}
+
+public struct GoalTaskInfo: Codable, Sendable, Hashable {
+    public var condition: String
+    public var checks: Int
+    public var lastCheck: LastCheck?
+
+    public init(condition: String, checks: Int, lastCheck: LastCheck? = nil) {
+        self.condition = condition
+        self.checks = checks
+        self.lastCheck = lastCheck
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case condition = "condition"
+        case checks = "checks"
+        case lastCheck = "lastCheck"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.condition = try c.decode(String.self, forKey: .condition)
+        self.checks = try c.decode(Int.self, forKey: .checks)
+        self.lastCheck = try c.decodeIfPresent(LastCheck.self, forKey: .lastCheck)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(condition, forKey: .condition)
+        try c.encode(checks, forKey: .checks)
+        try c.encodeIfPresent(lastCheck, forKey: .lastCheck)
+    }
+
+    public struct LastCheck: Codable, Sendable, Hashable {
+        public var met: Bool
+        public var reason: String?
+
+        public init(met: Bool, reason: String? = nil) {
+            self.met = met
+            self.reason = reason
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case met = "met"
+            case reason = "reason"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.met = try c.decode(Bool.self, forKey: .met)
+            self.reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(met, forKey: .met)
+            try c.encodeIfPresent(reason, forKey: .reason)
+        }
     }
 }
 
@@ -3053,13 +3309,15 @@ public struct ThreadResumeResult: Codable, Sendable, Hashable {
     public var turns: [Turn]?
     public var historySeq: Int?
     public var hasMore: Bool?
+    public var tasks: [TaskState]?
 
-    public init(thread: ThreadInfo, items: [Item]? = nil, turns: [Turn]? = nil, historySeq: Int? = nil, hasMore: Bool? = nil) {
+    public init(thread: ThreadInfo, items: [Item]? = nil, turns: [Turn]? = nil, historySeq: Int? = nil, hasMore: Bool? = nil, tasks: [TaskState]? = nil) {
         self.thread = thread
         self.items = items
         self.turns = turns
         self.historySeq = historySeq
         self.hasMore = hasMore
+        self.tasks = tasks
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -3068,6 +3326,7 @@ public struct ThreadResumeResult: Codable, Sendable, Hashable {
         case turns = "turns"
         case historySeq = "historySeq"
         case hasMore = "hasMore"
+        case tasks = "tasks"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -3077,6 +3336,7 @@ public struct ThreadResumeResult: Codable, Sendable, Hashable {
         self.turns = try c.decodeIfPresent([Turn].self, forKey: .turns)
         self.historySeq = try c.decodeIfPresent(Int.self, forKey: .historySeq)
         self.hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore)
+        self.tasks = try c.decodeIfPresent([TaskState].self, forKey: .tasks)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -3086,6 +3346,7 @@ public struct ThreadResumeResult: Codable, Sendable, Hashable {
         try c.encodeIfPresent(turns, forKey: .turns)
         try c.encodeIfPresent(historySeq, forKey: .historySeq)
         try c.encodeIfPresent(hasMore, forKey: .hasMore)
+        try c.encodeIfPresent(tasks, forKey: .tasks)
     }
 }
 
@@ -3191,13 +3452,15 @@ public struct ThreadReadResult: Codable, Sendable, Hashable {
     public var summary: ThreadSummary?
     public var historySeq: Int?
     public var hasMore: Bool?
+    public var tasks: [TaskState]
 
-    public init(items: [Item], turns: [Turn], summary: ThreadSummary? = nil, historySeq: Int? = nil, hasMore: Bool? = nil) {
+    public init(items: [Item], turns: [Turn], summary: ThreadSummary? = nil, historySeq: Int? = nil, hasMore: Bool? = nil, tasks: [TaskState]) {
         self.items = items
         self.turns = turns
         self.summary = summary
         self.historySeq = historySeq
         self.hasMore = hasMore
+        self.tasks = tasks
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -3206,6 +3469,7 @@ public struct ThreadReadResult: Codable, Sendable, Hashable {
         case summary = "summary"
         case historySeq = "historySeq"
         case hasMore = "hasMore"
+        case tasks = "tasks"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -3215,6 +3479,7 @@ public struct ThreadReadResult: Codable, Sendable, Hashable {
         self.summary = try c.decodeIfPresent(ThreadSummary.self, forKey: .summary)
         self.historySeq = try c.decodeIfPresent(Int.self, forKey: .historySeq)
         self.hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore)
+        self.tasks = try c.decode([TaskState].self, forKey: .tasks)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -3224,6 +3489,7 @@ public struct ThreadReadResult: Codable, Sendable, Hashable {
         try c.encodeIfPresent(summary, forKey: .summary)
         try c.encodeIfPresent(historySeq, forKey: .historySeq)
         try c.encodeIfPresent(hasMore, forKey: .hasMore)
+        try c.encode(tasks, forKey: .tasks)
     }
 }
 
@@ -3258,17 +3524,20 @@ public struct ThreadSubscribeResult: Codable, Sendable, Hashable {
     public var thread: ThreadInfo
     public var replayed: Int
     public var gap: Bool
+    public var tasks: [TaskState]
 
-    public init(thread: ThreadInfo, replayed: Int, gap: Bool) {
+    public init(thread: ThreadInfo, replayed: Int, gap: Bool, tasks: [TaskState]) {
         self.thread = thread
         self.replayed = replayed
         self.gap = gap
+        self.tasks = tasks
     }
 
     private enum CodingKeys: String, CodingKey {
         case thread = "thread"
         case replayed = "replayed"
         case gap = "gap"
+        case tasks = "tasks"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -3276,6 +3545,7 @@ public struct ThreadSubscribeResult: Codable, Sendable, Hashable {
         self.thread = try c.decode(ThreadInfo.self, forKey: .thread)
         self.replayed = try c.decode(Int.self, forKey: .replayed)
         self.gap = try c.decode(Bool.self, forKey: .gap)
+        self.tasks = try c.decode([TaskState].self, forKey: .tasks)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -3283,6 +3553,7 @@ public struct ThreadSubscribeResult: Codable, Sendable, Hashable {
         try c.encode(thread, forKey: .thread)
         try c.encode(replayed, forKey: .replayed)
         try c.encode(gap, forKey: .gap)
+        try c.encode(tasks, forKey: .tasks)
     }
 }
 
@@ -4006,55 +4277,6 @@ public struct TaskBackgroundResult: Codable, Sendable, Hashable {
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(backgrounded, forKey: .backgrounded)
-    }
-}
-
-public struct WorkflowReadParams: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var runId: String
-
-    public init(threadId: String, runId: String) {
-        self.threadId = threadId
-        self.runId = runId
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case runId = "runId"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.runId = try c.decode(String.self, forKey: .runId)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(runId, forKey: .runId)
-    }
-}
-
-public struct WorkflowReadResult: Codable, Sendable, Hashable {
-    public var workflow: WorkflowSnapshot?
-
-    public init(workflow: WorkflowSnapshot? = nil) {
-        self.workflow = workflow
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case workflow = "workflow"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.workflow = try c.decodeIfPresent(WorkflowSnapshot.self, forKey: .workflow)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(workflow, forKey: .workflow)
     }
 }
 
@@ -5475,11 +5697,6 @@ public enum Methods {
         public typealias Params = TaskBackgroundParams
         public typealias Result = TaskBackgroundResult
     }
-    public enum WorkflowRead: TetherMethod {
-        public static let name = "workflow/read"
-        public typealias Params = WorkflowReadParams
-        public typealias Result = WorkflowReadResult
-    }
     public enum WorkflowAgentItems: TetherMethod {
         public static let name = "workflow/agentItems"
         public typealias Params = WorkflowAgentItemsParams
@@ -6116,122 +6333,35 @@ public struct ItemToolCallProgressNotification: Codable, Sendable, Hashable {
     }
 }
 
-public struct TaskEventNotification: Codable, Sendable, Hashable {
+public struct TaskUpdatedNotification: Codable, Sendable, Hashable {
     public var threadId: String
     public var seq: Int
-    public var event: String
-    public var taskId: String
-    public var toolUseId: String?
-    public var description: String?
-    public var status: String?
-    public var summary: String?
-    public var error: String?
-    public var workflow: WorkflowSnapshot?
-    public var ownedBySubagent: Bool?
-    public var workflowToolUseId: String?
-    public var workflowAgentId: String?
-    public var data: JSONValue
+    public var task: TaskState
 
-    public init(threadId: String, seq: Int, event: String, taskId: String, toolUseId: String? = nil, description: String? = nil, status: String? = nil, summary: String? = nil, error: String? = nil, workflow: WorkflowSnapshot? = nil, ownedBySubagent: Bool? = nil, workflowToolUseId: String? = nil, workflowAgentId: String? = nil, data: JSONValue) {
+    public init(threadId: String, seq: Int, task: TaskState) {
         self.threadId = threadId
         self.seq = seq
-        self.event = event
-        self.taskId = taskId
-        self.toolUseId = toolUseId
-        self.description = description
-        self.status = status
-        self.summary = summary
-        self.error = error
-        self.workflow = workflow
-        self.ownedBySubagent = ownedBySubagent
-        self.workflowToolUseId = workflowToolUseId
-        self.workflowAgentId = workflowAgentId
-        self.data = data
+        self.task = task
     }
 
     private enum CodingKeys: String, CodingKey {
         case threadId = "threadId"
         case seq = "seq"
-        case event = "event"
-        case taskId = "taskId"
-        case toolUseId = "toolUseId"
-        case description = "description"
-        case status = "status"
-        case summary = "summary"
-        case error = "error"
-        case workflow = "workflow"
-        case ownedBySubagent = "ownedBySubagent"
-        case workflowToolUseId = "workflowToolUseId"
-        case workflowAgentId = "workflowAgentId"
-        case data = "data"
+        case task = "task"
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.threadId = try c.decode(String.self, forKey: .threadId)
         self.seq = try c.decode(Int.self, forKey: .seq)
-        self.event = try c.decode(String.self, forKey: .event)
-        self.taskId = try c.decode(String.self, forKey: .taskId)
-        self.toolUseId = try c.decodeIfPresent(String.self, forKey: .toolUseId)
-        self.description = try c.decodeIfPresent(String.self, forKey: .description)
-        self.status = try c.decodeIfPresent(String.self, forKey: .status)
-        self.summary = try c.decodeIfPresent(String.self, forKey: .summary)
-        self.error = try c.decodeIfPresent(String.self, forKey: .error)
-        self.workflow = try c.decodeIfPresent(WorkflowSnapshot.self, forKey: .workflow)
-        self.ownedBySubagent = try c.decodeIfPresent(Bool.self, forKey: .ownedBySubagent)
-        self.workflowToolUseId = try c.decodeIfPresent(String.self, forKey: .workflowToolUseId)
-        self.workflowAgentId = try c.decodeIfPresent(String.self, forKey: .workflowAgentId)
-        self.data = try c.decode(JSONValue.self, forKey: .data)
+        self.task = try c.decode(TaskState.self, forKey: .task)
     }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(threadId, forKey: .threadId)
         try c.encode(seq, forKey: .seq)
-        try c.encode(event, forKey: .event)
-        try c.encode(taskId, forKey: .taskId)
-        try c.encodeIfPresent(toolUseId, forKey: .toolUseId)
-        try c.encodeIfPresent(description, forKey: .description)
-        try c.encodeIfPresent(status, forKey: .status)
-        try c.encodeIfPresent(summary, forKey: .summary)
-        try c.encodeIfPresent(error, forKey: .error)
-        try c.encodeIfPresent(workflow, forKey: .workflow)
-        try c.encodeIfPresent(ownedBySubagent, forKey: .ownedBySubagent)
-        try c.encodeIfPresent(workflowToolUseId, forKey: .workflowToolUseId)
-        try c.encodeIfPresent(workflowAgentId, forKey: .workflowAgentId)
-        try c.encode(data, forKey: .data)
-    }
-}
-
-public struct TaskBackgroundChangedNotification: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var seq: Int
-    public var tasks: JSONValue
-
-    public init(threadId: String, seq: Int, tasks: JSONValue) {
-        self.threadId = threadId
-        self.seq = seq
-        self.tasks = tasks
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case seq = "seq"
-        case tasks = "tasks"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.seq = try c.decode(Int.self, forKey: .seq)
-        self.tasks = try c.decode(JSONValue.self, forKey: .tasks)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(seq, forKey: .seq)
-        try c.encode(tasks, forKey: .tasks)
+        try c.encode(task, forKey: .task)
     }
 }
 
@@ -6711,8 +6841,7 @@ public enum ServerNotification: Sendable, Hashable {
     case itemReasoningDelta(ItemReasoningDeltaNotification)
     case itemToolCallInputDelta(ItemToolCallInputDeltaNotification)
     case itemToolCallProgress(ItemToolCallProgressNotification)
-    case taskEvent(TaskEventNotification)
-    case taskBackgroundChanged(TaskBackgroundChangedNotification)
+    case taskUpdated(TaskUpdatedNotification)
     case threadQueuedInput(ThreadQueuedInputNotification)
     case threadPromptSuggestion(ThreadPromptSuggestionNotification)
     case threadTaskSuggested(ThreadTaskSuggestedNotification)
@@ -6727,7 +6856,7 @@ public enum ServerNotification: Sendable, Hashable {
     case threadStderr(ThreadStderrNotification)
     case unknown(method: String, params: JSONValue)
 
-    public static let methods: Set<String> = ["thread/started", "thread/updated", "thread/status/changed", "thread/closed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "item/started", "item/updated", "item/completed", "item/agentMessage/delta", "item/reasoning/delta", "item/toolCall/inputDelta", "item/toolCall/progress", "task/event", "task/backgroundChanged", "thread/queuedInput", "thread/promptSuggestion", "thread/taskSuggested", "thread/commandsChanged", "thread/apiRetry", "thread/rateLimit", "thread/authStatus", "thread/notification", "thread/hook", "thread/rawEvent", "serverRequest/resolved", "thread/stderr"]
+    public static let methods: Set<String> = ["thread/started", "thread/updated", "thread/status/changed", "thread/closed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "item/started", "item/updated", "item/completed", "item/agentMessage/delta", "item/reasoning/delta", "item/toolCall/inputDelta", "item/toolCall/progress", "task/updated", "thread/queuedInput", "thread/promptSuggestion", "thread/taskSuggested", "thread/commandsChanged", "thread/apiRetry", "thread/rateLimit", "thread/authStatus", "thread/notification", "thread/hook", "thread/rawEvent", "serverRequest/resolved", "thread/stderr"]
 
     public init(method: String, params: Data, decoder: JSONDecoder = JSONDecoder()) throws {
         switch method {
@@ -6745,8 +6874,7 @@ public enum ServerNotification: Sendable, Hashable {
         case "item/reasoning/delta": self = .itemReasoningDelta(try decoder.decode(ItemReasoningDeltaNotification.self, from: params))
         case "item/toolCall/inputDelta": self = .itemToolCallInputDelta(try decoder.decode(ItemToolCallInputDeltaNotification.self, from: params))
         case "item/toolCall/progress": self = .itemToolCallProgress(try decoder.decode(ItemToolCallProgressNotification.self, from: params))
-        case "task/event": self = .taskEvent(try decoder.decode(TaskEventNotification.self, from: params))
-        case "task/backgroundChanged": self = .taskBackgroundChanged(try decoder.decode(TaskBackgroundChangedNotification.self, from: params))
+        case "task/updated": self = .taskUpdated(try decoder.decode(TaskUpdatedNotification.self, from: params))
         case "thread/queuedInput": self = .threadQueuedInput(try decoder.decode(ThreadQueuedInputNotification.self, from: params))
         case "thread/promptSuggestion": self = .threadPromptSuggestion(try decoder.decode(ThreadPromptSuggestionNotification.self, from: params))
         case "thread/taskSuggested": self = .threadTaskSuggested(try decoder.decode(ThreadTaskSuggestedNotification.self, from: params))
@@ -6780,8 +6908,7 @@ public enum ServerNotification: Sendable, Hashable {
         case .itemReasoningDelta(let n): return n.threadId
         case .itemToolCallInputDelta(let n): return n.threadId
         case .itemToolCallProgress(let n): return n.threadId
-        case .taskEvent(let n): return n.threadId
-        case .taskBackgroundChanged(let n): return n.threadId
+        case .taskUpdated(let n): return n.threadId
         case .threadQueuedInput(let n): return n.threadId
         case .threadPromptSuggestion(let n): return n.threadId
         case .threadTaskSuggested(let n): return n.threadId
@@ -6813,8 +6940,7 @@ public enum ServerNotification: Sendable, Hashable {
         case .itemReasoningDelta(let n): return n.seq
         case .itemToolCallInputDelta(let n): return n.seq
         case .itemToolCallProgress(let n): return n.seq
-        case .taskEvent(let n): return n.seq
-        case .taskBackgroundChanged(let n): return n.seq
+        case .taskUpdated(let n): return n.seq
         case .threadQueuedInput(let n): return n.seq
         case .threadPromptSuggestion(let n): return n.seq
         case .threadTaskSuggested(let n): return n.seq

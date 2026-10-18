@@ -16,7 +16,8 @@ import {
   ThreadSummary,
   UserInput,
 } from './common.ts';
-import { Item, Turn, WorkflowSnapshot } from './items.ts';
+import { Item, Turn } from './items.ts';
+import { TaskState } from './tasks.ts';
 
 const Empty = z.object({});
 /** The scopes `claude plugin` takes. Inlined, so each method's params keep a nested `Scope` in Swift. */
@@ -208,6 +209,8 @@ export const Methods = {
       historySeq: z.number().int().optional(),
       /** Whether older items exist before those returned. */
       hasMore: z.boolean().optional(),
+      /** With `includeHistory`: every task of the chat, as `thread/read`'s. */
+      tasks: z.array(TaskState).optional(),
     }),
   },
 
@@ -238,12 +241,20 @@ export const Methods = {
       historySeq: z.number().int().optional(),
       /** Whether older items exist before the first one returned. */
       hasMore: z.boolean().optional(),
+      /**
+       * Every task of the chat, whatever page of items this is, finished ones included: what this
+       * daemon saw of them live (kept with the chat in its home, so a reload or a restart still has
+       * them), what the transcript and the session's workflow files say, and the chat's schedules
+       * and goals. As of `historySeq`: `task/updated` after it are newer.
+       */
+      tasks: z.array(TaskState),
     }),
   },
 
   'thread/subscribe': {
     params: z.object({ threadId: z.string(), afterSeq: z.number().int().optional() }),
-    result: z.object({ thread: ThreadInfo, replayed: z.number().int(), gap: z.boolean() }),
+    /** `tasks`: every task of the chat as it stands now, newer than anything replayed before this result. */
+    result: z.object({ thread: ThreadInfo, replayed: z.number().int(), gap: z.boolean(), tasks: z.array(TaskState) }),
   },
   'thread/unsubscribe': { params: ThreadRef, result: Empty },
   'thread/loaded': { params: Empty, result: z.object({ threads: z.array(ThreadInfo) }) },
@@ -291,14 +302,6 @@ export const Methods = {
     result: z.object({ backgrounded: z.boolean() }),
   },
 
-  /**
-   * A dynamic workflow run of the thread, by its run id: the live thread's own while it runs here,
-   * else the CLI's run record, else what its journal says of a run still going. Null when none is found.
-   */
-  'workflow/read': {
-    params: z.object({ threadId: z.string(), runId: z.string() }),
-    result: z.object({ workflow: WorkflowSnapshot.nullable() }),
-  },
   /** One workflow agent's transcript, itemized as history is. Empty while it hasn't written one. */
   'workflow/agentItems': {
     params: z.object({ threadId: z.string(), runId: z.string(), agentId: z.string() }),

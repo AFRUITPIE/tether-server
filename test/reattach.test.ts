@@ -158,7 +158,8 @@ describe('background subagents', () => {
       summary: 'Agent "Sleep then reply" completed',
       uuid: 'n1',
     });
-    expect(event.some((e) => e.method === 'task/event')).toBe(true);
+    const agent = event.flatMap((e) => (e.method === 'task/updated' ? [e.body.task] : [])).find((t) => t.id === 'agent1');
+    expect(agent).toMatchObject({ kind: 'agent', taskId: 't1', status: 'done', summary: 'Agent "Sleep then reply" completed' });
     const notices = [...iz.items.values()].filter((i) => i.type === 'notice');
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({ kind: 'taskNotification', text: 'Agent "Sleep then reply" completed' });
@@ -175,7 +176,9 @@ describe('background subagents', () => {
     const iz = new Itemizer();
     backgroundAgentTurn(iz);
     const out = iz.ingest({ type: 'system', subtype: 'task_notification', task_id: 'inner', tool_use_id: 'bash1', status: 'completed', summary: 'sleep 20', uuid: 'n0' });
-    expect(out.map((e) => e.method)).toContain('task/event');
+    const inner = out.flatMap((e) => (e.method === 'task/updated' ? [e.body.task] : [])).find((t) => t.taskId === 'inner');
+    // Under the subagent whose call it is.
+    expect(inner).toMatchObject({ id: 'bash1', parentId: 'agent1', status: 'done' });
     expect([...iz.items.values()].some((i) => i.type === 'notice')).toBe(false);
   });
 

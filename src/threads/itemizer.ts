@@ -1,6 +1,6 @@
-import type { Item, ToolCallItem, ToolKind, Turn, TurnResult, UserInput } from '../protocol/index.ts';
+import type { Item, SessionCron, TaskState, ToolCallItem, ToolKind, Turn, TurnResult, UserInput } from '../protocol/index.ts';
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
-import type { GoalNotice, WorkflowSnapshot } from '../protocol/items.ts';
+import type { GoalNotice } from '../protocol/items.ts';
 import {
   launchRunId,
   launchTaskId,
@@ -10,7 +10,10 @@ import {
   settleAgents,
   workflowCallName,
   workflowStatus,
+  type WorkflowSnapshot,
 } from './workflows.ts';
+import { concernsSchedules, scheduledTasks, scheduledWork, type Liveness } from './scheduled.ts';
+import { isTaskCall, isTerminal, taskState, taskStatusOf, usageOf, workflowTasks, type TaskFacts } from './tasks.ts';
 
 export type Emission = { [N in NotificationName]: { method: N; body: NotificationBody<N> } }[NotificationName];
 
@@ -158,6 +161,33 @@ export class Itemizer {
   /** The last turn to end: a goal's check is written just after the reply that ends it. */
   private lastTurnId: string | null = null;
 
+  // ---- tasks (see `tasks()`) ----
+  /** What the CLI said of each task, by its task id, in the order each was first heard of. */
+  private facts = new Map<string, TaskFacts>();
+  /** The task each call started, the newest when more than one. */
+  private factsByCall = new Map<string, TaskFacts>();
+  /** The calls that are tasks of their own (`isTaskCall`), in order. */
+  private taskCalls = new Set<string>();
+  /** The items that tell of scheduled work (`concernsSchedules`), in order. */
+  private scheduleItems = new Set<string>();
+  /** Such items from before this itemizer's first, for a live thread that resumed a session. */
+  private seedItems: Item[] = [];
+  /** What the session's Stop hook last said will wake it; undefined when not run here. */
+  private sessionCrons?: SessionCron[];
+  /** The CLI process has ended: none of its tasks goes on. */
+  private processEnded = false;
+  /** Something a task's state is made from changed since the states were last sent. */
+  private tasksDirty = false;
+  /** The messages taken as skills' instructions, by message id, and whose. */
+  private skillMessages = new Map<string, string>();
+  /** The latest item of the chat (null) and of each subagent, for what follows it. */
+  private lastItemOf = new Map<string | null, string>();
+  /** Each task's state as last sent, as JSON. */
+  private sentTasks = new Map<string, string>();
+  /** Workflow agents' whole prompts, once read, by run and agent id; and when one was last looked for in vain. */
+  private agentPrompts = new Map<string, string>();
+  private agentPromptMisses = new Map<string, number>();
+
   /**
    * Which workflow run an agent id belongs to, from the session's directory on disk: for a peer
    * message from an agent of a run this itemizer has no snapshot of (history, or a run whose agents
@@ -173,6 +203,9 @@ export class Itemizer {
 
   /** A finished run's result as text, from its run record on disk (`workflows/<runId>.json`). */
   readRunResult?: (runId: string) => string | undefined;
+
+  /** A workflow agent's whole prompt from its transcript on disk, for one whose preview was cut. */
+  readAgentPrompt?: (runId: string, agentId: string) => string | undefined;
 
   /**
    * @param historyMode transcripts have no `result` messages, so a new real user prompt closes the open turn.
@@ -213,12 +246,12 @@ export class Itemizer {
       ...(queued ? { queued: true } : {}),
     };
     out.push(...this.addCompleted(item));
-    return { turnId: this.turn!.id, out };
+    return { turnId: this.turn!.id, out: this.withTasks(out) };
   }
 
   ingest(msg: AnyMsg): Emission[] {
-    if (!this.historyMode) return this.route(msg);
-    return this.at(msg.timestamp, () => this.route(msg));
+    if (!this.historyMode) return this.withTasks(this.route(msg));
+    return this.withTasks(this.at(msg.timestamp, () => this.route(msg)));
   }
 
   /** Whether a /goal is being worked toward, so its checks are worth looking for. */
@@ -245,12 +278,17 @@ export class Itemizer {
    * (the `local_command` record), and a workflow's mid-turn `<task-notification>` (`ingestQueued`).
    */
   ingestExtra(record: AnyMsg): Emission[] {
+    return this.withTasks(this.extra(record));
+  }
+
+  private extra(record: AnyMsg): Emission[] {
     if (record.type === 'attachment') {
       const a = record.attachment;
       if (a?.type === 'queued_command') return this.ingestQueued(record);
       if (a?.type === 'goal_status') return this.at(record.timestamp, () => this.goalStatus(record.uuid, a));
       return [];
     }
+    if (record.type === 'user' && typeof record.sourceToolUseID === 'string') return this.skillInstructions(record.sourceToolUseID, record);
     if (record.type === 'user' && isWakeup(record)) return this.at(record.timestamp, () => this.wakeup(record));
     if (record.type === 'system' && record.subtype === 'local_command') return this.at(record.timestamp, () => this.onSystem(record));
     return [];
@@ -444,7 +482,8 @@ export class Itemizer {
       }
       case 'background_tasks_changed':
         if (Array.isArray(msg.tasks)) this.backgroundTaskIds = new Set(msg.tasks.map((t: AnyMsg) => String(t.task_id)));
-        return [{ method: 'task/backgroundChanged', body: { tasks: msg.tasks ?? msg } }];
+        this.tasksDirty = true;
+        return [];
       case 'commands_changed':
         return [{ method: 'thread/commandsChanged', body: {} }];
       case 'notification':
@@ -458,47 +497,83 @@ export class Itemizer {
     }
   }
 
+  /**
+   * What a task event says, kept as the task's facts (`tasks()` makes its state of them). A
+   * workflow's progress goes into its snapshot; its progress's description names its latest agent,
+   * which is the snapshot's activity, never the task's description.
+   */
   private taskEvent(msg: AnyMsg): Emission[] {
     const taskId: string = msg.task_id;
+    if (typeof taskId !== 'string' || !taskId) return [];
     if (msg.subtype === 'task_started' && typeof msg.task_type === 'string') this.taskTypes.set(taskId, msg.task_type);
     if (msg.subtype === 'task_started' && msg.owned_by_subagent === true && !this.ownedTasks.has(taskId)) this.ownedTasks.set(taskId, {});
-    const owner = this.ownerOf(taskId, msg.tool_use_id ?? this.taskTools.get(taskId));
+    this.ownerOf(taskId, msg.tool_use_id ?? this.taskTools.get(taskId));
     const workflow = this.isWorkflowTask(taskId, msg.tool_use_id) || Array.isArray(msg.workflow_progress);
-    const snapshot = workflow ? this.trackWorkflow(msg) : undefined;
-    // What the CLI reports of a workflow is in the snapshot; the rest of the event goes as it came.
-    // The started event's prompt is the whole script, already the Workflow call's input.
-    let data = msg;
-    if (workflow && ('workflow_progress' in msg || 'prompt' in msg)) {
-      const { workflow_progress: _p, prompt: _s, ...rest } = msg;
-      data = rest;
+    if (workflow) this.trackWorkflow(msg);
+    const f = this.factsOf(taskId, msg.tool_use_id);
+    switch (msg.subtype) {
+      case 'task_started':
+        if (typeof msg.task_type === 'string') f.type = msg.task_type;
+        if (typeof msg.description === 'string' && msg.description) f.description = msg.description;
+        if (typeof msg.workflow_name === 'string' && msg.workflow_name) f.workflowName = msg.workflow_name;
+        f.startedAt ??= this.stamp();
+        if (!isTerminal(taskStatusOf(f.status))) f.status = 'running';
+        break;
+      case 'task_progress':
+        if (typeof msg.summary === 'string' && msg.summary) f.summary = msg.summary;
+        if (!f.status) f.status = 'running';
+        break;
+      case 'task_updated': {
+        const patch = msg.patch ?? {};
+        if (typeof patch.status === 'string') f.status = patch.status;
+        if (typeof patch.description === 'string' && patch.description && !workflow) f.description = patch.description;
+        if (typeof patch.is_backgrounded === 'boolean') f.backgrounded = patch.is_backgrounded;
+        if (typeof patch.end_time === 'number') f.endedAt = patch.end_time;
+        const error = failureOf(patch.error, undefined);
+        if (error) f.error = error;
+        break;
+      }
+      case 'task_notification': {
+        if (typeof msg.status === 'string') f.status = msg.status;
+        if (typeof msg.summary === 'string' && msg.summary) f.summary = msg.summary;
+        if (typeof msg.output_file === 'string' && msg.output_file) f.outputFile = msg.output_file;
+        f.endedAt ??= this.stamp();
+        const error = failureOf(msg.error, msg.status === 'failed' ? msg.summary : undefined);
+        if (error && msg.status === 'failed') f.error = error;
+        break;
+      }
     }
-    const description: string | undefined =
-      msg.subtype === 'task_updated'
-        ? msg.patch?.description
-        : // A workflow's progress names its latest agent ("Verify: ls-1"): its activity, not a new name.
-          workflow && msg.subtype === 'task_progress'
-          ? undefined
-          : msg.description;
-    const error = msg.patch?.error ?? msg.error;
-    return [
-      {
-        method: 'task/event',
-        body: {
-          event: msg.subtype.slice('task_'.length),
-          taskId,
-          ...(msg.tool_use_id ? { toolUseId: msg.tool_use_id } : {}),
-          ...(description ? { description } : {}),
-          ...(msg.status || msg.patch?.status ? { status: msg.status ?? msg.patch.status } : {}),
-          ...(msg.summary ? { summary: msg.summary } : {}),
-          ...(typeof error === 'string' && error ? { error } : typeof error?.message === 'string' ? { error: error.message } : {}),
-          ...(snapshot ? { workflow: structuredClone(snapshot) } : {}),
-          ...(owner ? { ownedBySubagent: true } : {}),
-          ...(owner?.workflowToolUseId ? { workflowToolUseId: owner.workflowToolUseId } : {}),
-          ...(owner?.workflowAgentId ? { workflowAgentId: owner.workflowAgentId } : {}),
-          data,
-        },
-      },
-    ];
+    const usage = usageOf(msg.usage);
+    if (usage) f.usage = { ...f.usage, ...usage };
+    this.tasksDirty = true;
+    return [];
+  }
+
+  /** A task's facts, made the first time it's heard of, with the call that started it once known. */
+  private factsOf(taskId: string, toolUseId?: string): TaskFacts {
+    let f = this.facts.get(taskId);
+    if (!f) this.facts.set(taskId, (f = { taskId }));
+    const call = toolUseId ?? this.taskTools.get(taskId);
+    if (call && !f.toolUseId) f.toolUseId = call;
+    if (f.toolUseId) this.factsByCall.set(f.toolUseId, f);
+    return f;
+  }
+
+  /** A `<task-notification>` message's facts: how a task ended, which is all history has of it. */
+  private noteNotification(n: { taskId?: string; toolUseId?: string; status?: string; summary?: string; outputFile?: string }) {
+    if (!n.taskId) return;
+    const f = this.factsOf(n.taskId, n.toolUseId);
+    // Live, the event said it first; the message the CLI hands the model after only fills in.
+    const settled = isTerminal(taskStatusOf(f.status));
+    if (n.status && !settled) f.status = n.status;
+    if (n.summary && !(settled && f.summary)) f.summary = n.summary;
+    if (n.outputFile) f.outputFile ??= n.outputFile;
+    f.endedAt ??= this.stamp();
+    if (n.status === 'failed') {
+      const error = failureOf(undefined, n.summary);
+      if (error) f.error = error;
+    }
+    this.tasksDirty = true;
   }
 
   /**
@@ -535,11 +610,11 @@ export class Itemizer {
   }
 
   /**
-   * A workflow's snapshot with what this event says merged in. Returned only for events worth
-   * sending it on: its start, its finish, and progress that carried the agents (the CLI sends
-   * them at most every few seconds, so the snapshot is held between).
+   * A workflow's snapshot with what this event says merged in: the agents come on some progress
+   * events only (at most every few seconds), so the snapshot is held between. A settled run
+   * settles the agents it last heard of (`settleAgents`).
    */
-  private trackWorkflow(msg: AnyMsg): WorkflowSnapshot | undefined {
+  private trackWorkflow(msg: AnyMsg) {
     const taskId: string = msg.task_id;
     const callId: string | undefined = msg.tool_use_id ?? this.taskTools.get(taskId);
     const call = callId ? this.toolItems.get(callId) : undefined;
@@ -550,12 +625,10 @@ export class Itemizer {
       const name = msg.workflow_name ?? workflowCallName(call?.input);
       if (typeof name === 'string' && name) w.name = name;
     }
-    let send = false;
     switch (msg.subtype) {
       case 'task_started':
         if (typeof msg.description === 'string' && msg.description) w.description = msg.description;
         w.status = 'running';
-        send = true;
         break;
       case 'task_progress':
         if (typeof msg.description === 'string' && msg.description && msg.description !== w.description) w.activity = msg.description;
@@ -567,7 +640,6 @@ export class Itemizer {
       }
       case 'task_notification':
         w.status = workflowStatus(msg.status) ?? 'completed';
-        send = true;
         break;
     }
     const error = failureOf(msg.patch?.error ?? msg.error, msg.subtype === 'task_notification' && w.status === 'failed' ? msg.summary : undefined);
@@ -578,18 +650,15 @@ export class Itemizer {
       if (typeof u.tool_uses === 'number') w.toolUses = u.tool_uses;
       if (typeof u.duration_ms === 'number') w.durationMs = u.duration_ms;
     }
-    if (Array.isArray(msg.workflow_progress)) {
-      w = mergeWorkflowProgress(w, msg.workflow_progress);
-      send = true;
-    }
-    if (msg.subtype === 'task_notification' && w.status === 'completed') w = settleAgents(w);
+    if (Array.isArray(msg.workflow_progress)) w = mergeWorkflowProgress(w, msg.workflow_progress);
+    w = settleAgents(w);
     if (!w.description && call?.input) {
       const d = scriptMeta((call.input as AnyMsg).script).description;
       if (d) w.description = d;
     }
     this.workflows.set(taskId, w);
     if (callId) for (const a of w.agents) if (a.agentId) this.workflowAgents.set(a.agentId, callId);
-    return send ? w : undefined;
+    this.tasksDirty = true;
   }
 
   /**
@@ -707,6 +776,7 @@ export class Itemizer {
   // ---- turns ----
 
   private startTurn(id: string): Emission[] {
+    this.tasksDirty = true;
     this.interruptRequested = false;
     this.replyEnded = false;
     this.turn = { id, status: 'inProgress', startedAt: this.stamp() };
@@ -721,8 +791,14 @@ export class Itemizer {
   // ---- items ----
 
   private upsert(item: Item) {
-    if (!this.items.has(item.id)) this.order.push(item.id);
+    if (!this.items.has(item.id)) {
+      this.order.push(item.id);
+      this.lastItemOf.set(item.parentToolUseId, item.id);
+    }
     this.items.set(item.id, item);
+    if (item.type === 'toolCall' && isTaskCall(item)) this.taskCalls.add(item.id);
+    if (concernsSchedules(item)) this.scheduleItems.add(item.id);
+    if (this.taskCalls.has(item.id) || this.scheduleItems.has(item.id) || this.factsByCall.has(item.id)) this.tasksDirty = true;
   }
 
   private addStarted(item: Item): Emission[] {
@@ -923,7 +999,10 @@ export class Itemizer {
     if (isError) t.isError = true;
     // A background agent's launch names the task its report and notification will come from.
     const agentId = (structured as AnyMsg)?.agentId ?? /^agentId: (\w+)/m.exec(text)?.[1];
-    if (t.kind === 'subagent' && typeof agentId === 'string') this.taskTools.set(agentId, t.id);
+    if (t.kind === 'subagent' && typeof agentId === 'string') {
+      this.taskTools.set(agentId, t.id);
+      this.linkTask(agentId, t.id);
+    }
     if (t.name === 'Workflow' && !isError) this.noteWorkflowLaunch(t, structured, text);
     return this.addCompleted(t);
   }
@@ -936,6 +1015,7 @@ export class Itemizer {
     if (runId) this.workflowRuns.set(runId, t.id);
     if (!taskId) return;
     this.taskTools.set(taskId, t.id);
+    this.linkTask(taskId, t.id);
     if (!this.taskTypes.has(taskId) && (taskType === 'local_workflow' || (!taskType && /launched in background/i.test(text))))
       this.taskTypes.set(taskId, 'local_workflow');
     const w = this.workflows.get(taskId);
@@ -966,12 +1046,17 @@ export class Itemizer {
     if (inputs.length === 0) return out;
     const id: string = msg.uuid ?? `user_${++this.fallbackCounter}`;
     const firstText = inputs[0]?.type === 'text' ? inputs[0].text : '';
+    // A skill's instructions, which Claude Code puts in the conversation right after the Skill call:
+    // the call's, never a message. The transcript names the call; the stream, by place alone.
+    const skillCall = this.skillCallFor(msg, id, parent);
+    if (skillCall) return this.skillInstructions(skillCall, msg);
     // A /goal's harness talking to the model (its Stop hook's feedback, its brief), never the chat's.
     if (parent === null && msg.origin?.kind !== 'human' && isGoalHarness(firstText, this.activeGoal !== undefined)) return out;
     // Transcript conventions for CLI-generated user messages.
     const notification = parseTaskNotification(firstText);
     if (notification) {
       if (parent !== null) return out;
+      this.noteNotification(notification);
       if (this.isWorkflowTask(notification.taskId, notification.toolUseId))
         return this.workflowFinished(notification, 'message', id, msg.timestamp ? Date.parse(msg.timestamp) : undefined);
       if (!this.worthANotice({ tool_use_id: notification.toolUseId })) return out;
@@ -1007,7 +1092,14 @@ export class Itemizer {
       originKind = 'subagent';
       originName = typeof description === 'string' ? description : undefined;
       inputs = [{ type: 'text', text: handback }];
-      if (taskId) this.notifiedTasks.add(taskId);
+      if (taskId) {
+        this.notifiedTasks.add(taskId);
+        // Its report is in: it has finished, whether or not its notification says so too.
+        const f = this.factsOf(taskId);
+        if (!isTerminal(taskStatusOf(f.status))) f.status = 'completed';
+        if (!f.toolUseId && call) f.toolUseId = call.id;
+        this.tasksDirty = true;
+      }
     }
     const synthetic =
       parent !== null ||
@@ -1072,19 +1164,51 @@ export class Itemizer {
     // A dynamic /loop's wakeup fires with the /loop input itself, which may come as the command.
     const raw = contentToText(record.message?.content).trim();
     const text = slashCommand(raw) ?? raw;
-    out.push(
-      ...this.addCompleted({
-        type: 'userMessage',
-        id,
-        turnId: this.turn?.id ?? this.lastTurnId,
-        parentToolUseId: null,
-        createdAt: this.stamp(),
-        content: [{ type: 'text', text }],
-        synthetic: true,
-        origin: 'wakeup',
-      }),
-    );
+    const item: Item = {
+      type: 'userMessage',
+      id,
+      turnId: this.turn?.id ?? this.lastTurnId,
+      parentToolUseId: null,
+      createdAt: this.stamp(),
+      content: [{ type: 'text', text }],
+      synthetic: true,
+      origin: 'wakeup',
+    };
+    // From a loop: its job was a /loop's (found among the chat's jobs), or the CLI marks it a loop's.
+    const loopRecord = record.promptSource === 'loop_wakeup' || /^\s*<<autonomous-loop/.test(raw);
+    item.fromLoop = loopRecord || scheduledWork([...this.scheduleSource(), item], { kind: 'unknown' }).loopWakeups.has(id);
+    out.push(...this.addCompleted(item));
     return out;
+  }
+
+  /** The items that tell of scheduled work, those from before this itemizer's first included. */
+  private scheduleSource(): Item[] {
+    const own = [...this.scheduleItems].map((id) => this.items.get(id)!);
+    return [...this.seedItems.filter((i) => !this.items.has(i.id)), ...own];
+  }
+
+  /** The Skill call a user message is the instructions of, if it is. */
+  private skillCallFor(msg: AnyMsg, id: string, parent: string | null): string | undefined {
+    const named = typeof msg.sourceToolUseID === 'string' ? msg.sourceToolUseID : undefined;
+    const known = this.skillMessages.get(id);
+    if (known) return known;
+    const synthetic = msg.isSynthetic === true || msg.isMeta === true;
+    const candidate = named ?? (synthetic && msg.origin?.kind !== 'human' ? this.lastItemOf.get(parent) : undefined);
+    const call = candidate ? this.toolItems.get(candidate) : undefined;
+    if (!call || call.kind !== 'skill' || call.parentToolUseId !== parent) return undefined;
+    if (!named && call.skillInstructions !== undefined) return undefined;
+    return call.id;
+  }
+
+  /** A skill's instructions onto its call, as an update of the call. */
+  private skillInstructions(callId: string, msg: AnyMsg): Emission[] {
+    const call = this.toolItems.get(callId);
+    if (!call || call.kind !== 'skill') return [];
+    if (typeof msg.uuid === 'string') this.skillMessages.set(msg.uuid, callId);
+    const text = contentToText(msg.message?.content).trim();
+    if (!text || call.skillInstructions === text) return [];
+    call.skillInstructions = text;
+    return [{ method: 'item/updated', body: { item: structuredClone(call) } }];
   }
 
   /** A local command's output: a /goal set or cleared is the goal's, anything else a plain notice. */
@@ -1297,6 +1421,7 @@ export class Itemizer {
     this.lastTurnId = turn.id;
     this.turn = null;
     this.interruptRequested = false;
+    this.tasksDirty = true;
     // A finish still waiting for a step of the turn comes after it, as the turn that answers it.
     out.push(...this.flushFinishes());
     return out;
@@ -1304,7 +1429,7 @@ export class Itemizer {
 
   /** Close an open turn without a result (e.g. process died, or end of a transcript). */
   closeTurn(status: 'completed' | 'interrupted' | 'failed'): Emission[] {
-    return this.abandonTurn(status);
+    return this.withTasks(this.abandonTurn(status));
   }
 
   /**
@@ -1312,6 +1437,8 @@ export class Itemizer {
    * subagent's tool calls in a turn that has already closed.
    */
   abandonAll(): Emission[] {
+    this.processEnded = true;
+    this.tasksDirty = true;
     const out = this.abandonTurn('interrupted');
     for (const t of this.toolItems.values()) {
       if (t.status !== 'running' && t.status !== 'pending') continue;
@@ -1319,7 +1446,7 @@ export class Itemizer {
       out.push(...this.addCompleted(t));
     }
     this.backgroundTaskIds.clear();
-    return out;
+    return this.withTasks(out);
   }
 
   abandonTurn(status: 'completed' | 'interrupted' | 'failed' = 'interrupted'): Emission[] {
@@ -1338,7 +1465,176 @@ export class Itemizer {
     out.push({ method: 'turn/completed', body: { turn: structuredClone(turn) } });
     this.lastTurnId = turn.id;
     this.turn = null;
+    this.tasksDirty = true;
     return out;
+  }
+
+  // ---- tasks ----
+
+  /**
+   * Whether task changes are sent (`task/updated`) as they happen. Off for an itemizer whose
+   * emissions nobody reads (a transcript read once): `tasks()` still says how they stand.
+   */
+  taskUpdates = true;
+
+  /**
+   * Every task of the chat as it stands, in the order each was first heard of: the calls that
+   * start tasks (`isTaskCall`), the tasks the CLI reports (by the call that started each, else its
+   * task id), each workflow's agents after it, then the schedules and goals. A task a subagent
+   * started goes under that subagent; a workflow agent's own task under that agent once known, else
+   * its workflow, and nowhere (left out) when neither is known.
+   */
+  tasks(): TaskState[] {
+    const ended = this.processEnded;
+    const opts = { ended, readPrompt: (runId: string, agentId: string) => this.agentPrompt(runId, agentId) };
+    const states = new Map<string, TaskState>();
+    const put = (id: string, call: ToolCallItem | undefined, f: TaskFacts | undefined) => {
+      const w = this.snapshotOf(id, f);
+      states.set(
+        id,
+        taskState(id, call, f, {
+          ended,
+          live: !this.historyMode,
+          inBackground: !!f && this.backgroundTaskIds.has(f.taskId),
+          workflowName: w?.name ?? (call ? workflowCallName(call.input) : undefined),
+        }),
+      );
+    };
+    for (const id of this.taskCalls) put(id, this.toolItems.get(id), this.factsByCall.get(id));
+    for (const f of this.facts.values()) {
+      const callId = f.toolUseId;
+      // A call's older task is its newer one's: the call is one task.
+      if (callId && (states.has(callId) || this.factsByCall.get(callId) !== f)) continue;
+      put(callId ?? `task:${f.taskId}`, callId ? this.toolItems.get(callId) : undefined, f);
+    }
+    const all: TaskState[] = [];
+    for (const s of states.values()) {
+      if (s.kind !== 'workflow') {
+        all.push(s);
+        continue;
+      }
+      const f = this.factsByCall.get(s.id) ?? (s.taskId ? this.facts.get(s.taskId) : undefined);
+      const script = (this.toolItems.get(s.toolUseId ?? '')?.input as AnyMsg)?.script;
+      all.push(...workflowTasks(s, this.snapshotOf(s.id, f), script, opts));
+    }
+    const byId = new Map(all.map((s) => [s.id, s]));
+    const placed: TaskState[] = [];
+    for (const s of all) {
+      if (s.kind === 'workflowAgent') {
+        placed.push(s);
+        continue;
+      }
+      const call = s.toolUseId ? this.toolItems.get(s.toolUseId) : undefined;
+      const parentCall = call?.parentToolUseId;
+      if (parentCall && parentCall !== s.id && byId.has(parentCall)) s.parentId = parentCall;
+      else if (!call && s.taskId && this.ownedTasks.has(s.taskId)) {
+        // A workflow agent's own task: its call never reaches the stream.
+        const owner = this.ownedTasks.get(s.taskId)!;
+        const workflow = owner.workflowToolUseId ? byId.get(owner.workflowToolUseId) : undefined;
+        if (!workflow) continue;
+        const agent = owner.workflowAgentId
+          ? all.find((a) => a.parentId === workflow.id && a.workflowAgent?.agentId === owner.workflowAgentId)
+          : undefined;
+        s.parentId = agent?.id ?? workflow.id;
+      }
+      placed.push(s);
+    }
+    placed.push(...scheduledTasks(scheduledWork(this.scheduleSource(), this.liveness())));
+    return placed;
+  }
+
+  /** The tasks that changed since they were last sent, as `task/updated`, after `out`. */
+  private withTasks(out: Emission[]): Emission[] {
+    if (!this.tasksDirty || !this.taskUpdates) return out;
+    this.tasksDirty = false;
+    for (const task of this.tasks()) {
+      const json = JSON.stringify(task);
+      if (this.sentTasks.get(task.id) === json) continue;
+      this.sentTasks.set(task.id, json);
+      out.push({ method: 'task/updated', body: { task } });
+    }
+    return out;
+  }
+
+  /** Takes the tasks as they stand as sent: a client was handed them whole (a history read). */
+  markTasksSent() {
+    this.sentTasks = new Map(this.tasks().map((t) => [t.id, JSON.stringify(t)]));
+    this.tasksDirty = false;
+  }
+
+  /** What the session's Stop hook says will wake it (live only): its schedules settle by it. */
+  noteSessionCrons(crons: SessionCron[]): Emission[] {
+    this.sessionCrons = crons;
+    this.tasksDirty = true;
+    return this.withTasks([]);
+  }
+
+  /**
+   * The chat's items from before this itemizer's first, for a live thread resuming a session: its
+   * schedules and goals are worked out from all of the chat, not only what this process said.
+   */
+  seed(items: Item[]): Emission[] {
+    this.seedItems = items.filter(concernsSchedules);
+    this.tasksDirty = true;
+    return this.withTasks([]);
+  }
+
+  /** A workflow run's snapshot read from the session's files, for a run this itemizer has no live snapshot of. */
+  applyWorkflowSnapshot(runId: string, snapshot: WorkflowSnapshot): Emission[] {
+    const callId = this.workflowRuns.get(runId);
+    let key = [...this.workflows.entries()].find(([, w]) => w.runId === runId)?.[0];
+    if (!key) key = (callId ? [...this.taskTools.entries()].find(([, c]) => c === callId)?.[0] : undefined) ?? `run:${runId}`;
+    this.workflows.set(key, { ...snapshot, runId });
+    if (callId) for (const a of snapshot.agents) if (a.agentId) this.workflowAgents.set(a.agentId, callId);
+    this.tasksDirty = true;
+    return this.withTasks([]);
+  }
+
+  /** The workflow runs whose calls this itemizer has and that it hasn't seen settle in a snapshot. */
+  unsettledWorkflowRuns(): string[] {
+    return [...this.workflowRuns.keys()].filter((runId) => {
+      const w = [...this.workflows.values()].find((x) => x.runId === runId);
+      return !w || !(w.status === 'completed' || w.status === 'failed' || w.status === 'stopped');
+    });
+  }
+
+  /** A workflow's snapshot, by its task, else by its call. */
+  private snapshotOf(stateId: string, f: TaskFacts | undefined): WorkflowSnapshot | undefined {
+    const byTask = f ? this.workflows.get(f.taskId) : undefined;
+    if (byTask) return byTask;
+    for (const [key, w] of this.workflows) {
+      if (this.taskTools.get(key) === stateId) return w;
+      if (key.startsWith('run:') && this.workflowRuns.get(key.slice(4)) === stateId) return w;
+    }
+    return undefined;
+  }
+
+  private liveness(): Liveness {
+    if (this.processEnded) return { kind: 'ended' };
+    if (this.historyMode) return { kind: 'unknown' };
+    return { kind: 'live', ...(this.sessionCrons ? { crons: this.sessionCrons } : {}), turnRunning: this.turn !== null };
+  }
+
+  /** A workflow agent's whole prompt, read once found; looked for again at most every 5 seconds. */
+  private agentPrompt(runId: string, agentId: string): string | undefined {
+    const key = `${runId}/${agentId}`;
+    const known = this.agentPrompts.get(key);
+    if (known !== undefined) return known;
+    const missed = this.agentPromptMisses.get(key);
+    if (!this.readAgentPrompt || (missed !== undefined && this.now() - missed < 5000)) return undefined;
+    const read = this.readAgentPrompt(runId, agentId);
+    if (read === undefined) this.agentPromptMisses.set(key, this.now());
+    else this.agentPrompts.set(key, read);
+    return read;
+  }
+
+  /** A task's call, once known: its facts are the call's. */
+  private linkTask(taskId: string, callId: string) {
+    const f = this.facts.get(taskId);
+    if (!f || f.toolUseId) return;
+    f.toolUseId = callId;
+    this.factsByCall.set(callId, f);
+    this.tasksDirty = true;
   }
 
   snapshot(): { items: Item[]; turns: Turn[] } {

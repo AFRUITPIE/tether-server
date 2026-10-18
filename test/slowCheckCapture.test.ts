@@ -93,8 +93,8 @@ function read() {
 
 const finishOf = (items: Item[]) => items.filter((i) => i.type === 'userMessage' && i.origin === 'workflow') as any[];
 const turnOf = (items: Item[], id: string) => items.find((i) => i.id === id)?.turnId;
-const taskEvents = (out: Emission[], taskId: string) =>
-  out.flatMap((e) => (e.method === 'task/event' && (e.body as any).taskId === taskId ? [e.body as any] : []));
+const updatesOf = (out: Emission[], taskId: string) =>
+  out.flatMap((e) => (e.method === 'task/updated' && e.body.task.taskId === taskId ? [e.body.task] : []));
 
 describe('slow-check, streamed live', () => {
   const { iz, out, atReply } = live();
@@ -131,32 +131,31 @@ describe('slow-check, streamed live', () => {
     expect(live({ disk: false }).iz.snapshot().items.filter((i) => i.type === 'notice')).toEqual([]);
   });
 
-  test("each agent's command is said to be its agent's, on every event", () => {
+  test("each agent's command is a task under its agent, once its transcript shows the call", () => {
+    const tasks = iz.tasks();
+    const agentOf = (agentId: string) => tasks.find((t) => t.kind === 'workflowAgent' && t.workflowAgent?.agentId === agentId)!;
     for (const [taskId, agentId] of Object.entries(OWNED)) {
-      const events = taskEvents(out, taskId);
-      expect(events.map((e) => e.event)).toEqual(['started', 'updated', 'notification']);
-      for (const e of events) expect(e).toMatchObject({ ownedBySubagent: true, workflowToolUseId: CALL, workflowAgentId: agentId });
+      const task = tasks.find((t) => t.taskId === taskId)!;
+      expect(task).toMatchObject({ kind: 'command', taskType: 'local_bash', parentId: agentOf(agentId).id, status: 'stopped' });
+      // Each update said whose it was: never one at the top.
+      for (const u of updatesOf(out, taskId)) expect(u.parentId).toBeDefined();
     }
-    // The agent ids are the snapshot's, so a client finds each agent's row.
-    const agents = iz.workflowByRun(RUN)!.agents;
-    expect(agents.find((a) => a.agentId === OWNED.burds59jn)?.label).toBe('wait-1');
-    expect(agents.find((a) => a.agentId === OWNED.b8r5g0sol)?.label).toBe('wait-3');
+    expect(agentOf(OWNED.burds59jn!).title).toBe('wait-1');
+    expect(agentOf(OWNED.b8r5g0sol!).title).toBe('wait-3');
+    expect(agentOf(OWNED.b8r5g0sol!).parentId).toBe(CALL);
   });
 
-  test('without the transcripts, a command is the running workflow\'s', () => {
-    const { out } = live({ disk: false });
-    for (const taskId of Object.keys(OWNED))
-      for (const e of taskEvents(out, taskId)) {
-        expect(e).toMatchObject({ ownedBySubagent: true, workflowToolUseId: CALL });
-        expect(e.workflowAgentId).toBeUndefined();
-      }
+  test("without the transcripts, a command is the running workflow's", () => {
+    const { iz } = live({ disk: false });
+    for (const taskId of Object.keys(OWNED)) expect(iz.tasks().find((t) => t.taskId === taskId)?.parentId).toBe(CALL);
   });
 
-  test('the workflow and its call carry no owner', () => {
-    for (const e of taskEvents(out, TASK)) {
-      expect(e.ownedBySubagent).toBeUndefined();
-      expect(e.workflowToolUseId).toBeUndefined();
-    }
+  test('the workflow is at the top, done, with its agents', () => {
+    const w = iz.tasks().find((t) => t.id === CALL)!;
+    expect(w).toMatchObject({ kind: 'workflow', title: 'slow-check', status: 'done', taskId: TASK });
+    expect(w.parentId).toBeUndefined();
+    expect(JSON.parse(w.workflow!.result!).report).toBe('all waited');
+    expect(iz.tasks().filter((t) => t.parentId === CALL && t.kind === 'workflowAgent').every((a) => a.status === 'done')).toBe(true);
   });
 });
 

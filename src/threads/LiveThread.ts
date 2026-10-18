@@ -16,8 +16,10 @@ import { z } from 'zod';
 import type { ClaudeBinary } from '../claude.ts';
 import type {
   EffortLevel,
+  Item,
   PermissionMode,
   SessionCron,
+  TaskState,
   ThinkingSetting,
   ThreadInfo,
   ThreadStatus,
@@ -28,7 +30,7 @@ import type { ServerRequestName, ServerRequestParams, ServerRequestResult } from
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { Itemizer, type Emission } from './itemizer.ts';
 import { TranscriptExtras } from './FollowedThread.ts';
-import { runResultReader, sessionDirSync, workflowAgentLocator, workflowCallLocator } from './workflows.ts';
+import { agentPromptReader, runResultReader, sessionDirSync, workflowAgentLocator, workflowCallLocator } from './workflows.ts';
 import { PushQueue } from './pushQueue.ts';
 import { replayGap, seqOrigin } from './seq.ts';
 import pkg from '../../package.json' with { type: 'json' };
@@ -112,6 +114,8 @@ export type LiveThreadOptions = {
   sessionTools?: SessionTools;
   /** Set for a scheduled run, which nobody is there to answer. */
   unattended?: Unattended;
+  /** Told each task's state as it changes, to be kept with the chat (`TaskStore`). */
+  onTasks?: (tasks: TaskState[]) => void;
   stderr?: (text: string) => void;
   /** The daemon's log. */
   log?: (msg: string) => void;
@@ -201,11 +205,20 @@ export class LiveThread {
     this.itemizer.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(this.id));
     this.itemizer.locateWorkflowCall = workflowCallLocator(() => sessionDirSync(this.id));
     this.itemizer.readRunResult = runResultReader(() => sessionDirSync(this.id));
+    this.itemizer.readAgentPrompt = agentPromptReader(() => sessionDirSync(this.id));
   }
 
-  /** A dynamic workflow this thread is running or ran while loaded, by its run id. */
-  workflowByRun(runId: string) {
-    return this.itemizer.workflowByRun(runId);
+  /** The tasks this process has run or seen, and the chat's schedules and goals, as they stand. */
+  tasks(): TaskState[] {
+    return this.itemizer.tasks();
+  }
+
+  /**
+   * The chat's items from before this process (its transcript as it was on disk), so its schedules
+   * and goals are worked out from all of the chat.
+   */
+  seedHistory(items: Item[]) {
+    this.emitAll(this.itemizer.seed(items));
   }
 
   // ---------- lifecycle ----------
@@ -220,6 +233,7 @@ export class LiveThread {
     }
     // Session-only: a new process has none until it schedules some.
     this.info.sessionCrons = [];
+    this.emitAll(this.itemizer.noteSessionCrons([]));
     const options: Options = {
       pathToClaudeCodeExecutable: o.claude.path,
       cwd: o.cwd,
@@ -345,7 +359,6 @@ export class LiveThread {
       // The CLI's background tasks die with it, and a new process starts with none.
       this.backgroundTasks.clear();
       this.emitAll(this.itemizer.abandonAll());
-      this.emit('task/backgroundChanged', { tasks: [] });
       // So do its scheduled jobs: they're session-only.
       this.noteSessionCrons([]);
       for (const p of this.pending.values()) {
@@ -486,6 +499,7 @@ export class LiveThread {
     if (!crons || JSON.stringify(crons) === JSON.stringify(this.info.sessionCrons)) return;
     this.info.sessionCrons = crons;
     this.emit('thread/updated', { thread: this.threadInfo() });
+    this.emitAll(this.itemizer.noteSessionCrons(crons));
   }
 
   /**
@@ -544,6 +558,7 @@ export class LiveThread {
     this.buffer.push({ seq: this.seq, method, params });
     if (this.buffer.length > MAX_BUFFERED_EVENTS) this.buffer.splice(0, this.buffer.length - MAX_BUFFERED_EVENTS);
     for (const s of this.subscribers) s.notify(method, params);
+    if (method === 'task/updated') this.opts.onTasks?.([(body as NotificationBody<'task/updated'>).task]);
   }
 
   private emitAll(out: Emission[]) {

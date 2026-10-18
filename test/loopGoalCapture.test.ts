@@ -82,6 +82,15 @@ function history(messages: any[], raw: string[]) {
   return iz.snapshot();
 }
 
+function historyTasks(messages: any[], raw: string[]) {
+  const iz = new Itemizer(() => 1, true);
+  const extras = new TranscriptExtras();
+  extras.add(raw);
+  ingestHistory(iz, messages, extras);
+  iz.closeTurn('completed');
+  return iz.tasks();
+}
+
 /** Turns as their ids and the items in each, for comparing live with history. */
 const shape = (s: { items: Item[]; turns: Turn[] }) =>
   s.turns.map((t) => ({ turn: t.id, items: s.items.filter((i) => i.turnId === t.id && i.parentToolUseId === null).map((i) => `${i.type}:${i.id}`) }));
@@ -95,6 +104,7 @@ describe('/loop', async () => {
   };
   const streamed = live(stream, raw, prompts);
   const read = history(await lines('loop-history.jsonl'), raw);
+  const readTasks = historyTasks(await lines('loop-history.jsonl'), raw);
 
   test('live, each firing opens a turn of its own, named for its command', () => {
     expect(streamed.snapshot.turns.map((t) => t.id)).toEqual([
@@ -118,6 +128,32 @@ describe('/loop', async () => {
       // Nothing else of the loop is a message: the /loop skill's expansion stays out.
       const others = s.items.filter((i) => i.type === 'userMessage' && i.origin !== 'wakeup') as any[];
       expect(others.map((m) => m.content[0].text)).toEqual(['/loop 1m reply with the current time in one short line', 'stop the loop']);
+    }
+  });
+
+  test('the job is one schedule task: made by the /loop, fired twice, then deleted', () => {
+    for (const tasks of [streamed.iz.tasks(), readTasks]) {
+      const schedules = tasks.filter((t) => t.kind === 'schedule');
+      expect(schedules).toHaveLength(1);
+      expect(schedules[0]).toMatchObject({ id: 'schedule:toolu_01HBohE9J943dRxMU8Bjz1RD', title: PROMPT, status: 'stopped' });
+      expect(schedules[0]!.schedule).toMatchObject({
+        jobId: '6db9ae9a',
+        cron: '*/1 * * * *',
+        description: 'Every minute',
+        prompt: PROMPT,
+        recurring: true,
+        fromLoop: true,
+        wakeup: false,
+        firedCount: 2,
+        ended: 'deleted',
+      });
+    }
+  });
+
+  test('each wakeup says it was a /loop job firing', () => {
+    for (const s of [streamed.snapshot, read]) {
+      const wakeups = s.items.filter((i) => i.type === 'userMessage' && i.origin === 'wakeup') as any[];
+      expect(wakeups.map((w) => w.fromLoop)).toEqual([true, true]);
     }
   });
 
@@ -149,6 +185,7 @@ describe('/goal', async () => {
   const prompts = { '8892057a-ff55-411e-b335-f39e87fe4a83': `/goal ${CONDITION}` };
   const streamed = live(stream, raw, prompts);
   const read = history(await lines('goal-history.jsonl'), raw);
+  const readTasks = historyTasks(await lines('goal-history.jsonl'), raw);
   const metId = raw.map((l) => JSON.parse(l)).find((o) => o.attachment?.type === 'goal_status' && o.attachment.met)!.uuid;
 
   test('set and met are quiet goal lines, live and in history alike', () => {
@@ -163,6 +200,17 @@ describe('/goal', async () => {
       // The check is written after the reply it judged, in that reply's turn.
       expect(goals[1].turnId).toBe(s.turns[0]!.id);
       expect(s.items.at(-1)?.id).toBe(metId);
+    }
+  });
+
+  test('the goal is a task: set, then met on its first check', () => {
+    for (const tasks of [streamed.iz.tasks(), readTasks]) {
+      const goals = tasks.filter((t) => t.kind === 'goal');
+      expect(goals).toHaveLength(1);
+      expect(goals[0]).toMatchObject({ id: `goal:${SET}`, title: CONDITION, status: 'done' });
+      expect(goals[0]!.goal!.checks).toBe(1);
+      expect(goals[0]!.goal!.lastCheck!.met).toBe(true);
+      expect(goals[0]!.goal!.lastCheck!.reason).toStartWith('The assistant read notes.md');
     }
   });
 

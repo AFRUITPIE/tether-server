@@ -14,17 +14,19 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
 import { type ClaudeBinary, resolveClaude } from '../claude.ts';
-import { PermissionMode, type Item, type Params, type Result, type ScheduledTask, type ThreadSummary, type Turn } from '../protocol/index.ts';
+import { PermissionMode, type Item, type Params, type Result, type ScheduledTask, type TaskState, type ThreadSummary, type Turn } from '../protocol/index.ts';
 import type { Scheduler } from './Scheduler.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { createWorktree, removeWorktree, worktreeName } from '../server/fsApi.ts';
 import { Itemizer } from './itemizer.ts';
-import { FollowedThread, ingestHistory, TranscriptExtras, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
+import { FollowedThread, ingestHistory, loadWorkflows, TranscriptExtras, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
 import { LiveThread, TETHER_VERSION, type LiveThreadOptions } from './LiveThread.ts';
 import { readSessionHistory } from './history.ts';
 import { PushQueue } from './pushQueue.ts';
-import { isSafeId, readAgentItems, readRunJournal, readRunRecord, sessionDirSync, workflowAgentLocator } from './workflows.ts';
-import type { WorkflowSnapshot } from '../protocol/index.ts';
+import { agentPromptReader, isSafeId, readAgentItems, RECENT_RUN_MS, sessionDirSync, workflowAgentLocator } from './workflows.ts';
+import { mergeTasks } from './tasks.ts';
+import type { TaskStore } from './taskStore.ts';
+import { stat } from 'node:fs/promises';
 
 const IDLE_EVICT_MS = Number(process.env.TETHER_IDLE_EVICT_MS ?? 30 * 60_000);
 /** How long a scheduled run waits, with nobody watching, for a person to answer before it's denied. */
@@ -53,10 +55,15 @@ export class ThreadManager {
     this.lastSeqs.set(t.id, Math.max(this.lastSeqs.get(t.id) ?? 0, t.threadInfo().lastSeq));
   }
 
+  /** Where chats' tasks are kept (the daemon's home); none in tests that don't ask for it. */
+  readonly taskStore?: TaskStore;
+
   constructor(
     readonly claude: ClaudeBinary,
     private log: (msg: string) => void = () => {},
+    opts: { taskStore?: TaskStore } = {},
   ) {
+    this.taskStore = opts.taskStore;
     this.sweeper = setInterval(() => this.sweep(), 60_000);
     this.sweeper.unref?.();
   }
@@ -144,6 +151,7 @@ export class ThreadManager {
       mode: 'new',
       log: this.log,
       ...extra,
+      onTasks: (tasks) => this.taskStore?.put(threadId, tasks),
       onExit: (lt) => this.onExit(lt),
     });
     this.threads.set(threadId, t);
@@ -220,6 +228,7 @@ export class ThreadManager {
         ...settings,
         title: info.customTitle ?? info.summary,
         log: this.log,
+        onTasks: (tasks) => this.taskStore?.put(p.threadId, tasks),
         onExit: (lt) => this.onExit(lt),
       });
       this.threads.set(p.threadId, t);
@@ -232,6 +241,11 @@ export class ThreadManager {
       }
       this.log(`thread ${p.threadId} resumed in ${cwd}`);
       if (p.generateTitle) void t.nameChat();
+      // Its schedules and goals are the whole chat's, not only what this process says.
+      void this.storedBeforeLoad(t).then(
+        (stored) => t.seedHistory(stored.items),
+        () => {},
+      );
       return t;
     })();
     this.starting.set(p.threadId, promise);
@@ -310,6 +324,7 @@ export class ThreadManager {
   }
 
   shutdown() {
+    this.taskStore?.flush();
     for (const t of this.threads.values()) if (t.waitingUnattended) t.abandonUnattended('Tether stopped');
     this.scheduler?.stop();
     clearInterval(this.sweeper);
@@ -317,6 +332,7 @@ export class ThreadManager {
     for (const c of this.catalogs.values()) c.q.close();
     this.threads.clear();
     this.catalogs.clear();
+    this.taskStore?.flush();
   }
 
   /**
@@ -469,7 +485,7 @@ export class ThreadManager {
     threadId: string,
     cwd?: string,
     page?: { limit?: number; before?: string },
-  ): Promise<{ items: Item[]; turns: Turn[]; summary?: ThreadSummary; historySeq?: number; hasMore?: boolean }> {
+  ): Promise<{ items: Item[]; turns: Turn[]; tasks: TaskState[]; summary?: ThreadSummary; historySeq?: number; hasMore?: boolean }> {
     const info = await sessionInfo(threadId, cwd);
     const live = this.loaded(threadId);
     const summary = info ? this.summary(info) : undefined;
@@ -477,31 +493,97 @@ export class ThreadManager {
       // Follow on read, not subscribe: the seq handed back has to come from the follower that
       // will replay to the client after it.
       const follower = this.following(threadId) ?? (await this.follow(threadId, cwd));
+      const stale = await this.transcriptIsStale(threadId);
       if (follower) {
+        // Snapshot, tasks and seq taken together, so replay after historySeq never duplicates.
         const snap = follower.history();
         return {
           ...pageOf(snap.items, page),
           turns: snap.turns,
+          tasks: this.tasksWith(threadId, follower.tasks(), { stale }),
           historySeq: snap.seq,
           ...(summary ? { summary } : {}),
         };
       }
       const storedOnly = await this.readStored(threadId, cwd);
-      return { ...pageOf(storedOnly.items, page), turns: storedOnly.turns, ...(summary ? { summary } : {}) };
+      return {
+        ...pageOf(storedOnly.items, page),
+        turns: storedOnly.turns,
+        tasks: this.tasksWith(threadId, storedOnly.tasks, { stale }),
+        ...(summary ? { summary } : {}),
+      };
     }
     const stored = await this.storedBeforeLoad(live, cwd);
-    // Snapshot and seq are taken together so replay after historySeq never duplicates.
+    // Snapshot, tasks and seq are taken together so replay after historySeq never duplicates.
     const liveSnap = live.history();
     const historySeq = live.threadInfo().lastSeq;
     const { items, turns } = mergeHistory(stored, liveSnap);
-    return { ...pageOf(items, page), turns, historySeq, ...(summary ? { summary } : {}) };
+    return { ...pageOf(items, page), turns, tasks: this.tasksWith(threadId, stored.tasks, { live }), historySeq, ...(summary ? { summary } : {}) };
+  }
+
+  /**
+   * A thread's tasks for a client to start from (`thread/subscribe`), as `read` gives them: the
+   * live thread's or follower's, over what was kept and what its transcript says.
+   */
+  async tasksOf(t: { id: string }): Promise<TaskState[]> {
+    const live = this.loaded(t.id);
+    if (live) return this.tasksWith(t.id, (await this.storedBeforeLoad(live).catch(() => ({ tasks: [] as TaskState[] }))).tasks, { live });
+    const follower = this.following(t.id);
+    const stale = await this.transcriptIsStale(t.id);
+    return this.tasksWith(t.id, follower ? follower.tasks() : (await this.readStored(t.id)).tasks, { stale });
+  }
+
+  /**
+   * A chat's tasks: what its transcript says (`derived`), then what this daemon kept of them (it
+   * saw their events live, which no transcript holds), then the live thread's own. A task kept as
+   * going whose process isn't running here any more went with it: stopped, unless the transcript
+   * says how it ended. A derived task going in a chat no one has written to for a few minutes
+   * (`stale`), or from before a live thread's process, is stopped too, except a workflow's, whose
+   * files say how it stands. Schedules and goals are
+   * the transcript's word.
+   */
+  private tasksWith(threadId: string, derived: TaskState[], opts: { live?: LiveThread; stale?: boolean }): TaskState[] {
+    const going = (t: TaskState) => (t.status === 'running' || t.status === 'waiting') && t.kind !== 'schedule' && t.kind !== 'goal';
+    const stop = (t: TaskState): TaskState => {
+      if (!going(t)) return t;
+      const { backgrounded: _b, canBackground: _c, ...rest } = t;
+      return { ...rest, status: 'stopped' };
+    };
+    const liveTasks = opts.live?.tasks() ?? [];
+    const liveIds = new Set(liveTasks.map((t) => t.id));
+    const byId = new Map(derived.map((t) => [t.id, t]));
+    // A workflow's files say how it stands (a stale journal is `waiting`), so it isn't taken as stopped.
+    const ownWord = (t: TaskState) => !opts.live && (t.kind === 'workflow' || t.kind === 'workflowAgent');
+    const fromDisk = derived.map((t) => ((opts.live || opts.stale) && !ownWord(t) ? stop(t) : t));
+    const kept = (this.taskStore?.get(threadId) ?? []).map((t) => {
+      if (!going(t) || liveIds.has(t.id)) return t;
+      // Kept as going, but its process has ended: as the transcript says it ended, else stopped.
+      const d = byId.get(t.id);
+      if (d && !going(d)) {
+        const { backgrounded: _b, canBackground: _c, ...rest } = t;
+        return { ...rest, status: d.status, ...(d.endedAt !== undefined ? { endedAt: d.endedAt } : {}), ...(d.summary ? { summary: d.summary } : {}) };
+      }
+      return stop(t);
+    });
+    return mergeTasks(fromDisk, kept, liveTasks);
+  }
+
+  /** Whether nothing has been written to the chat's transcript for a few minutes, as a session nobody runs. */
+  private async transcriptIsStale(threadId: string): Promise<boolean> {
+    const dir = sessionDirSync(threadId);
+    if (!dir) return true;
+    try {
+      return (await stat(`${dir}.jsonl`)).mtimeMs < Date.now() - RECENT_RUN_MS;
+    } catch {
+      return true;
+    }
   }
 
   /**
    * A live thread's transcript as it was on disk when first read. Everything written since comes
    * from the thread itself, so this is parsed once rather than once per page.
    */
-  private storedSnapshots = new WeakMap<LiveThread, Promise<{ items: Item[]; turns: Turn[] }>>();
+  private storedSnapshots = new WeakMap<LiveThread, Promise<{ items: Item[]; turns: Turn[]; tasks: TaskState[] }>>();
 
   private storedBeforeLoad(live: LiveThread, cwd?: string) {
     let snap = this.storedSnapshots.get(live);
@@ -540,35 +622,18 @@ export class ThreadManager {
     // From the chat's start, across compactions.
     const { messages: msgs } = await readSessionHistory(threadId, cwd, dir ? `${dir}.jsonl` : undefined);
     const iz = new Itemizer(Date.now, true);
+    iz.taskUpdates = false;
     iz.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(threadId));
+    iz.readAgentPrompt = agentPromptReader(() => sessionDirSync(threadId));
     const queued = new TranscriptExtras();
     if (dir) await queued.readFile(`${dir}.jsonl`);
     ingestHistory(iz, msgs, queued);
     iz.closeTurn('completed');
-    return iz.snapshot();
+    await loadWorkflows(iz, dir);
+    return { ...iz.snapshot(), tasks: iz.tasks() };
   }
 
   // ---------- dynamic workflows ----------
-
-  /**
-   * A workflow run of the thread: the live thread's own snapshot while it has one (with the run
-   * record's result or error once there is one), else the CLI's run record, else its journal,
-   * whose status is unknown.
-   */
-  async readWorkflow(threadId: string, runId: string): Promise<WorkflowSnapshot | null> {
-    if (!isSafeId(threadId) || !isSafeId(runId)) throw new RpcError(ErrorCodes.invalidParams, 'invalid thread or run id');
-    const live = this.loaded(threadId)?.workflowByRun(runId);
-    const dir = sessionDirSync(threadId);
-    const record = dir ? await readRunRecord(dir, runId) : undefined;
-    if (live)
-      return {
-        ...live,
-        ...(record?.result && !live.result ? { result: record.result } : {}),
-        ...(record?.error && !live.error ? { error: record.error } : {}),
-      };
-    if (record) return record;
-    return (dir ? await readRunJournal(dir, runId) : undefined) ?? null;
-  }
 
   async workflowAgentItems(threadId: string, runId: string, agentId: string): Promise<Item[]> {
     if (!isSafeId(threadId) || !isSafeId(runId) || !isSafeId(agentId))
@@ -593,6 +658,7 @@ export class ThreadManager {
   async delete(threadId: string) {
     this.close(threadId);
     await deleteSession(threadId);
+    this.taskStore?.delete(threadId);
   }
 }
 
@@ -602,9 +668,8 @@ type Snapshot = { items: Item[]; turns: Turn[] };
  * A live thread's transcript: what was on disk when it loaded, then what it has done since. Where
  * both have an item the live one wins, since the stored copy can predate its tool result. An item
  * only the live thread has goes after the one it followed there, not at the end: the transcript on
- * disk leaves some out (a skill's instructions, which Claude Code writes as a meta message right
- * after the Skill call), and appended they came after the turn's reply, where the app couldn't tell
- * them from a message. A stored turn no item belongs to any more is dropped: the transcript splits a
+ * disk can leave one out (a message getSessionMessages drops), and appended it came after the
+ * turn's reply, where the app couldn't tell it from a message. A stored turn no item belongs to any more is dropped: the transcript splits a
  * message sent mid-turn into a turn of its own, where the live thread (and so the item) keeps it in
  * the turn it steered.
  */

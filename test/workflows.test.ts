@@ -38,7 +38,9 @@ const progress: any[] = record.workflowProgress;
 const SCRIPT: string = record.script;
 
 const items = (out: Emission[]) => out.flatMap((e) => (e.method === 'item/completed' ? [e.body.item as Item] : []));
-const taskEvents = (out: Emission[]) => out.flatMap((e) => (e.method === 'task/event' ? [e.body as any] : []));
+const updates = (out: Emission[]) => out.flatMap((e) => (e.method === 'task/updated' ? [e.body.task] : []));
+const workflowOf = (out: Emission[]) => updates(out).filter((t) => t.id === CALL).at(-1);
+const agentsOf = (out: Emission[]) => updates(out).filter((t) => t.kind === 'workflowAgent');
 
 describe('workflow scripts', () => {
   test('meta is read from the script without running it', () => {
@@ -74,6 +76,7 @@ describe('workflow scripts', () => {
   test('a completed run settles its running agents as done, and those never started as skipped', () => {
     const agent = (index: number, state: string, more: object = {}) => ({ index, label: `a${index}`, state, ...more });
     const w = settleAgents({
+      status: 'completed',
       phases: [],
       agents: [
         agent(1, 'progress', { startedAt: 1 }),
@@ -90,6 +93,17 @@ describe('workflow scripts', () => {
       ['done', false],
       ['error', false],
     ]);
+  });
+
+  test('a failed or stopped run stops what it left going; a running one is left as it is', () => {
+    const agents = [
+      { index: 1, label: 'a', state: 'progress', startedAt: 1 },
+      { index: 2, label: 'b', state: 'start', queuedAt: 1 },
+      { index: 3, label: 'c', state: 'done' },
+    ];
+    for (const status of ['failed', 'stopped'])
+      expect(settleAgents({ status, phases: [], agents }).agents.map((a) => a.state)).toEqual(['stopped', 'stopped', 'done']);
+    expect(settleAgents({ status: 'running', phases: [], agents }).agents.map((a) => a.state)).toEqual(['progress', 'start', 'done']);
   });
 
   test('progress merges by type and index, and log lines are dropped', () => {
@@ -157,38 +171,42 @@ describe('a workflow streamed live', async () => {
   const done = step(sys('task_notification', { status: 'completed', summary: 'Dynamic workflow "Three haiku agents run ls; a fourth verifies they agree" completed', usage: usage(4000) }));
   const finished = step(finish);
 
-  test('the start names the workflow, its phases from the script, and drops the script', () => {
-    const e = taskEvents(started)[0];
-    expect(e.workflow.name).toBe('ls-consensus');
-    expect(e.workflow.description).toBe('Three haiku agents run ls; a fourth verifies they agree');
-    expect(e.workflow.status).toBe('running');
-    expect(e.workflow.phases.map((p: any) => p.title)).toEqual(['List', 'Verify']);
-    expect(e.data.prompt).toBeUndefined();
-  });
-
-  test('progress keeps the started description and says the latest agent as activity', () => {
-    const e = taskEvents(p1)[0];
-    expect(e.description).toBeUndefined();
-    expect(e.workflow.activity).toBe('List: ls-0');
-    expect(e.workflow.agents.map((a: any) => [a.label, a.state])).toEqual([
-      ['ls-0', 'start'],
-      ['ls-1', 'start'],
-      ['ls-2', 'start'],
+  test('the start names the workflow, its phases from the script, and carries no script', () => {
+    const w = workflowOf(started)!;
+    expect(w).toMatchObject({ kind: 'workflow', title: 'ls-consensus', status: 'running', taskId: TASK, toolUseId: CALL, taskType: 'local_workflow' });
+    expect(w.workflow!.name).toBe('ls-consensus');
+    expect(w.workflow!.description).toBe('Three haiku agents run ls; a fourth verifies they agree');
+    expect(w.workflow!.phases.map((p) => [p.title, p.status])).toEqual([
+      ['List', 'waiting'],
+      ['Verify', 'waiting'],
     ]);
-    expect(e.workflow.runId).toBe(RUN);
-    expect(e.data.workflow_progress).toBeUndefined();
+    expect(JSON.stringify(updates(started))).not.toContain('export const meta');
   });
 
-  test('progress without agents sends no snapshot, and the last one holds', () => {
-    const e = taskEvents(p2)[0];
-    expect(e.workflow).toBeUndefined();
-    expect(e.description).toBeUndefined();
-    const w = taskEvents(p3)[0].workflow;
-    expect(w.description).toBe('Three haiku agents run ls; a fourth verifies they agree');
-    expect(w.agents).toHaveLength(4);
-    expect(w.agents.every((a: any) => a.state === 'done')).toBe(true);
-    expect(w.phases[1]).toEqual({ index: 2, title: 'Verify', detail: 'haiku checks agreement' });
-    expect(w.activity).toBe('Verify: verify');
+  test('progress says the latest agent as activity, and each agent is a task under the workflow', () => {
+    const w = workflowOf(p1)!;
+    expect(w.title).toBe('ls-consensus');
+    expect(w.workflow!.activity).toBe('List: ls-0');
+    expect(w.workflow!.runId).toBe(RUN);
+    expect(w.usage).toEqual({ totalTokens: 1000, toolUses: 1, durationMs: 1000 });
+    const agents = agentsOf(p1);
+    expect(agents.map((a) => [a.id, a.title, a.status, a.parentId])).toEqual([
+      [`${CALL}/agent/1`, 'ls-0', 'running', CALL],
+      [`${CALL}/agent/2`, 'ls-1', 'running', CALL],
+      [`${CALL}/agent/3`, 'ls-2', 'running', CALL],
+    ]);
+    expect(agents[0]!.workflowAgent).toMatchObject({ runId: RUN, index: 1, phase: 'List', phaseIndex: 1 });
+    expect(w.workflow!.phases[0]!.status).toBe('running');
+  });
+
+  test('progress without agents moves only the workflow on', () => {
+    expect(agentsOf(p2)).toEqual([]);
+    expect(workflowOf(p2)!.usage!.totalTokens).toBe(2000);
+    const w = workflowOf(p3)!;
+    expect(w.workflow!.description).toBe('Three haiku agents run ls; a fourth verifies they agree');
+    expect(w.workflow!.activity).toBe('Verify: verify');
+    expect(w.workflow!.phases.map((p) => p.status)).toEqual(['done', 'done']);
+    expect(iz.tasks().filter((t) => t.kind === 'workflowAgent').map((a) => a.status)).toEqual(['done', 'done', 'done', 'done']);
   });
 
   test("an agent's message to the session goes under its workflow", () => {
@@ -202,7 +220,11 @@ describe('a workflow streamed live', async () => {
   });
 
   test('the finish is one message from the workflow holding its result, and no notice', () => {
-    expect(taskEvents(done)[0].workflow.status).toBe('completed');
+    expect(workflowOf(done)!.status).toBe('done');
+    expect(workflowOf(done)!.summary).toBe('Dynamic workflow "Three haiku agents run ls; a fourth verifies they agree" completed');
+    const final = iz.tasks().find((t) => t.id === CALL)!;
+    expect(JSON.parse(final.workflow!.result!).counts).toEqual([10, 10, 10]);
+    expect(final.usage!.totalTokens).toBe(4000);
     const all = out.flat();
     expect(items(all).filter((i) => i.type === 'notice')).toEqual([]);
     const msgs = items(finished).filter((i) => i.type === 'userMessage') as any[];
@@ -327,13 +349,34 @@ describe('workflow runs on disk', () => {
   });
 });
 
-describe('workflow methods', () => {
-  // A Claude config folder whose projects hold the fixture session, found by its transcript as the CLI's are.
+describe('workflow tasks read with the chat', async () => {
+  // A Claude config folder whose projects hold the fixture session, found by its transcript as the
+  // CLI's are: the prompt, the Workflow call and its launch, a reply, and a second call whose run
+  // has only a journal.
+  const h = await history();
   const home = mkdtempSync(join(tmpdir(), 'tether-wf-'));
   const sid = '7b6fdb6f-2818-40c9-a34a-82ca9650b1e0';
   const project = join(home, 'projects', '-home-me');
   mkdirSync(project, { recursive: true });
-  writeFileSync(join(project, `${sid}.jsonl`), '');
+  const transcript = join(project, `${sid}.jsonl`);
+  let parent: string | null = null;
+  let n = 0;
+  const raw = (m: any) => {
+    const record = { sessionId: sid, cwd: '/home/me', isSidechain: false, userType: 'external', type: m.type, uuid: m.uuid ?? `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`, parentUuid: parent, timestamp: m.timestamp ?? '2026-10-06T15:16:30.000Z', message: m.message };
+    parent = record.uuid;
+    return JSON.stringify(record);
+  };
+  const launch = h.find((m) => m.type === 'assistant' && m.message.content.some((b: any) => b.name === 'Workflow'));
+  const launchResult = h.find((m) => m.type === 'user' && Array.isArray(m.message.content) && m.message.content[0]?.tool_use_id === CALL);
+  const JOURNAL_CALL = 'toolu_journalonly';
+  const lines = [
+    raw(h[0]),
+    raw(launch),
+    raw(launchResult),
+    raw({ type: 'assistant', message: { id: 'msg_jo', role: 'assistant', model: 'claude-test', content: [{ type: 'tool_use', id: JOURNAL_CALL, name: 'Workflow', input: { script: SCRIPT } }], stop_reason: 'tool_use' } }),
+    raw({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: JOURNAL_CALL, content: 'Workflow launched in background. Task ID: wjournal1\nRun ID: wf_journalonly-1\n' }] } }),
+  ];
+  writeFileSync(transcript, lines.join('\n') + '\n');
   cpSync(SESSION, join(project, sid), { recursive: true });
   const saved = process.env.CLAUDE_CONFIG_DIR;
   process.env.CLAUDE_CONFIG_DIR = home;
@@ -345,21 +388,44 @@ describe('workflow methods', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  test('workflow/read finds the record, then the journal, else nothing', async () => {
-    expect((await mgr.readWorkflow(sid, RUN))?.status).toBe('completed');
-    // Just written (copied here), a journal-only run is still going.
-    expect((await mgr.readWorkflow(sid, 'wf_journalonly-1'))?.status).toBe('running');
-    expect(await mgr.readWorkflow(sid, 'wf_missing')).toBeNull();
+  test('a finished run: its record gives the workflow and its agents, settled', async () => {
+    const { tasks } = await mgr.read(sid, '/home/me');
+    const w = tasks.find((t) => t.id === CALL)!;
+    expect(w).toMatchObject({ kind: 'workflow', title: 'ls-consensus', status: 'done', taskId: TASK });
+    expect(w.workflow!.phases.map((p) => [p.title, p.status])).toEqual([
+      ['List', 'done'],
+      ['Verify', 'done'],
+    ]);
+    expect(JSON.parse(w.workflow!.result!).verdict.agree).toBe(true);
+    expect(w.usage).toMatchObject({ totalTokens: 98951, toolUses: 23 });
+    const agents = tasks.filter((t) => t.parentId === CALL);
+    expect(agents.map((a) => [a.title, a.status, a.workflowAgent?.phase])).toEqual([
+      ['ls-0', 'done', 'List'],
+      ['ls-1', 'done', 'List'],
+      ['ls-2', 'done', 'List'],
+      ['verify', 'done', 'Verify'],
+    ]);
   });
 
-  test('a journal-only run nothing has written to for a while is unknown', async () => {
+  test('a run with only a journal is running while written to, and waiting once not for a while', async () => {
+    mgr.unfollow(sid);
+    // Just written (copied here), a journal-only run is still going.
+    let w = (await mgr.read(sid, '/home/me')).tasks.find((t) => t.id === JOURNAL_CALL)!;
+    expect(w.status).toBe('running');
+    expect(w.workflow!.runId).toBe('wf_journalonly-1');
     const old = new Date(Date.now() - 2 * RECENT_RUN_MS);
     const run = join(project, sid, 'subagents', 'workflows', 'wf_journalonly-1');
-    for (const f of [join(project, `${sid}.jsonl`), ...readdirSync(run).map((f) => join(run, f))]) utimesSync(f, old, old);
-    expect((await mgr.readWorkflow(sid, 'wf_journalonly-1'))?.status).toBe('unknown');
-    // A line in an agent's transcript and it is running again.
-    utimesSync(join(run, 'journal.jsonl'), new Date(), new Date());
-    expect((await mgr.readWorkflow(sid, 'wf_journalonly-1'))?.status).toBe('running');
+    for (const f of [transcript, ...readdirSync(run).map((f) => join(run, f))]) utimesSync(f, old, old);
+    mgr.unfollow(sid);
+    const tasks = (await mgr.read(sid, '/home/me')).tasks;
+    w = tasks.find((t) => t.id === JOURNAL_CALL)!;
+    // Neither going nor known to have ended, nor are the agents it last heard of as going.
+    expect(w.status).toBe('waiting');
+    expect(tasks.filter((t) => t.parentId === JOURNAL_CALL).map((a) => [a.title, a.status])).toEqual([
+      ['ls-0', 'waiting'],
+      ['ls-1', 'waiting'],
+      ['ls-2', 'done'],
+    ]);
   });
 
   test('workflow/agentItems reads an agent', async () => {
@@ -368,8 +434,7 @@ describe('workflow methods', () => {
   });
 
   test('path traversal is refused', async () => {
-    await expect(mgr.readWorkflow(sid, '../../etc')).rejects.toThrow();
     await expect(mgr.workflowAgentItems(sid, RUN, '../agent-a7967148a35efb746')).rejects.toThrow();
-    await expect(mgr.readWorkflow('../x', RUN)).rejects.toThrow();
+    await expect(mgr.workflowAgentItems('../x', RUN, 'a7967148a35efb746')).rejects.toThrow();
   });
 });

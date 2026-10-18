@@ -236,7 +236,7 @@ export class ClientSession implements Subscriber {
         const h = await this.mgr.read(t.id, t.cwd, { limit: p.limit });
         const historySeq = h.historySeq ?? t.threadInfo().lastSeq;
         this.subscribe(t, historySeq);
-        return { thread: t.threadInfo(), items: h.items, turns: h.turns, historySeq, hasMore: h.hasMore };
+        return { thread: t.threadInfo(), items: h.items, turns: h.turns, historySeq, hasMore: h.hasMore, tasks: h.tasks };
       }
       this.subscribe(t, p.afterSeq ?? t.threadInfo().lastSeq);
       return { thread: t.threadInfo() };
@@ -250,8 +250,11 @@ export class ClientSession implements Subscriber {
       // Not loaded here: follow its transcript, so a session another client runs streams too.
       const t = this.mgr.loaded(p.threadId) ?? (await this.mgr.follow(p.threadId));
       if (!t) throw new RpcError(ErrorCodes.threadNotLoaded, `thread ${p.threadId} is not loaded`);
-      const r = this.subscribe(t, p.afterSeq);
-      return { thread: t.threadInfo(), ...r };
+      const tasks = await this.mgr.tasksOf(t);
+      // After the await: the thread may have been loaded meanwhile, so attach to what it is now.
+      const now = this.mgr.loaded(p.threadId) ?? this.mgr.following(p.threadId) ?? t;
+      const r = this.subscribe(now, p.afterSeq);
+      return { thread: now.threadInfo(), ...r, tasks };
     },
 
     'thread/unsubscribe': (p) => {
@@ -313,7 +316,6 @@ export class ClientSession implements Subscriber {
     'task/stop': async (p) => (await this.mgr.get(p.threadId).query.stopTask(p.taskId), {}),
     'task/background': async (p) => ({ backgrounded: await this.mgr.get(p.threadId).query.backgroundTasks(p.toolUseId) }),
 
-    'workflow/read': async (p) => ({ workflow: await this.mgr.readWorkflow(p.threadId, p.runId) }),
     'workflow/agentItems': async (p) => ({ items: await this.mgr.workflowAgentItems(p.threadId, p.runId, p.agentId) }),
 
     'mcp/status': async (p) => ({

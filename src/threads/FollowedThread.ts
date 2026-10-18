@@ -4,18 +4,20 @@ import { open, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { EffortLevel, Item, PermissionMode, ThreadInfo, Turn } from '../protocol/index.ts';
+import type { EffortLevel, Item, PermissionMode, TaskState, ThreadInfo, Turn } from '../protocol/index.ts';
 import { EffortLevel as EffortLevelSchema, PermissionMode as PermissionModeSchema } from '../protocol/common.ts';
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
 import { isWakeup, Itemizer, type Emission } from './itemizer.ts';
 import type { Subscriber } from './LiveThread.ts';
 import { replayGap, seqOrigin } from './seq.ts';
 import { readSessionHistory } from './history.ts';
-import { sessionDirSync, workflowAgentLocator } from './workflows.ts';
+import { agentPromptReader, readRunJournal, readRunRecord, sessionDirSync, workflowAgentLocator } from './workflows.ts';
 
 const MAX_BUFFERED_EVENTS = 2000;
 /** Appends arrive in bursts as a message is written; one read per burst is enough. */
 const COALESCE_MS = 150;
+/** How often a running workflow's files are read again while someone watches. */
+const WORKFLOW_POLL_MS = 5000;
 
 /** What `ClientSession` needs of a thread to attach a client to it. `LiveThread` satisfies it too. */
 export interface WatchableThread {
@@ -49,12 +51,14 @@ export class FollowedThread implements WatchableThread {
   private reading = false;
   private again = false;
   private readonly queued = new TranscriptExtras();
+  private workflowPoll?: ReturnType<typeof setInterval>;
 
   constructor(id: string, cwd: string, seqAfter?: number) {
     this.id = id;
     this.cwd = cwd;
     this.seq = seqOrigin(seqAfter);
     this.itemizer.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(id));
+    this.itemizer.readAgentPrompt = agentPromptReader(() => sessionDirSync(id));
   }
 
   /** Reads what is already on disk without emitting: the snapshot `thread/read` hands back. */
@@ -65,10 +69,37 @@ export class FollowedThread implements WatchableThread {
     // From the chat's start, across compactions; `ingested` counts the last segment's, which is
     // what getSessionMessages' offset counts.
     const { messages: msgs, tail } = await readSessionHistory(this.id, this.cwd, this.path);
+    this.itemizer.taskUpdates = false;
     ingestHistory(this.itemizer, msgs, this.queued);
+    await loadWorkflows(this.itemizer, sessionDirSync(this.id));
+    // What `thread/read` hands back holds the tasks as they stand; what follows is what changes.
+    this.itemizer.taskUpdates = true;
+    this.itemizer.markTasksSent();
     this.ingested = tail;
     await this.readSettings();
     await this.watchFile();
+  }
+
+  /** The chat's tasks as its transcript and the session's workflow files say. */
+  tasks(): TaskState[] {
+    return this.itemizer.tasks();
+  }
+
+  /**
+   * A workflow the session runs says how it's going only in its files (no task events reach a
+   * transcript): read again every few seconds while someone watches and one hasn't settled.
+   */
+  private pollWorkflows() {
+    if (this.workflowPoll) return;
+    this.workflowPoll = setInterval(async () => {
+      if (this.subscribers.size === 0 || this.itemizer.unsettledWorkflowRuns().length === 0) {
+        clearInterval(this.workflowPoll);
+        this.workflowPoll = undefined;
+        return;
+      }
+      this.emitAll(await loadWorkflows(this.itemizer, sessionDirSync(this.id)));
+    }, WORKFLOW_POLL_MS);
+    this.workflowPoll.unref?.();
   }
 
   private async watchFile(): Promise<void> {
@@ -105,6 +136,7 @@ export class FollowedThread implements WatchableThread {
       });
       this.ingested += msgs.length;
       this.emitAll(ingestHistory(this.itemizer, msgs, this.queued));
+      if (this.subscribers.size && this.itemizer.unsettledWorkflowRuns().length) this.pollWorkflows();
       if (msgs.length && (await this.updateSettings())) this.emit('thread/updated', { thread: this.threadInfo() });
     } catch {
       // The file may be mid-write or gone; the next change re-reads from the same offset.
@@ -183,6 +215,7 @@ export class FollowedThread implements WatchableThread {
       }
     }
     this.subscribers.add(sub);
+    if (this.itemizer.unsettledWorkflowRuns().length) this.pollWorkflows();
     return { replayed, gap };
   }
 
@@ -195,6 +228,8 @@ export class FollowedThread implements WatchableThread {
   }
 
   close(): void {
+    clearInterval(this.workflowPoll);
+    this.workflowPoll = undefined;
     if (this.pending) clearTimeout(this.pending);
     this.pending = undefined;
     this.watcher?.close();
@@ -350,6 +385,8 @@ function settingsFrom(lines: string[]): SessionSettings {
  *   with `turnOrigin: scheduled`, whose uuid is the CLI's command uuid.
  * - A /goal's checks (`goal_status` attachments, after the reply each judged) and its set (the
  *   `local_command` record, after the prompt).
+ * - A skill's instructions: a meta `user` record naming its Skill call (`sourceToolUseID`), after
+ *   the call's result, which the call holds (`skillInstructions`).
  *
  * Each is held under the message it follows (the nearest record getSessionMessages keeps, through
  * dropped attachments and meta prompts), to be read right after that message (`ingestHistory`).
@@ -452,8 +489,24 @@ function isExtra(o: any): boolean {
     if (a?.type === 'queued_command') return typeof a.prompt === 'string' && /^\s*<task-notification>/.test(a.prompt);
     return a?.type === 'goal_status' && a.sentinel !== true;
   }
-  if (o.type === 'user') return o.isMeta === true && isWakeup(o);
+  // A skill's instructions, right after its Skill call (`sourceToolUseID`), or a scheduled job's prompt.
+  if (o.type === 'user') return o.isMeta === true && (typeof o.sourceToolUseID === 'string' || isWakeup(o));
   return o.type === 'system' && o.subtype === 'local_command' && o.commandRun?.command === 'goal';
+}
+
+/**
+ * The session's workflow runs that the itemizer hasn't seen settle, from their files: the run
+ * record once a run has finished, else its journal (`readRunJournal`). What a read of history, a
+ * follower, or a live thread's earlier runs know of a workflow's agents.
+ */
+export async function loadWorkflows(iz: Itemizer, sessionDir: string | undefined): Promise<Emission[]> {
+  if (!sessionDir) return [];
+  const out: Emission[] = [];
+  for (const runId of iz.unsettledWorkflowRuns()) {
+    const snapshot = (await readRunRecord(sessionDir, runId)) ?? (await readRunJournal(sessionDir, runId));
+    if (snapshot) out.push(...iz.applyWorkflowSnapshot(runId, snapshot));
+  }
+  return out;
 }
 
 /** History's messages into an itemizer, each followed by what the raw transcript wrote after it. */

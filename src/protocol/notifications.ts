@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { JsonValue, ThreadInfo, ThreadStatus, UserInput } from './common.ts';
-import { Item, Turn, WorkflowSnapshot } from './items.ts';
+import { Item, Turn } from './items.ts';
+import { TaskState } from './tasks.ts';
 
 /** Every thread-scoped notification carries these. `seq` is monotonic per thread, for replay. */
 const T = { threadId: z.string(), seq: z.number().int() };
@@ -42,35 +43,12 @@ export const Notifications = {
     taskId: z.string().optional(),
   }),
 
-  'task/event': z.object({
-    ...T,
-    /** started | progress | updated | notification */
-    event: z.string(),
-    taskId: z.string(),
-    toolUseId: z.string().optional(),
-    description: z.string().optional(),
-    status: z.string().optional(),
-    summary: z.string().optional(),
-    /** Why the task failed, from a `task_updated` patch. */
-    error: z.string().optional(),
-    /**
-     * A dynamic workflow's phases and agents, the merged whole each time: sent when the CLI
-     * reported its progress, and when it starts and settles. When absent, the last one still holds.
-     */
-    workflow: WorkflowSnapshot.optional(),
-    /**
-     * A task a subagent started (the CLI's `owned_by_subagent`), on every event of it: the
-     * subagent's business, never said in the chat. A subagent whose calls stream is the parent of
-     * the call `toolUseId` names; a workflow agent's are never streamed, so the two below say whose.
-     */
-    ownedBySubagent: z.boolean().optional(),
-    /** The Workflow call whose agent started this task: the agent's run, or else the run going on when it started. */
-    workflowToolUseId: z.string().optional(),
-    /** That workflow agent's id (`WorkflowAgent.agentId`), once its transcript shows it made the call. */
-    workflowAgentId: z.string().optional(),
-    data: JsonValue,
-  }),
-  'task/backgroundChanged': z.object({ ...T, tasks: JsonValue }),
+  /**
+   * A task of the chat changed: its whole current state, never a patch. Sent for the tasks the CLI
+   * reports, the subagent, Workflow, background Bash and Monitor calls, a workflow's agents, and the
+   * chat's schedules and goals. A client holding `tasks` from a read applies these after it.
+   */
+  'task/updated': z.object({ ...T, task: TaskState }),
 
   'thread/queuedInput': z.object({ ...T, messageId: z.string(), content: z.array(UserInput) }),
   'thread/promptSuggestion': z.object({ ...T, suggestion: z.string() }),

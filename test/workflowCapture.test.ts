@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { Item, Turn } from '../src/protocol/index.ts';
 import { Itemizer, type Emission } from '../src/threads/itemizer.ts';
 import { ingestHistory, TranscriptExtras } from '../src/threads/FollowedThread.ts';
-import { readAgentItems, readRunRecord, unframeAgentPrompt, workflowAgentLocator } from '../src/threads/workflows.ts';
+import { agentPromptReader, readAgentItems, readRunRecord, unframeAgentPrompt, workflowAgentLocator } from '../src/threads/workflows.ts';
 
 /**
  * A real run of a six-agent haiku workflow, typo-check (Scan, Review, Verify), captured with
@@ -43,7 +43,8 @@ const [waitCall, waitResult] = await lines('midturn.jsonl');
 const queuedLines = (await Bun.file(`${DIR}/midturn-raw.jsonl`).text()).trim().split('\n');
 
 const completedItems = (out: Emission[]) => out.flatMap((e) => (e.method === 'item/completed' ? [e.body.item as Item] : []));
-const lastWorkflow = (out: Emission[]) => out.flatMap((e) => (e.method === 'task/event' && (e.body as any).workflow ? [(e.body as any).workflow] : [])).at(-1);
+const updates = (out: Emission[]) => out.flatMap((e) => (e.method === 'task/updated' ? [e.body.task] : []));
+const lastWorkflow = (out: Emission[]) => updates(out).filter((t) => t.id === CALL).at(-1)!;
 
 const [prompt, launch, launchResult, waiting, , finishMessage, reply] = history;
 const ended = (uuid: string) => ({ type: 'result', subtype: 'success', uuid });
@@ -98,9 +99,9 @@ const turnOf = (items: Item[], id: string) => items.find((i) => i.id === id)?.tu
 describe('typo-check, streamed live', () => {
   const { iz, out, atFinish } = live();
 
-  test("agents' states go through as the CLI sent them", () => {
-    const states = new Set(out.flatMap((e) => (e.method === 'task/event' ? ((e.body as any).workflow?.agents ?? []).map((a: any) => a.state) : [])));
-    expect([...states].sort()).toEqual(['done', 'progress', 'start']);
+  test("agents' states, as the CLI sent them (start, progress, done), read as waiting, running and done", () => {
+    const states = new Set(updates(out).flatMap((t) => (t.kind === 'workflowAgent' ? [t.status] : [])));
+    expect([...states].sort()).toEqual(['done', 'running', 'waiting']);
   });
 
   test('the finish is said by the event, opening the turn that answers it', () => {
@@ -137,10 +138,77 @@ describe('typo-check, streamed live', () => {
   test('agents never seen finishing are done once the workflow completes', () => {
     // Progress is throttled: without the last progress that carried agents, verify-1 was last seen in progress.
     const lastAgents = stream.findLastIndex((m) => Array.isArray(m.workflow_progress));
-    const { out } = live({ tasks: stream.filter((_, i) => i !== lastAgents) });
-    const before = out.flatMap((e) => (e.method === 'task/event' && (e.body as any).event === 'progress' && (e.body as any).workflow ? [(e.body as any).workflow] : [])).at(-1);
-    expect(before.agents.map((a: any) => a.state)).toContain('progress');
-    expect(lastWorkflow(out).agents.every((a: any) => a.state === 'done')).toBe(true);
+    const { iz, out } = live({ tasks: stream.filter((_, i) => i !== lastAgents) });
+    expect(updates(out).some((t) => t.kind === 'workflowAgent' && t.title === 'verify-1' && t.status === 'running')).toBe(true);
+    const agents = iz.tasks().filter((t) => t.kind === 'workflowAgent');
+    expect(agents).toHaveLength(6);
+    expect(agents.every((a) => a.status === 'done')).toBe(true);
+  });
+});
+
+describe('typo-check, as tasks', () => {
+  /** The run followed one task message at a time, its state after each: what the app's Tasks tab shows. */
+  test('the run is followed from its events', () => {
+    const iz = new Itemizer(() => 1);
+    iz.beginUserTurn(prompt.uuid, [{ type: 'text', text: 'ultracode: typo-check' }], false);
+    iz.ingest(launch);
+    expect(stream).toHaveLength(41);
+    stream.forEach((m, i) => {
+      iz.ingest(m);
+      if (i === 0) iz.ingest(launchResult);
+      const tasks = iz.tasks();
+      const w = tasks.find((t) => t.id === CALL)!;
+      expect(w.title).toBe('typo-check');
+      const agents = tasks.filter((t) => t.parentId === CALL);
+      expect(agents.every((a) => a.kind === 'workflowAgent' && !!a.workflowAgent?.phase)).toBe(true);
+      // Two Review agents announced before they had a slot are waiting, not running.
+      if (i === 6) {
+        expect(agents.map((a) => a.status)).toEqual(['done', 'running', 'waiting', 'waiting']);
+        expect(w.workflow!.phases.map((p) => p.status)).toEqual(['done', 'running', 'waiting']);
+      }
+      if (i < 39) expect(w.status).toBe('running');
+    });
+    const tasks = iz.tasks();
+    const w = tasks.find((t) => t.id === CALL)!;
+    expect(w.status).toBe('done');
+    expect(w.workflow!.description).toBe('List files, review each for typos/bugs, verify findings');
+    expect(w.workflow!.phases.map((p) => [p.title, p.status])).toEqual([
+      ['Scan', 'done'],
+      ['Review', 'done'],
+      ['Verify', 'done'],
+    ]);
+    const agents = tasks.filter((t) => t.parentId === CALL);
+    expect(agents.map((a) => a.title)).toEqual(['list-files', 'review:math.swift', 'review:README.md', 'review:notes.md', 'verify-1', 'verify-2']);
+    expect(agents.map((a) => a.workflowAgent!.phase)).toEqual(['Scan', 'Review', 'Review', 'Review', 'Verify', 'Verify']);
+    expect(agents.every((a) => a.status === 'done')).toBe(true);
+    expect(w.usage).toEqual({ totalTokens: 77475, toolUses: 16, durationMs: 32220 });
+    // The agents' prompts are the script's tasks, without the harness's framing.
+    expect(agents[1]!.workflowAgent!.prompt).toBe(
+      'Read /private/tmp/wf-scratch/math.swift (do not edit). Find typos and code bugs. Return findings with line numbers; empty list if none.',
+    );
+    expect(agents[1]!.workflowAgent!.agentId).toBe('a1860cc24e8bef51e');
+    expect(agents[1]!.workflowAgent!.runId).toBe(RUN);
+  });
+
+  test("a cut prompt is read whole from the agent's transcript", () => {
+    const iz = new Itemizer(() => 1);
+    iz.readAgentPrompt = agentPromptReader(SESSION);
+    iz.beginUserTurn(prompt.uuid, [{ type: 'text', text: 'go' }], false);
+    for (const m of [launch, stream[0], launchResult, ...stream.slice(1)]) iz.ingest(m);
+    const verify = iz.tasks().find((t) => t.title === 'verify-1')!;
+    expect(verify.workflowAgent!.prompt!.startsWith('Double-check these findings by reading the files (do not edit). Return only the real ones.\n[{"file"')).toBe(true);
+    expect(verify.workflowAgent!.prompt!.endsWith('…')).toBe(false);
+    expect(verify.workflowAgent!.prompt!.length).toBeGreaterThan(401);
+  });
+
+  test('a run stopped mid-way stops the agents it left going', () => {
+    const iz = new Itemizer(() => 1);
+    iz.beginUserTurn('u1', [{ type: 'text', text: 'go' }], false);
+    for (const m of [launch, stream[0], launchResult, ...stream.slice(1, 8)]) iz.ingest(m);
+    iz.ingest({ type: 'system', subtype: 'task_updated', task_id: TASK, patch: { status: 'killed' } });
+    const tasks = iz.tasks();
+    expect(tasks.find((t) => t.id === CALL)!.status).toBe('stopped');
+    expect(tasks.filter((t) => t.parentId === CALL).map((a) => a.status)).toEqual(['done', 'stopped', 'stopped', 'stopped']);
   });
 });
 
@@ -293,7 +361,7 @@ describe('a workflow stopped or failed', () => {
     const w = lastWorkflow(out);
     expect(w.status).toBe('failed');
     expect(w.error).toBe('agent quota exceeded');
-    expect(w.result).toBeUndefined();
+    expect(w.workflow!.result).toBeUndefined();
     expect(finishOf(completedItems(out))[0].turnId).toBe(`turn_${FINISH}`);
   });
 });

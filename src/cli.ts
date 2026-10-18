@@ -5,7 +5,8 @@ import { ClientSession } from './server/session.ts';
 import { ThreadManager } from './threads/ThreadManager.ts';
 import { TETHER_VERSION } from './threads/LiveThread.ts';
 import { versionInfo } from './version.ts';
-import { readDaemonMeta, runConnect, runDaemon, SOCKET_PATH } from './daemon/daemon.ts';
+import { readDaemonMeta, runConnect, runDaemon, SOCKET_PATH, TASKS_DIR } from './daemon/daemon.ts';
+import { TaskStore } from './threads/taskStore.ts';
 
 const [cmd = 'help', ...args] = process.argv.slice(2);
 const log = (m: string) => process.stderr.write(`[tether ${new Date().toISOString()}] ${m}\n`);
@@ -13,7 +14,7 @@ const log = (m: string) => process.stderr.write(`[tether ${new Date().toISOStrin
 async function serveStdio() {
   const claude = await resolveClaude();
   log(claude.path ? `serving on stdio; claude ${claude.version} at ${claude.path}` : 'serving on stdio; no claude on PATH');
-  const mgr = new ThreadManager(claude, log);
+  const mgr = new ThreadManager(claude, log, { taskStore: new TaskStore(TASKS_DIR) });
   const conn = new Connection(process.stdin, process.stdout, 'stdio');
   const session = new ClientSession(conn, mgr, 'stdio', log);
   session.start();

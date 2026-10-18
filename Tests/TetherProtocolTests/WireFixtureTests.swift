@@ -65,3 +65,18 @@ private func fixtureLines(_ name: String) throws -> [JSONValue] {
     guard case .unknown = item else { Issue.record("expected unknown"); return }
     #expect(item.type == "hologram")
 }
+
+@Test func taskStatesDecode() throws {
+    var kinds = Set<String>()
+    for line in try fixtureLines("e2e-wire") where line["method"]?.stringValue == "task/updated" {
+        let n = try ServerNotification(method: "task/updated", params: JSONEncoder().encode(line["params"] ?? .null))
+        guard case .taskUpdated(let e) = n else {
+            Issue.record("task/updated decoded as something else")
+            continue
+        }
+        kinds.insert(e.task.kind.rawValue)
+        if e.task.kind == .workflow { #expect(e.task.workflow?.phases.count == 3) }
+        if e.task.kind == .workflowAgent { #expect(e.task.parentId != nil && e.task.workflowAgent?.agentId != nil) }
+    }
+    #expect(kinds == ["workflow", "workflowAgent"])
+}

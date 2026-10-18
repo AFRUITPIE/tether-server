@@ -59,6 +59,11 @@ export const UserMessageItem = z.object({
    * the CLI's command uuid. The CLI never echoes it as a message, so it is read from the transcript.
    */
   origin: z.string().optional(),
+  /**
+   * On a `wakeup`: whether the job that fired was set up by /loop (made in a turn a /loop prompt
+   * started, or a dynamic /loop's wakeup), so it reads "Woke up for /loop"; false for any other job.
+   */
+  fromLoop: z.boolean().optional(),
   /** For a message from another session: the sender's display name, as it reported it. */
   originName: z.string().optional(),
   /** For a message from another session: the sending session's id, to link back to it. */
@@ -95,6 +100,11 @@ export const ToolCallItem = z.object({
   mcpServer: z.string().optional(),
   elapsedSeconds: z.number().optional(),
   summary: z.string().optional(),
+  /**
+   * A Skill call's instructions: the skill's text, which Claude Code puts in the conversation as a
+   * message of its own right after the call. It is the call's, never a message of the chat.
+   */
+  skillInstructions: z.string().optional(),
 });
 
 export const CompactionItem = z.object({
@@ -142,74 +152,6 @@ export const NoticeItem = z.object({
    */
   goal: GoalNotice.optional(),
 });
-
-export const WorkflowPhase = z
-  .object({ index: z.number(), title: z.string(), detail: z.string().optional() })
-  .meta({ id: 'WorkflowPhase' });
-
-export const WorkflowAgent = z
-  .object({
-    index: z.number(),
-    label: z.string(),
-    phaseIndex: z.number().optional(),
-    phaseTitle: z.string().optional(),
-    agentId: z.string().optional(),
-    model: z.string().optional(),
-    /**
-     * The CLI's own state, passed through as it came: start (queued or starting), progress, done,
-     * error, and whatever a later CLI adds. A skipped agent is `error` with `skipped`.
-     */
-    state: z.string(),
-    /**
-     * Skipped by the person (the CLI reports it as state `error`, "skipped by user"), or never
-     * started: still waiting for a slot when its workflow completed.
-     */
-    skipped: z.boolean().optional(),
-    /** Replayed from an earlier run's cache rather than run again. */
-    cached: z.boolean().optional(),
-    /** Stopped by the safety classifier before it ran. */
-    blocked: z.boolean().optional(),
-    queuedAt: z.number().optional(),
-    startedAt: z.number().optional(),
-    durationMs: z.number().optional(),
-    tokens: z.number().optional(),
-    toolCalls: z.number().optional(),
-    lastToolName: z.string().optional(),
-    lastToolSummary: z.string().optional(),
-    promptPreview: z.string().optional(),
-    resultPreview: z.string().optional(),
-    error: z.string().optional(),
-  })
-  .meta({ id: 'WorkflowAgent' });
-
-/** A dynamic workflow (the Workflow tool's `local_workflow` task): its phases and agents, as the CLI reports them. */
-export const WorkflowSnapshot = z
-  .object({
-    runId: z.string().optional(),
-    name: z.string().optional(),
-    description: z.string().optional(),
-    /**
-     * running | completed | failed | stopped | paused, or unknown: a run found only by its journal,
-     * with no live task and no record, nothing of it written for a few minutes, which may have been
-     * cut off. A journal-only run written to recently is reported running.
-     */
-    status: z.string().optional(),
-    /** the latest agent event, "Phase: label" */
-    activity: z.string().optional(),
-    phases: z.array(WorkflowPhase),
-    agents: z.array(WorkflowAgent),
-    totalTokens: z.number().optional(),
-    toolUses: z.number().optional(),
-    durationMs: z.number().optional(),
-    /** the workflow's return value as text, once it has completed */
-    result: z.string().optional(),
-    /** why it failed */
-    error: z.string().optional(),
-  })
-  .meta({ id: 'WorkflowSnapshot' });
-export type WorkflowSnapshot = z.infer<typeof WorkflowSnapshot>;
-export type WorkflowAgent = z.infer<typeof WorkflowAgent>;
-export type WorkflowPhase = z.infer<typeof WorkflowPhase>;
 
 export const Item = z
   .discriminatedUnion('type', [
