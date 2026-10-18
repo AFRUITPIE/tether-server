@@ -164,6 +164,26 @@ describe('following a chat as it is written', () => {
     fresh.close();
   });
 
+  test('a chat read and not watched is let go a while after, and read afresh when asked again', async () => {
+    const mgr = new ThreadManager({ path: '/usr/bin/false', version: '0' } as any);
+    try {
+      const first = await mgr.read(sid, '/home/me', { limit: 5 });
+      const f = mgr.following(sid)!;
+      expect(f).toBeDefined();
+      (mgr as any).sweep();
+      expect(mgr.following(sid)).toBe(f);
+      f.lastUsedAt = Date.now() - 6 * 60_000;
+      (mgr as any).sweep();
+      expect(mgr.following(sid)).toBeUndefined();
+      const again = await mgr.read(sid, '/home/me', { limit: 5 });
+      expect(again.items).toEqual(first.items);
+      // A new follower numbers above the one let go, so a client holding the old seq reloads.
+      expect(again.historySeq!).toBeGreaterThan(first.historySeq!);
+    } finally {
+      mgr.shutdown();
+    }
+  });
+
   test('a line still being written is read once it is whole', async () => {
     const f = new FollowedThread(sid, '/home/me');
     await f.start();

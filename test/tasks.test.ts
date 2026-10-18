@@ -221,6 +221,19 @@ describe('kept with the chat', () => {
     expect(JSON.parse(readFileSync(join(dir, 'thread-2.json'), 'utf8')).tasks).toHaveLength(2);
   });
 
+  test('many chats: those not read lately are let go and read again from their files, those not yet written are kept', () => {
+    const dir = join(home, 'many');
+    const store = new TaskStore(dir, 60_000);
+    const task = (i: number): TaskState => ({ id: `t${i}`, kind: 'agent', title: `T${i}`, status: 'done' });
+    for (let i = 0; i < 40; i++) store.put(`chat-${i}`, [task(i)]);
+    // Not written yet: all still there.
+    for (let i = 0; i < 40; i++) expect(store.get(`chat-${i}`).map((t) => t.id)).toEqual([`t${i}`]);
+    store.flush();
+    for (let i = 40; i < 80; i++) store.get(`chat-${i}`);
+    for (let i = 0; i < 40; i++) expect(store.get(`chat-${i}`).map((t) => t.id)).toEqual([`t${i}`]);
+    expect((store as any).cache.size).toBeLessThanOrEqual(32);
+  });
+
   test("a read has what the daemon saw live, a task kept as going stopped once its process isn't, unless the transcript says how it ended", async () => {
     const config = join(home, 'claude');
     const sid = '6a1c4e2b-0000-4000-8000-000000000001';

@@ -32,6 +32,8 @@ export class FollowedThread implements WatchableThread {
   private reading = false;
   private again = false;
   private workflowPoll?: ReturnType<typeof setInterval>;
+  /** When a client last read it or let go of it: one no client watches is let go a while after. */
+  lastUsedAt = Date.now();
 
   constructor(id: string, cwd: string, seqAfter?: number) {
     this.id = id;
@@ -56,6 +58,7 @@ export class FollowedThread implements WatchableThread {
 
   /** The chat's tasks as its transcript and the session's workflow files say. */
   tasks(): TaskState[] {
+    this.lastUsedAt = Date.now();
     return this.itemizer.tasks();
   }
 
@@ -136,6 +139,7 @@ export class FollowedThread implements WatchableThread {
   }
 
   history(): { items: Item[]; turns: Turn[]; seq: number } {
+    this.lastUsedAt = Date.now();
     return { ...this.itemizer.snapshot(), seq: this.events.lastSeq };
   }
 
@@ -147,6 +151,7 @@ export class FollowedThread implements WatchableThread {
 
   unsubscribe(sub: Subscriber): void {
     this.events.subscribers.delete(sub);
+    this.lastUsedAt = Date.now();
   }
 
   get subscriberCount(): number {

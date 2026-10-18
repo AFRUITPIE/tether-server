@@ -31,6 +31,11 @@ const IDLE_EVICT_MS = Number(process.env.TETHER_IDLE_EVICT_MS ?? 30 * 60_000);
 /** How long a scheduled run waits, with nobody watching, for a person to answer before it's denied. */
 const SCHEDULED_REQUEST_TIMEOUT_MS = Number(process.env.TETHER_SCHEDULED_REQUEST_TIMEOUT_MS ?? 10 * 60_000);
 const CATALOG_TTL_MS = 5 * 60_000;
+/**
+ * How long a followed chat no client watches is kept after it was last read: a client that reads
+ * one without subscribing (or never comes back) would otherwise leave its whole transcript held.
+ */
+const FOLLOWER_IDLE_MS = 5 * 60_000;
 /** How long a chat's summary waits for more changes before it's told. */
 const SUMMARY_COALESCE_MS = 100;
 
@@ -371,6 +376,12 @@ export class ThreadManager {
       ) {
         this.log(`evicting idle thread ${t.id}`);
         this.close(t.id);
+      }
+    }
+    for (const [id, f] of this.followed) {
+      if (f.subscriberCount === 0 && now - f.lastUsedAt > FOLLOWER_IDLE_MS) {
+        this.log(`no longer following ${id}`);
+        this.unfollow(id);
       }
     }
     for (const [key, c] of this.catalogs) {

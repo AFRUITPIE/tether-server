@@ -3,6 +3,9 @@ import { join } from 'node:path';
 import { TaskState } from '../protocol/index.ts';
 import { isSafeId } from './workflows.ts';
 
+/** How many chats' tasks are held in memory, beyond those not yet written; the rest are read again when asked for. */
+const HELD = 32;
+
 /**
  * Each chat's tasks as this daemon last saw them, kept in its home (`<TETHER_HOME>/tasks/<thread
  * id>.json`, beside `schedules.json`): the CLI's task events and a workflow's progress reach only
@@ -12,6 +15,7 @@ import { isSafeId } from './workflows.ts';
  * when read, so a bad entry is skipped rather than losing the rest. Deleted with its chat.
  */
 export class TaskStore {
+  /** The chats read or kept lately, least recently used first: at most `HELD` not waiting to be written. */
   private cache = new Map<string, Map<string, TaskState>>();
   private dirty = new Set<string>();
   private timer?: ReturnType<typeof setTimeout>;
@@ -73,7 +77,16 @@ export class TaskStore {
 
   private load(threadId: string): Map<string, TaskState> {
     let kept = this.cache.get(threadId);
-    if (kept) return kept;
+    if (kept) {
+      this.cache.delete(threadId);
+      this.cache.set(threadId, kept);
+      return kept;
+    }
+    // Every chat opened would otherwise stay in memory for the daemon's life.
+    for (const id of this.cache.keys()) {
+      if (this.cache.size < HELD) break;
+      if (!this.dirty.has(id)) this.cache.delete(id);
+    }
     kept = new Map();
     if (isSafeId(threadId)) {
       try {
