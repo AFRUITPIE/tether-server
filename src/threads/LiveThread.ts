@@ -29,7 +29,7 @@ import type { NotificationBody, NotificationName } from '../protocol/notificatio
 import type { ServerRequestName, ServerRequestParams, ServerRequestResult } from '../protocol/serverRequests.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import type { Emission, Itemizer } from './itemizer.ts';
-import { sessionItemizer, TranscriptExtras, transcriptFile } from './transcript.ts';
+import { oneAtATime, sessionItemizer, TranscriptExtras, transcriptFile } from './transcript.ts';
 import { PushQueue } from './pushQueue.ts';
 import { EventStream, type Subscriber } from './events.ts';
 import pkg from '../../package.json' with { type: 'json' };
@@ -171,8 +171,6 @@ export class LiveThread {
    */
   private readonly extras = new TranscriptExtras();
   private extrasPath?: string;
-  private extrasReading = false;
-  private extrasAgain = false;
   private extrasTimers = new Set<ReturnType<typeof setTimeout>>();
 
   /** The title the chat has here, which a new chat's file may not hold yet. */
@@ -455,27 +453,15 @@ export class LiveThread {
     this.extrasTimers.add(t);
   }
 
-  private async readExtras(): Promise<void> {
-    if (this.extrasReading) {
-      this.extrasAgain = true;
-      return;
-    }
-    this.extrasReading = true;
-    try {
-      do {
-        this.extrasAgain = false;
-        // A new session's file appears with its first message; all of it is this process's.
-        this.extrasPath ??= transcriptFile(this.id);
-        if (!this.extrasPath) return;
-        await this.extras.readFile(this.extrasPath);
-        // A workflow's queued notification is said by its task event live.
-        for (const r of this.extras.take())
-          if (r.attachment?.type !== 'queued_command') this.emitAll(this.itemizer.ingestExtra(r));
-      } while (this.extrasAgain);
-    } finally {
-      this.extrasReading = false;
-    }
-  }
+  /** Takes in what the transcript gained since the last read; a read asked for meanwhile runs once after. */
+  private readonly readExtras = oneAtATime(async () => {
+    // A new session's file appears with its first message; all of it is this process's.
+    this.extrasPath ??= transcriptFile(this.id);
+    if (!this.extrasPath) return;
+    await this.extras.readFile(this.extrasPath);
+    // A workflow's queued notification is said by its task event live.
+    for (const r of this.extras.take()) if (r.attachment?.type !== 'queued_command') this.emitAll(this.itemizer.ingestExtra(r));
+  });
 
   /** The jobs that will wake the session, as a Stop hook was told; sent when they change. */
   private noteSessionCrons(raw: unknown) {

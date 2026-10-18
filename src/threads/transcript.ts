@@ -348,6 +348,32 @@ const callIds = (b: any): RawRecord[] => {
   return [];
 };
 
+/**
+ * `read`, never two at once: called while it runs, it runs once more right after (what was
+ * appended meanwhile is read then), and the caller waits for that.
+ */
+export function oneAtATime(read: () => Promise<void>): () => Promise<void> {
+  let running: Promise<void> | undefined;
+  let again = false;
+  return () => {
+    if (running) {
+      again = true;
+      return running;
+    }
+    running = (async () => {
+      try {
+        do {
+          again = false;
+          await read();
+        } while (again);
+      } finally {
+        running = undefined;
+      }
+    })();
+    return running;
+  };
+}
+
 // ---------- what a transcript records ----------
 
 /** The first `cwd` a transcript's lines carry, read a line at a time until it turns up. */

@@ -3,7 +3,7 @@ import type { Item, TaskState, ThreadInfo, Turn } from '../protocol/index.ts';
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
 import type { Emission, Itemizer } from './itemizer.ts';
 import { EventStream, type Subscriber, type WatchableThread } from './events.ts';
-import { ingestHistory, loadWorkflows, newerSettings, readTranscript, sessionDir, settingsOf, TranscriptTail, type SessionSettings, type TranscriptExtras } from './transcript.ts';
+import { ingestHistory, loadWorkflows, newerSettings, oneAtATime, readTranscript, sessionDir, settingsOf, TranscriptTail, type SessionSettings, type TranscriptExtras } from './transcript.ts';
 
 const MAX_BUFFERED_EVENTS = 2000;
 /** Appends arrive in bursts as a message is written; one read per burst is enough. */
@@ -29,8 +29,6 @@ export class FollowedThread implements WatchableThread {
   /** The owning client's model, effort and permission mode, for the attached client's controls. */
   private settings: SessionSettings = {};
   private pending?: ReturnType<typeof setTimeout>;
-  private reading = false;
-  private again = false;
   private workflowPoll?: ReturnType<typeof setInterval>;
   /** When a client last read it or let go of it: one no client watches is let go a while after. */
   lastUsedAt = Date.now();
@@ -97,13 +95,8 @@ export class FollowedThread implements WatchableThread {
   }
 
   /** Ingests whatever has been appended since the last read and emits it to subscribers. */
-  private async refresh(): Promise<void> {
+  private readonly refresh = oneAtATime(async () => {
     if (!this.path) return;
-    if (this.reading) {
-      this.again = true;
-      return;
-    }
-    this.reading = true;
     try {
       const { records, messages } = await this.tail.read(this.path);
       // The records first: a notification among them is read with the message it follows.
@@ -117,14 +110,8 @@ export class FollowedThread implements WatchableThread {
       }
     } catch {
       // The file may be mid-write or gone; the next change reads on from the same place.
-    } finally {
-      this.reading = false;
-      if (this.again) {
-        this.again = false;
-        this.schedule();
-      }
     }
-  }
+  });
 
   private emitAll(out: Emission[]): void {
     for (const e of out) this.emit(e.method, e.body as never);
