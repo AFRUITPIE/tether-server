@@ -643,12 +643,16 @@ export function mergeHistory(stored: Snapshot, live: Snapshot): Snapshot {
 /**
  * The requested window of a transcript, from the end. Pages are over items, not messages on
  * disk: itemizing a slice of messages alone would lose the turn each item belongs to.
+ *
+ * A `before` the transcript doesn't hold (a chat rewound, or an id the client made up) is an error:
+ * answered with the latest page instead, a client prepending it found every item already held,
+ * added nothing, and asked again for the same page forever.
  */
-function pageOf(items: Item[], page?: { limit?: number; before?: string }): { items: Item[]; hasMore: boolean } {
+export function pageOf(items: Item[], page?: { limit?: number; before?: string }): { items: Item[]; hasMore: boolean } {
   let end = items.length;
   if (page?.before) {
-    const i = items.findIndex((x) => x.id === page.before);
-    if (i >= 0) end = i;
+    end = items.findIndex((x) => x.id === page.before);
+    if (end < 0) throw new RpcError(ErrorCodes.invalidParams, `no item ${page.before} in this thread's history`);
   }
   const start = page?.limit ? Math.max(0, end - page.limit) : 0;
   return { items: items.slice(start, end), hasMore: start > 0 };

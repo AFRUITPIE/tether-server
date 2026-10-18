@@ -7,7 +7,8 @@ import { FollowedThread, recordedCwd, recordedSettings } from '../src/threads/Fo
 import { Itemizer, parseTaskNotification } from '../src/threads/itemizer.ts';
 import { LiveThread } from '../src/threads/LiveThread.ts';
 import { replayGap } from '../src/threads/seq.ts';
-import { mergeHistory, resumeSettings, ThreadManager } from '../src/threads/ThreadManager.ts';
+import { mergeHistory, pageOf, resumeSettings, ThreadManager } from '../src/threads/ThreadManager.ts';
+import { ErrorCodes } from '../src/rpc/connection.ts';
 
 const claude = { path: '/usr/bin/false', version: '0' } as any;
 const liveThread = (threadId = 'thread-1') => new LiveThread({ threadId, cwd: '/tmp', claude, env: {}, mode: 'new' });
@@ -285,6 +286,26 @@ describe('merging stored and live history', () => {
     expect(mergeHistory(stored, live).items.map((i) => i.id)).toEqual(['prompt', 'skill', 'instructions', 'thinking', 'reply', 'next']);
     // A chat with nothing on disk yet is the live thread's, in its order.
     expect(mergeHistory({ items: [], turns: [] } as any, live).items.map((i) => i.id)).toEqual(live.items.map((i: Item) => i.id));
+  });
+});
+
+describe('paging history back', () => {
+  const items = ['a', 'b', 'c', 'd', 'e'].map(
+    (id) => ({ type: 'userMessage', id, turnId: id, parentToolUseId: null, createdAt: 0, content: [] }) as Item,
+  );
+  const ids = (p: { items: Item[] }) => p.items.map((i) => i.id);
+
+  test('a page ends just before the item asked for, and says whether more come before it', () => {
+    expect(pageOf(items, { limit: 2 })).toMatchObject({ hasMore: true });
+    expect(ids(pageOf(items, { limit: 2 }))).toEqual(['d', 'e']);
+    expect(ids(pageOf(items, { limit: 2, before: 'd' }))).toEqual(['b', 'c']);
+    expect(pageOf(items, { limit: 2, before: 'b' })).toEqual({ items: [items[0]!], hasMore: false });
+    expect(pageOf(items, { limit: 2, before: 'a' })).toEqual({ items: [], hasMore: false });
+  });
+
+  test('an item the transcript doesn\'t hold is an error, never the latest page again', () => {
+    // Answered with the end, a client prepending it found it all held and asked again forever.
+    expect(() => pageOf(items, { limit: 2, before: 'gone' })).toThrow(expect.objectContaining({ code: ErrorCodes.invalidParams }));
   });
 });
 
