@@ -195,7 +195,9 @@ async function prepare(path: string): Promise<Transcript> {
   }
   const cwd = (await recordedCwd(to)) ?? '/';
   const size = statSync(to).size;
-  const lines = readFileSync(to, 'utf8').split('\n').length;
+  const bytes = readFileSync(to);
+  let lines = 0;
+  for (let i = bytes.indexOf(10); i >= 0; i = bytes.indexOf(10, i + 1)) lines++;
   return { id, path: to, cwd, project, mb: size / 1e6, lines };
 }
 
