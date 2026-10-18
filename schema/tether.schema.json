@@ -1772,18 +1772,12 @@
         "additionalProperties": false
       }
     },
-    "git/diff": {
+    "git/changes": {
       "params": {
         "type": "object",
         "properties": {
           "cwd": {
             "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "staged": {
-            "type": "boolean"
           }
         },
         "required": [
@@ -1794,12 +1788,31 @@
       "result": {
         "type": "object",
         "properties": {
-          "diff": {
+          "isRepo": {
+            "type": "boolean"
+          },
+          "root": {
             "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/WorkingFileChange"
+            }
+          },
+          "omittedFiles": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
         "required": [
-          "diff"
+          "isRepo",
+          "files",
+          "omittedFiles"
         ],
         "additionalProperties": false
       }
@@ -4782,6 +4795,60 @@
       "required": [
         "condition",
         "checks"
+      ],
+      "additionalProperties": false
+    },
+    "WorkingFileChange": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "oldPath": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "added",
+            "modified",
+            "deleted",
+            "renamed",
+            "untracked"
+          ]
+        },
+        "binary": {
+          "type": "boolean"
+        },
+        "hunks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiffHunk"
+          }
+        },
+        "added": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "removed": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "truncatedLines": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "path",
+        "status",
+        "hunks",
+        "added",
+        "removed",
+        "truncatedLines"
       ],
       "additionalProperties": false
     },

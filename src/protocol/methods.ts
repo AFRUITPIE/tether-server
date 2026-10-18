@@ -16,7 +16,7 @@ import {
   ThreadSummary,
   UserInput,
 } from './common.ts';
-import { Item, Turn } from './items.ts';
+import { DiffHunk, Item, Turn } from './items.ts';
 import { TaskState } from './tasks.ts';
 
 const Empty = z.object({});
@@ -349,9 +349,40 @@ export const Methods = {
       files: z.array(z.object({ path: z.string(), status: z.string() })),
     }),
   },
-  'git/diff': {
-    params: z.object({ cwd: z.string(), path: z.string().optional(), staged: z.boolean().optional() }),
-    result: z.object({ diff: z.string() }),
+  /**
+   * Everything in `cwd`'s repository that differs from its last commit: staged and unstaged changes
+   * together (`git diff HEAD`, renames found; against the empty tree before the first commit), and
+   * files git doesn't track yet, their whole content as added (at most 200, read eight at a time,
+   * the rest counted in `omittedFiles`; each read up to 4 MB). Paths are relative to the
+   * repository's `root`, sorted. Each file is bounded as an edit is: 5,000 lines kept, the rest
+   * counted (`truncatedLines`), lines cut at 1,000 characters. `isRepo` false: not in a repository.
+   */
+  'git/changes': {
+    params: z.object({ cwd: z.string() }),
+    result: z.object({
+      isRepo: z.boolean(),
+      /** The repository's top folder, which the paths are relative to. */
+      root: z.string().optional(),
+      branch: z.string().optional(),
+      files: z.array(
+        z
+          .object({
+            path: z.string(),
+            /** A renamed file's path before. */
+            oldPath: z.string().optional(),
+            status: z.enum(['added', 'modified', 'deleted', 'renamed', 'untracked']),
+            /** Binary: no lines to show. */
+            binary: z.boolean().optional(),
+            hunks: z.array(DiffHunk),
+            added: z.number().int(),
+            removed: z.number().int(),
+            truncatedLines: z.number().int(),
+          })
+          .meta({ id: 'WorkingFileChange' }),
+      ),
+      /** Untracked files past the 200 read: counted, not listed. */
+      omittedFiles: z.number().int(),
+    }),
   },
 
   /**

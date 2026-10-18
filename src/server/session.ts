@@ -345,7 +345,7 @@ export class ClientSession implements Subscriber {
     'fs/read': (p) => fsApi.read(p.path, p.maxBytes),
     'fs/search': (p) => fsApi.search(p.cwd, p.query, p.limit),
     'git/status': (p) => fsApi.gitStatus(p.cwd),
-    'git/diff': (p) => fsApi.gitDiff(p.cwd, p.path, p.staged),
+    'git/changes': (p) => fsApi.gitChanges(p.cwd),
     'thread/sideQuestion': async (p) => ({ answer: await askSideQuestion(this.mgr.get(p.threadId).query, p.question) }),
     'git/removeWorktree': async (p) => {
       await fsApi.removeWorktree(p.path, { force: p.force ?? false, discardCommits: p.discardCommits ?? false });

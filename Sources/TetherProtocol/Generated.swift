@@ -2260,6 +2260,77 @@ public struct GoalTaskInfo: Codable, Sendable, Hashable {
     }
 }
 
+public struct WorkingFileChange: Codable, Sendable, Hashable {
+    public var path: String
+    public var oldPath: String?
+    public var status: Status
+    public var binary: Bool?
+    public var hunks: [DiffHunk]
+    public var added: Int
+    public var removed: Int
+    public var truncatedLines: Int
+
+    public init(path: String, oldPath: String? = nil, status: Status, binary: Bool? = nil, hunks: [DiffHunk], added: Int, removed: Int, truncatedLines: Int) {
+        self.path = path
+        self.oldPath = oldPath
+        self.status = status
+        self.binary = binary
+        self.hunks = hunks
+        self.added = added
+        self.removed = removed
+        self.truncatedLines = truncatedLines
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path = "path"
+        case oldPath = "oldPath"
+        case status = "status"
+        case binary = "binary"
+        case hunks = "hunks"
+        case added = "added"
+        case removed = "removed"
+        case truncatedLines = "truncatedLines"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.path = try c.decode(String.self, forKey: .path)
+        self.oldPath = try c.decodeIfPresent(String.self, forKey: .oldPath)
+        self.status = try c.decode(Status.self, forKey: .status)
+        self.binary = try c.decodeIfPresent(Bool.self, forKey: .binary)
+        self.hunks = try c.decode([DiffHunk].self, forKey: .hunks)
+        self.added = try c.decode(Int.self, forKey: .added)
+        self.removed = try c.decode(Int.self, forKey: .removed)
+        self.truncatedLines = try c.decode(Int.self, forKey: .truncatedLines)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(path, forKey: .path)
+        try c.encodeIfPresent(oldPath, forKey: .oldPath)
+        try c.encode(status, forKey: .status)
+        try c.encodeIfPresent(binary, forKey: .binary)
+        try c.encode(hunks, forKey: .hunks)
+        try c.encode(added, forKey: .added)
+        try c.encode(removed, forKey: .removed)
+        try c.encode(truncatedLines, forKey: .truncatedLines)
+    }
+
+    public struct Status: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
+        public let rawValue: String
+        public init(rawValue: String) { self.rawValue = rawValue }
+        public init(stringLiteral value: String) { self.rawValue = value }
+        public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
+        public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
+        public static let added = Status(rawValue: "added")
+        public static let modified = Status(rawValue: "modified")
+        public static let deleted = Status(rawValue: "deleted")
+        public static let renamed = Status(rawValue: "renamed")
+        public static let untracked = Status(rawValue: "untracked")
+        public static let allCases: [Status] = [.added, .modified, .deleted, .renamed, .untracked]
+    }
+}
+
 public struct ScheduledTask: Codable, Sendable, Hashable {
     public var id: String
     public var name: String
@@ -5115,57 +5186,67 @@ public struct GitStatusResult: Codable, Sendable, Hashable {
     }
 }
 
-public struct GitDiffParams: Codable, Sendable, Hashable {
+public struct GitChangesParams: Codable, Sendable, Hashable {
     public var cwd: String
-    public var path: String?
-    public var staged: Bool?
 
-    public init(cwd: String, path: String? = nil, staged: Bool? = nil) {
+    public init(cwd: String) {
         self.cwd = cwd
-        self.path = path
-        self.staged = staged
     }
 
     private enum CodingKeys: String, CodingKey {
         case cwd = "cwd"
-        case path = "path"
-        case staged = "staged"
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.cwd = try c.decode(String.self, forKey: .cwd)
-        self.path = try c.decodeIfPresent(String.self, forKey: .path)
-        self.staged = try c.decodeIfPresent(Bool.self, forKey: .staged)
     }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(cwd, forKey: .cwd)
-        try c.encodeIfPresent(path, forKey: .path)
-        try c.encodeIfPresent(staged, forKey: .staged)
     }
 }
 
-public struct GitDiffResult: Codable, Sendable, Hashable {
-    public var diff: String
+public struct GitChangesResult: Codable, Sendable, Hashable {
+    public var isRepo: Bool
+    public var root: String?
+    public var branch: String?
+    public var files: [WorkingFileChange]
+    public var omittedFiles: Int
 
-    public init(diff: String) {
-        self.diff = diff
+    public init(isRepo: Bool, root: String? = nil, branch: String? = nil, files: [WorkingFileChange], omittedFiles: Int) {
+        self.isRepo = isRepo
+        self.root = root
+        self.branch = branch
+        self.files = files
+        self.omittedFiles = omittedFiles
     }
 
     private enum CodingKeys: String, CodingKey {
-        case diff = "diff"
+        case isRepo = "isRepo"
+        case root = "root"
+        case branch = "branch"
+        case files = "files"
+        case omittedFiles = "omittedFiles"
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.diff = try c.decode(String.self, forKey: .diff)
+        self.isRepo = try c.decode(Bool.self, forKey: .isRepo)
+        self.root = try c.decodeIfPresent(String.self, forKey: .root)
+        self.branch = try c.decodeIfPresent(String.self, forKey: .branch)
+        self.files = try c.decode([WorkingFileChange].self, forKey: .files)
+        self.omittedFiles = try c.decode(Int.self, forKey: .omittedFiles)
     }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(diff, forKey: .diff)
+        try c.encode(isRepo, forKey: .isRepo)
+        try c.encodeIfPresent(root, forKey: .root)
+        try c.encodeIfPresent(branch, forKey: .branch)
+        try c.encode(files, forKey: .files)
+        try c.encode(omittedFiles, forKey: .omittedFiles)
     }
 }
 
@@ -5908,10 +5989,10 @@ public enum Methods {
         public typealias Params = GitStatusParams
         public typealias Result = GitStatusResult
     }
-    public enum GitDiff: TetherMethod {
-        public static let name = "git/diff"
-        public typealias Params = GitDiffParams
-        public typealias Result = GitDiffResult
+    public enum GitChanges: TetherMethod {
+        public static let name = "git/changes"
+        public typealias Params = GitChangesParams
+        public typealias Result = GitChangesResult
     }
     public enum ThreadSideQuestion: TetherMethod {
         public static let name = "thread/sideQuestion"
