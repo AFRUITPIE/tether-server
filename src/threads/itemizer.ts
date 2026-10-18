@@ -98,6 +98,9 @@ export class Itemizer {
   private blockCounters = new Map<string, number>();
   private currentStreamMsgId = new Map<string | null, string>();
   private toolItems = new Map<string, ToolCallItem>();
+  /** Each call's place among all, and the calls still running or pending: what a turn ending or a task settling looks through. */
+  private callOrder = new Map<string, number>();
+  private openCalls = new Set<string>();
   private echoUuids = new Set<string>();
   private denied = new Map<string, string>();
   private interruptRequested = false;
@@ -694,9 +697,10 @@ export class Itemizer {
   private settleTask(toolUseId: string | undefined, status: string | undefined): Emission[] {
     if (!toolUseId) return [];
     const out: Emission[] = [];
-    for (const t of this.toolItems.values()) {
-      if ((t.status === 'running' || t.status === 'pending') && t.id !== toolUseId && this.descendsFrom(t, toolUseId)) {
+    for (const t of this.open()) {
+      if (t.id !== toolUseId && this.descendsFrom(t, toolUseId)) {
         t.status = status === 'completed' ? 'completed' : 'interrupted';
+        this.noteOpen(t);
         out.push(...this.addCompleted(t));
       }
     }
@@ -742,9 +746,24 @@ export class Itemizer {
 
   /** Tool calls a turn ending leaves unfinished. Collected first: closing a launcher changes its children's answer. */
   private cutShort(turnId: string): ToolCallItem[] {
-    return [...this.toolItems.values()].filter(
-      (t) => t.turnId === turnId && (t.status === 'running' || t.status === 'pending') && this.endsWithTurn(t),
-    );
+    return this.open().filter((t) => t.turnId === turnId && this.endsWithTurn(t));
+  }
+
+  /** A call, new or again, as the latest word on it. */
+  private setCall(t: ToolCallItem) {
+    if (!this.callOrder.has(t.id)) this.callOrder.set(t.id, this.callOrder.size);
+    this.toolItems.set(t.id, t);
+    this.noteOpen(t);
+  }
+
+  private noteOpen(t: ToolCallItem) {
+    if (t.status === 'running' || t.status === 'pending') this.openCalls.add(t.id);
+    else this.openCalls.delete(t.id);
+  }
+
+  /** The calls still running or pending, in the order they were first made. */
+  private open(): ToolCallItem[] {
+    return [...this.openCalls].map((id) => this.toolItems.get(id)!).sort((a, b) => this.callOrder.get(a.id)! - this.callOrder.get(b.id)!);
   }
 
   /**
@@ -856,7 +875,7 @@ export class Itemizer {
             input: {},
             status: 'pending',
           };
-          this.toolItems.set(cb.id, t);
+          this.setCall(t);
           item = t;
         }
         if (item) {
@@ -975,7 +994,7 @@ export class Itemizer {
           status: 'running',
           ...(name.startsWith('mcp__') ? { mcpServer: name.split('__')[1] } : {}),
         };
-        this.toolItems.set(block.id, item);
+        this.setCall(item);
         const isNew = !this.items.has(item.id);
         this.upsert(item);
         out.push(...this.itemEvent(isNew ? 'item/started' : 'item/updated', item));
@@ -990,6 +1009,7 @@ export class Itemizer {
   private completeTool(t: ToolCallItem, text: string, structured: unknown, isError: boolean): Emission[] {
     const deniedMsg = this.denied.get(t.id);
     t.status = deniedMsg !== undefined ? 'denied' : isError ? 'failed' : 'completed';
+    this.noteOpen(t);
     t.outputText = text;
     if (isError) t.isError = true;
     const out: Emission[] = [];
@@ -1440,6 +1460,7 @@ export class Itemizer {
     // Anything still in flight did not finish.
     for (const t of this.cutShort(turn.id)) {
       t.status = 'interrupted';
+      this.noteOpen(t);
       out.push(...this.addCompleted(t));
     }
     out.push(...this.turnEvent('turn/completed', turn));
@@ -1469,9 +1490,9 @@ export class Itemizer {
     this.processEnded = true;
     this.tasksDirty = true;
     const out = this.abandonTurn('interrupted');
-    for (const t of this.toolItems.values()) {
-      if (t.status !== 'running' && t.status !== 'pending') continue;
+    for (const t of this.open()) {
       t.status = 'interrupted';
+      this.noteOpen(t);
       out.push(...this.addCompleted(t));
     }
     this.backgroundTaskIds.clear();
@@ -1489,6 +1510,7 @@ export class Itemizer {
     const out: Emission[] = flushed;
     for (const t of this.cutShort(turn.id)) {
       t.status = 'interrupted';
+      this.noteOpen(t);
       out.push(...this.addCompleted(t));
     }
     this.settleEdits(turn);
