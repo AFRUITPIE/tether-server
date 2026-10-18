@@ -29,6 +29,7 @@ mise run compile
 - `mise run compile`: standalone darwin/linux × arm64/x64 binaries under `dist/`, which CI runs the CLI tests against.
 - Releasing: bump `package.json`'s version and merge. On a push to main whose version has no tag, `.github/workflows/npm.yml` tests and builds the npm package, stages it on npm (trusted publishing, with provenance; no token is stored anywhere), then tags the commit and publishes its GitHub release, which the app's Swift package pin reads. It goes live once a maintainer approves it with 2FA: `npm stage approve <id>`, or Staged Packages on npmjs.com.
 - A new Claude Agent SDK becomes a PR by itself (`.github/workflows/sdk-update.yml`, daily): the dependency and the next patch version, after typecheck and tests pass. The app watches npm the same way (its `server-update.yml`) and opens its own PR for a newly published server.
+- `mise run bench`: benchmarks of the hot paths (streaming, history reads and pages, the chat list, task updates, following, JSON-RPC framing) against clones of the largest real transcripts in `~/.claude/projects`, each case in a process of its own (`bench/run.ts`; `BENCH_TRANSCRIPTS` to choose, `--out` for JSON). It never runs `claude`; compare against the parent commit on the same Mac.
 - `mise run e2e`: real Claude Code E2E tests. These use the configured account/provider and can incur cost; do not run casually.
 
 ## Repository map
