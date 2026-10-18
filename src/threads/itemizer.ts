@@ -367,7 +367,7 @@ export class Itemizer {
           const t = this.toolItems.get(id);
           if (!t) continue;
           t.summary = msg.summary;
-          out.push({ method: 'item/updated', body: { item: structuredClone(t) } });
+          out.push(...this.itemEvent('item/updated', t));
         }
         return out;
       }
@@ -806,16 +806,27 @@ export class Itemizer {
 
   private addStarted(item: Item): Emission[] {
     this.upsert(item);
-    return [{ method: 'item/started', body: { item: structuredClone(item) } }];
+    return this.itemEvent('item/started', item);
   }
 
   private addCompleted(item: Item): Emission[] {
     const isNew = !this.items.has(item.id);
     this.upsert(item);
-    const out: Emission[] = [];
-    if (isNew) out.push({ method: 'item/started', body: { item: structuredClone(item) } });
-    out.push({ method: 'item/completed', body: { item: structuredClone(item) } });
-    return out;
+    if (this.quiet) return [];
+    // One copy for both: an emission's body is never changed, and the item goes on changing.
+    const copy = structuredClone(item);
+    const completed: Emission = { method: 'item/completed', body: { item: copy } };
+    return isNew ? [{ method: 'item/started', body: { item: copy } }, completed] : [completed];
+  }
+
+  /** An item's event, with a copy of it as it is now; none while `quiet`. */
+  private itemEvent(method: 'item/started' | 'item/updated', item: Item): Emission[] {
+    return this.quiet ? [] : [{ method, body: { item: structuredClone(item) } }];
+  }
+
+  /** A turn's event, likewise. */
+  private turnEvent(method: 'turn/completed' | 'turn/updated', turn: Turn): Emission[] {
+    return this.quiet ? [] : [{ method, body: { turn: structuredClone(turn) } }];
   }
 
   private nextBlockId(msgId: string): string {
@@ -985,7 +996,7 @@ export class Itemizer {
         this.toolItems.set(block.id, item);
         const isNew = !this.items.has(item.id);
         this.upsert(item);
-        out.push({ method: isNew ? 'item/started' : 'item/updated', body: { item: structuredClone(item) } });
+        out.push(...this.itemEvent(isNew ? 'item/started' : 'item/updated', item));
       } else if (block.type === 'web_search_tool_result' || block.type === 'mcp_tool_result') {
         const t = this.toolItems.get(block.tool_use_id);
         if (t) out.push(...this.completeTool(t, contentToText(block.content), block.content, !!block.is_error));
@@ -1028,7 +1039,7 @@ export class Itemizer {
     const turn = this.turns.find((x) => x.id === t.turnId);
     if (!turn || turn === this.turn || turn.status === 'inProgress') return [];
     turn.edits = totalsOf(edits.values());
-    return [{ method: 'turn/updated', body: { turn: structuredClone(turn) } }];
+    return this.turnEvent('turn/updated', turn);
   }
 
   /** A turn's edit totals, as it ends. */
@@ -1243,7 +1254,7 @@ export class Itemizer {
     const text = contentToText(msg.message?.content).trim();
     if (!text || call.skillInstructions === text) return [];
     call.skillInstructions = text;
-    return [{ method: 'item/updated', body: { item: structuredClone(call) } }];
+    return this.itemEvent('item/updated', call);
   }
 
   /** A local command's output: a /goal set or cleared is the goal's, anything else a plain notice. */
@@ -1449,7 +1460,7 @@ export class Itemizer {
       t.status = 'interrupted';
       out.push(...this.addCompleted(t));
     }
-    out.push({ method: 'turn/completed', body: { turn: structuredClone(turn) } });
+    out.push(...this.turnEvent('turn/completed', turn));
     out.push({
       method: 'thread/tokenUsage/updated',
       body: { ...result.usage, totalCostUsd: result.totalCostUsd },
@@ -1499,7 +1510,7 @@ export class Itemizer {
       out.push(...this.addCompleted(t));
     }
     this.settleEdits(turn);
-    out.push({ method: 'turn/completed', body: { turn: structuredClone(turn) } });
+    out.push(...this.turnEvent('turn/completed', turn));
     this.lastTurnId = turn.id;
     this.turn = null;
     this.tasksDirty = true;
@@ -1509,10 +1520,11 @@ export class Itemizer {
   // ---- tasks ----
 
   /**
-   * Whether task changes are sent (`task/updated`) as they happen. Off for an itemizer whose
-   * emissions nobody reads (a transcript read once): `tasks()` still says how they stand.
+   * Whether the itemizer makes no events: for one whose emissions nobody reads (a transcript read
+   * once, a follower's first read). Items and turns are kept as ever, and `tasks()` still says how
+   * tasks stand; what's skipped is copying each item into its events and working out what changed.
    */
-  taskUpdates = true;
+  quiet = false;
 
   /**
    * Every task of the chat as it stands, in the order each was first heard of: the calls that
@@ -1582,7 +1594,7 @@ export class Itemizer {
 
   /** The tasks that changed since they were last sent, as `task/updated`, after `out`. */
   private withTasks(out: Emission[]): Emission[] {
-    if (!this.tasksDirty || !this.taskUpdates) return out;
+    if (!this.tasksDirty || this.quiet) return out;
     this.tasksDirty = false;
     for (const task of this.tasks()) {
       const json = JSON.stringify(task);

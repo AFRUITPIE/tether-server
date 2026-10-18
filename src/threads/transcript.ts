@@ -624,8 +624,8 @@ export function sessionItemizer(sessionId: string, historyMode: boolean): Itemiz
 }
 
 /**
- * A session's transcript read whole into a history itemizer (task changes not sent: nobody reads
- * them), with the session's workflow files: what `thread/read` hands back, and where a follower
+ * A session's transcript read whole into a history itemizer, `quiet` (nobody reads what it would
+ * emit), with the session's workflow files: what `thread/read` hands back, and where a follower
  * starts from.
  */
 export async function readTranscript(sessionId: string, cwd: string | undefined) {
@@ -634,7 +634,7 @@ export async function readTranscript(sessionId: string, cwd: string | undefined)
   const extras = new TranscriptExtras();
   extras.addRecords(history.records);
   const itemizer = sessionItemizer(sessionId, true);
-  itemizer.taskUpdates = false;
+  itemizer.quiet = true;
   ingestHistory(itemizer, history.messages, extras);
   await loadWorkflows(itemizer, sessionDir(sessionId));
   return { itemizer, extras, history, path };

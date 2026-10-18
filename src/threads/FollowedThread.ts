@@ -47,7 +47,7 @@ export class FollowedThread implements WatchableThread {
     this.extras = extras;
     this.path = path;
     // What `thread/read` hands back holds the tasks as they stand; what follows is what changes.
-    itemizer.taskUpdates = true;
+    itemizer.quiet = false;
     itemizer.markTasksSent();
     this.tail.begin(history);
     this.settings = settingsOf(history.records);

@@ -595,7 +595,7 @@ export async function readAgentItems(sessionDir: string, runId: string, agentId:
   const lines = await readLines(join(runDir(sessionDir, runId), `agent-${agentId}.jsonl`));
   if (!lines) return [];
   const iz = new Itemizer(Date.now, true);
-  iz.taskUpdates = false;
+  iz.quiet = true;
   for (const l of lines) {
     if (l.type !== 'user' && l.type !== 'assistant') continue;
     let message = l.message;
