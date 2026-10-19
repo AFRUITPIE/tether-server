@@ -5,16 +5,20 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { resolveClaude } from '../claude.ts';
+import { PROTOCOL_VERSION } from '../protocol/index.ts';
 import { Connection } from '../rpc/connection.ts';
-import { ClientSession } from '../server/session.ts';
+import { ClientSession, UPGRADE_CLIENT } from '../server/session.ts';
 import { TETHER_VERSION } from '../threads/LiveThread.ts';
 import { Scheduler } from '../threads/Scheduler.ts';
+import { TaskStore } from '../threads/taskStore.ts';
 import { ThreadManager } from '../threads/ThreadManager.ts';
 
 export const TETHER_HOME = process.env.TETHER_HOME ?? join(homedir(), '.tether');
 export const SOCKET_PATH = join(TETHER_HOME, 'tether.sock');
 const PID_PATH = join(TETHER_HOME, 'daemon.pid');
 const LOG_PATH = join(TETHER_HOME, 'daemon.log');
+/** Each chat's tasks as the daemon saw them (`TaskStore`). */
+export const TASKS_DIR = join(TETHER_HOME, 'tasks');
 
 type DaemonMeta = { pid: number; version: string; startedAt: number };
 
@@ -26,7 +30,7 @@ export async function runDaemon() {
   mkdirSync(TETHER_HOME, { recursive: true, mode: 0o700 });
   const log = (m: string) => process.stderr.write(`[tetherd ${new Date().toISOString()}] ${m}\n`);
   const claude = await resolveClaude();
-  const mgr = new ThreadManager(claude, log);
+  const mgr = new ThreadManager(claude, log, { taskStore: new TaskStore(TASKS_DIR) });
   const clients = new Set<ClientSession>();
   mgr.scheduler = new Scheduler(mgr, join(TETHER_HOME, 'schedules.json'), log);
 
@@ -150,7 +154,7 @@ async function tryUpgrade(meta: DaemonMeta) {
     });
     const conn = new Connection(sock, sock, 'upgrade');
     conn.start({ onRequest: async () => ({}), onNotification: () => {}, onClose: () => {} });
-    await conn.request('initialize', { clientInfo: { name: 'tether-upgrade', version: TETHER_VERSION } }, 'u1');
+    await conn.request('initialize', { clientInfo: { name: UPGRADE_CLIENT, version: TETHER_VERSION }, protocolVersion: PROTOCOL_VERSION }, 'u1');
     const r = (await conn.request('host/requestShutdown', { reason: `upgrade to ${TETHER_VERSION}` }, 'u2')) as {
       accepted: boolean;
     };

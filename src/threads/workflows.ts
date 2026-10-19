@@ -1,8 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import type { Item, WorkflowAgent, WorkflowPhase, WorkflowSnapshot } from '../protocol/index.ts';
+import type { Item } from '../protocol/index.ts';
 import { Itemizer } from './itemizer.ts';
 
 /**
@@ -19,6 +18,68 @@ import { Itemizer } from './itemizer.ts';
  */
 
 type AnyObj = Record<string, any>;
+
+/** A workflow's phase as the script or the CLI names it. */
+export type WorkflowPhase = { index: number; title: string; detail?: string };
+
+/** One workflow agent, as the CLI's `workflow_agent` progress entries report it. */
+export type WorkflowAgent = {
+  index: number;
+  label: string;
+  phaseIndex?: number;
+  phaseTitle?: string;
+  agentId?: string;
+  model?: string;
+  /**
+   * The CLI's own state, passed through as it came: start (queued or starting), progress, done,
+   * error, and whatever a later CLI adds; `stopped` for one a stopped or failed run left going.
+   */
+  state: string;
+  /** Skipped by the person (`error`, "skipped by user"), or never started: still waiting for a slot when its workflow completed. */
+  skipped?: boolean;
+  /** Replayed from an earlier run's cache rather than run again. */
+  cached?: boolean;
+  /** Stopped by the safety classifier before it ran. */
+  blocked?: boolean;
+  queuedAt?: number;
+  startedAt?: number;
+  durationMs?: number;
+  tokens?: number;
+  toolCalls?: number;
+  lastToolName?: string;
+  lastToolSummary?: string;
+  promptPreview?: string;
+  resultPreview?: string;
+  error?: string;
+};
+
+/**
+ * A dynamic workflow (the Workflow tool's `local_workflow` task): its phases and agents, as the CLI
+ * reports them, merged from its progress events or read from its files. Internal: what clients get
+ * is `TaskState`s (`workflowTasks`).
+ */
+export type WorkflowSnapshot = {
+  runId?: string;
+  name?: string;
+  description?: string;
+  /**
+   * running | completed | failed | stopped | paused, or unknown: a run found only by its journal,
+   * with no live task and no record, nothing of it written for a few minutes, which may have been
+   * cut off. A journal-only run written to recently is reported running.
+   */
+  status?: string;
+  /** the latest agent event, "Phase: label" */
+  activity?: string;
+  phases: WorkflowPhase[];
+  agents: WorkflowAgent[];
+  totalTokens?: number;
+  toolUses?: number;
+  durationMs?: number;
+  /** the workflow's return value as text, once it has completed */
+  result?: string;
+  /** why it failed */
+  error?: string;
+};
 
 const ID = /^[A-Za-z0-9_-]+$/;
 
@@ -40,15 +101,19 @@ export function agentState(state: unknown): string {
 }
 
 /**
- * A completed run's snapshot with every agent still running marked done: the CLI sends progress
- * at most every few seconds, so the last agents are often never seen finishing. An agent still
- * waiting for a slot (`start` with no `startedAt`) never ran, so it is skipped, not done.
+ * A settled run's snapshot with every agent it last heard of as going settled too. Completed: one
+ * running is done, since the CLI sends progress at most every few seconds and the last agents are
+ * often never seen finishing; one still waiting for a slot (`start` with no `startedAt`) never ran,
+ * so it is skipped. Failed or stopped: whatever was going or waiting stopped with it.
  */
-export function settleAgents(snapshot: WorkflowSnapshot): WorkflowSnapshot {
+export function settleAgents(snapshot: WorkflowSnapshot, status = snapshot.status): WorkflowSnapshot {
+  if (status !== 'completed' && status !== 'failed' && status !== 'stopped') return snapshot;
+  const going = (a: WorkflowAgent) => a.state === 'progress' || a.state === 'start' || a.state === 'queued' || a.state === 'pending';
   const settled = (a: WorkflowAgent): WorkflowAgent | undefined => {
+    if (!going(a) || a.skipped || a.cached || a.blocked) return undefined;
+    if (status !== 'completed') return { ...a, state: 'stopped' };
     if (a.state === 'progress' || (a.state === 'start' && a.startedAt !== undefined)) return { ...a, state: 'done' };
-    if (a.state === 'start') return { ...a, state: 'error', skipped: true };
-    return undefined;
+    return { ...a, state: 'error', skipped: true };
   };
   if (!snapshot.agents.some((a) => settled(a))) return snapshot;
   return { ...snapshot, agents: snapshot.agents.map((a) => settled(a) ?? a) };
@@ -97,27 +162,20 @@ function agentFrom(e: AnyObj): WorkflowAgent | undefined {
  */
 export function mergeWorkflowProgress(snapshot: WorkflowSnapshot, progress: unknown): WorkflowSnapshot {
   if (!Array.isArray(progress)) return snapshot;
-  const phases = [...snapshot.phases];
-  const agents = [...snapshot.agents];
+  const phases = new Map(snapshot.phases.map((p) => [p.index, p]));
+  const agents = new Map(snapshot.agents.map((a) => [a.index, a]));
   for (const e of progress as AnyObj[]) {
     if (e?.type === 'workflow_phase') {
       const p = phaseFrom(e);
-      if (!p) continue;
-      const i = phases.findIndex((x) => x.index === p.index);
       // A progress entry has no detail; the script's meta keeps it.
-      if (i >= 0) phases[i] = { ...phases[i]!, ...p };
-      else phases.push(p);
+      if (p) phases.set(p.index, { ...phases.get(p.index), ...p });
     } else if (e?.type === 'workflow_agent') {
       const a = agentFrom(e);
-      if (!a) continue;
-      const i = agents.findIndex((x) => x.index === a.index);
-      if (i >= 0) agents[i] = a;
-      else agents.push(a);
+      if (a) agents.set(a.index, a);
     }
   }
-  phases.sort((a, b) => a.index - b.index);
-  agents.sort((a, b) => a.index - b.index);
-  return { ...snapshot, phases, agents };
+  const byIndex = (a: { index: number }, b: { index: number }) => a.index - b.index;
+  return { ...snapshot, phases: [...phases.values()].sort(byIndex), agents: [...agents.values()].sort(byIndex) };
 }
 
 /** The value of a string property in a JS object literal's text: `name: 'x'`, `"name": "x"` or `` name: `x` ``. */
@@ -130,8 +188,22 @@ function literal(text: string, key: string): string | undefined {
  * What a workflow script's `export const meta = { name, description, phases }` says. The CLI
  * requires a pure literal, but this reads it with patterns, not by running anything.
  */
-export function scriptMeta(script: unknown): { name?: string; description?: string; phases: WorkflowPhase[] } {
+export function scriptMeta(script: unknown): ScriptMeta {
   if (typeof script !== 'string') return { phases: [] };
+  // Asked of the same few scripts on every task change of a running workflow.
+  let meta = metas.get(script);
+  if (!meta) {
+    meta = readMeta(script);
+    if (metas.size >= 64) metas.delete(metas.keys().next().value!);
+    metas.set(script, meta);
+  }
+  return { ...meta, phases: meta.phases.map((p) => ({ ...p })) };
+}
+
+type ScriptMeta = { name?: string; description?: string; phases: WorkflowPhase[] };
+const metas = new Map<string, ScriptMeta>();
+
+function readMeta(script: string): ScriptMeta {
   const start = script.search(/\bmeta\s*=\s*\{/);
   if (start < 0) return { phases: [] };
   // The meta block ends at the first top-level statement after it; 4 KB is ample for a literal.
@@ -192,25 +264,7 @@ export function notificationResult(text: string): string {
   }
 }
 
-// ---------- the session's directory on disk ----------
-
-/**
- * A session's directory (`~/.claude/projects/<project>/<sessionId>`), beside its transcript. The
- * project folder's name is the CLI's flattening of the cwd, so the transcript is looked for.
- */
-export function sessionDirSync(sessionId: string): string | undefined {
-  if (!isSafeId(sessionId)) return undefined;
-  // Where the CLI keeps its files: CLAUDE_CONFIG_DIR, else ~/.claude.
-  const root = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects');
-  let projects: string[];
-  try {
-    projects = readdirSync(root);
-  } catch {
-    return undefined;
-  }
-  for (const p of projects) if (existsSync(join(root, p, `${sessionId}.jsonl`))) return join(root, p, sessionId);
-  return undefined;
-}
+// ---------- the session's directory on disk (`sessionDir`) ----------
 
 /** `<session dir>/subagents/workflows/<runId>` */
 export const runDir = (sessionDir: string, runId: string) => join(sessionDir, 'subagents', 'workflows', runId);
@@ -264,15 +318,21 @@ export function workflowAgentLocator(sessionDir: string | (() => string | undefi
 /**
  * Which agent of the given runs made a tool call, by the call's id in the agents' transcripts: for a
  * task a workflow agent started (its own background command), which the stream reports with the
- * call's id alone. Read when asked, since a call is written as the agent makes it.
+ * call's id alone. Asked again on each of the task's events until found, since a call is written as
+ * the agent makes it; each transcript only grows, so each look reads only what was written since
+ * the last one for that call.
  */
 export function workflowCallLocator(
   sessionDir: string | (() => string | undefined),
 ): (toolUseId: string, runIds: string[]) => { runId: string; agentId: string } | undefined {
+  /** For each call still looked for, how far into each agent's transcript it was looked for. */
+  const searched = new Map<string, Map<string, number>>();
   return (toolUseId, runIds) => {
     const dir = typeof sessionDir === 'string' ? sessionDir : sessionDir();
     if (!dir || !isSafeId(toolUseId)) return undefined;
-    const needle = `"id":"${toolUseId}"`;
+    const needle = Buffer.from(`"id":"${toolUseId}"`);
+    let upTo = searched.get(toolUseId);
+    if (!upTo) searched.set(toolUseId, (upTo = new Map()));
     for (const runId of runIds) {
       if (!isSafeId(runId)) continue;
       let files: string[] = [];
@@ -284,8 +344,24 @@ export function workflowCallLocator(
       for (const f of files) {
         const m = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(f);
         if (!m) continue;
+        const path = join(runDir(dir, runId), f);
         try {
-          if (readFileSync(join(runDir(dir, runId), f), 'utf8').includes(needle)) return { runId, agentId: m[1]! };
+          const fd = openSync(path, 'r');
+          try {
+            const size = fstatSync(fd).size;
+            const seen = upTo.get(path) ?? 0;
+            // From a needle's length back, for a match cut by the last look's end; all of it, if rewritten.
+            const start = seen > size ? 0 : Math.max(0, seen - needle.length + 1);
+            const buf = Buffer.allocUnsafe(size - start);
+            const read = readSync(fd, buf, 0, buf.length, start);
+            if (buf.subarray(0, read).includes(needle)) {
+              searched.delete(toolUseId);
+              return { runId, agentId: m[1]! };
+            }
+            upTo.set(path, start + read);
+          } finally {
+            closeSync(fd);
+          }
         } catch {
           // gone or unreadable: not this one
         }
@@ -495,6 +571,41 @@ export function unframeAgentPrompt(text: string): string | null | undefined {
     .join('\n');
 }
 
+/**
+ * A workflow agent's whole prompt, from its transcript (the computed task, unframed), for when the
+ * CLI's preview of it was cut. Read when asked, at most the first 256 KB of the file.
+ */
+export function agentPromptReader(sessionDir: string | (() => string | undefined)): (runId: string, agentId: string) => string | undefined {
+  return (runId, agentId) => {
+    const dir = typeof sessionDir === 'string' ? sessionDir : sessionDir();
+    if (!dir || !isSafeId(runId) || !isSafeId(agentId)) return undefined;
+    let text: string;
+    try {
+      const fd = openSync(join(runDir(dir, runId), `agent-${agentId}.jsonl`), 'r');
+      try {
+        const buf = Buffer.alloc(256 * 1024);
+        text = buf.subarray(0, readSync(fd, buf, 0, buf.length, 0)).toString('utf8');
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      return undefined;
+    }
+    for (const line of text.split('\n')) {
+      if (!line.includes('computed task')) continue;
+      try {
+        const l = JSON.parse(line);
+        const t = l.type === 'user' ? soleText(l.message?.content) : undefined;
+        const prompt = t === undefined ? undefined : unframeAgentPrompt(t);
+        if (typeof prompt === 'string') return prompt;
+      } catch {
+        // a line cut by the read, or still being written
+      }
+    }
+    return undefined;
+  };
+}
+
 /** A transcript record's text, when its content is text alone. */
 function soleText(content: unknown): string | undefined {
   if (typeof content === 'string') return content;
@@ -513,6 +624,7 @@ export async function readAgentItems(sessionDir: string, runId: string, agentId:
   const lines = await readLines(join(runDir(sessionDir, runId), `agent-${agentId}.jsonl`));
   if (!lines) return [];
   const iz = new Itemizer(Date.now, true);
+  iz.quiet = true;
   for (const l of lines) {
     if (l.type !== 'user' && l.type !== 'assistant') continue;
     let message = l.message;

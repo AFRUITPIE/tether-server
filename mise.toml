@@ -29,3 +29,7 @@ run = ["bun run scripts/e2e.ts", "bun run scripts/e2e-daemon.ts", "bun run scrip
 
 [tasks.swift-test]
 run = "swift test"
+
+[tasks.bench]
+description = "Benchmarks of the hot paths against copies of real transcripts (bench/run.ts; no claude, no tokens)"
+run = "bun run bench/run.ts"

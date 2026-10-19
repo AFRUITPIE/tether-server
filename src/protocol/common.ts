@@ -3,10 +3,16 @@ import { z } from 'zod';
 /**
  * Bumped on a breaking change to a method, notification or payload. Additive changes (a new
  * notification, an optional field) don't bump it: unions already keep unknown variants.
+ *
+ * 2: typed, persisted task state (`TaskState`, `task/updated`, `tasks` on thread/read, resume
+ * and subscribe) in place of `task/event` patches, `task/backgroundChanged` and `workflow/read`;
+ * edits on tool calls and turns; `git/changes`; `thread/summaryChanged`; `thread/start`'s
+ * `messageId`. Protocol 1 clients are refused, and a protocol 2 client needs no fallbacks for a
+ * protocol 1 server.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 /** The oldest client protocol this server still serves. */
-export const MIN_CLIENT_PROTOCOL = 1;
+export const MIN_CLIENT_PROTOCOL = 2;
 
 export const JsonValue: z.ZodType<unknown> = z.unknown().meta({ id: 'JsonValue' });
 
@@ -130,6 +136,11 @@ export const ThreadSummary = z
     title: z.string(),
     customTitle: z.string().optional(),
     firstPrompt: z.string().optional(),
+    /**
+     * The directory the chat runs in: the transcript's (read from its lines where the SDK misses
+     * it), or a live chat's. Absent only for a transcript that records none. What a client lists
+     * recent directories from.
+     */
     cwd: z.string().optional(),
     gitBranch: z.string().optional(),
     tag: z.string().optional(),

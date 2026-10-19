@@ -61,6 +61,17 @@ describe('framing', () => {
     expect(calls[0]!.params).toEqual({ x: 1 });
   });
 
+  test('a long line in many chunks, cut mid-character, is read whole', async () => {
+    const { input, out, calls } = wire();
+    const data = 'é'.repeat(300_000);
+    const bytes = Buffer.from(JSON.stringify({ id: 1, method: 'big', params: { data } }) + '\n{"id":2,"method":"after"}\n');
+    // Odd-sized chunks, so a two-byte character is split between them.
+    for (let i = 0; i < bytes.length; i += 4097) input.write(bytes.subarray(i, i + 4097));
+    expect([(await out.next()).id, (await out.next()).id]).toEqual([1, 2]);
+    expect((calls[0]!.params as any).data).toBe(data);
+    expect(calls.map((c) => c.method)).toEqual(['big', 'after']);
+  });
+
   test('a request without params is handled with empty params', async () => {
     const { input, out, calls } = wire();
     input.write('{"id":1,"method":"a"}\n');

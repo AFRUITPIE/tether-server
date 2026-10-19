@@ -2,8 +2,7 @@ import { hostname, arch, platform, homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { Methods, MIN_CLIENT_PROTOCOL, PROTOCOL_VERSION, type MethodName, type Params, type Result } from '../protocol/index.ts';
 import { Connection, ErrorCodes, RpcError } from '../rpc/connection.ts';
-import type { WatchableThread } from '../threads/FollowedThread.ts';
-import type { Subscriber } from '../threads/LiveThread.ts';
+import type { Subscriber, WatchableThread } from '../threads/events.ts';
 import { TETHER_VERSION } from '../threads/LiveThread.ts';
 import type { ThreadManager } from '../threads/ThreadManager.ts';
 import * as fsApi from './fsApi.ts';
@@ -12,6 +11,14 @@ import * as plugins from './plugins.ts';
 type Handler<M extends MethodName> = (p: Params<M>) => Promise<Result<M>> | Result<M>;
 
 const SIDE_QUESTION_TIMEOUT_MS = 60_000;
+
+/**
+ * The client `tether connect` is when it asks a daemon of another version to make way. Served
+ * whatever protocol it speaks, for that alone (`host/requestShutdown`): a release's `connect`
+ * must be able to replace any other release's daemon, an older app's included.
+ */
+export const UPGRADE_CLIENT = 'tether-upgrade';
+const UPGRADE_METHODS = new Set(['initialize', 'host/requestShutdown']);
 
 /**
  * A side question (the CLI's /btw), given up on after `timeoutMs`: the request is cancelled in
@@ -44,10 +51,14 @@ export async function askSideQuestion(query: unknown, question: string, timeoutM
 export class ClientSession implements Subscriber {
   readonly id = randomUUID();
   private initialized = false;
+  /** Initialized as `tether connect`'s upgrade client with a protocol this server doesn't serve. */
+  private upgradeOnly = false;
   private env: Record<string, string> = {};
   private optOut = new Set<string>();
   private experimental = false;
   private subscriptions = new Map<string, WatchableThread>();
+  /** Stops telling this client of chats' summaries. */
+  private unwatchSummaries?: () => void;
 
   constructor(
     private conn: Connection,
@@ -69,6 +80,7 @@ export class ClientSession implements Subscriber {
         if (method === 'initialized') return;
       },
       onClose: () => {
+        this.unwatchSummaries?.();
         for (const t of this.subscriptions.values()) {
           t.unsubscribe(this);
           this.dropFollowerIfUnwatched(t);
@@ -106,6 +118,11 @@ export class ClientSession implements Subscriber {
     const spec = (Methods as Record<string, { params: any }>)[method];
     if (!spec) throw new RpcError(ErrorCodes.methodNotFound, `unknown method ${method}`);
     if (method !== 'initialize' && !this.initialized) throw new RpcError(ErrorCodes.notInitialized, 'Not initialized');
+    if (this.upgradeOnly && !UPGRADE_METHODS.has(method))
+      throw new RpcError(ErrorCodes.incompatibleProtocol, 'only an upgrade is served at this protocol', {
+        protocolVersion: PROTOCOL_VERSION,
+        minClientProtocol: MIN_CLIENT_PROTOCOL,
+      });
     const parsed = spec.params.safeParse(raw ?? {});
     if (!parsed.success) throw new RpcError(ErrorCodes.invalidParams, parsed.error.message);
     const handler = (this.handlers as Record<string, (p: unknown) => unknown>)[method];
@@ -121,7 +138,8 @@ export class ClientSession implements Subscriber {
     initialize: async (p) => {
       if (this.initialized) throw new RpcError(ErrorCodes.alreadyInitialized, 'Already initialized');
       const clientProtocol = p.protocolVersion ?? 1;
-      if (clientProtocol < MIN_CLIENT_PROTOCOL) {
+      this.upgradeOnly = clientProtocol < MIN_CLIENT_PROTOCOL && p.clientInfo.name === UPGRADE_CLIENT;
+      if (clientProtocol < MIN_CLIENT_PROTOCOL && !this.upgradeOnly) {
         this.log(`client ${this.id} refused: ${p.clientInfo.name} ${p.clientInfo.version} speaks protocol ${clientProtocol}`);
         throw new RpcError(
           ErrorCodes.incompatibleProtocol,
@@ -135,6 +153,8 @@ export class ClientSession implements Subscriber {
       if (p.env) this.mgr.noteClientEnv(p.env);
       this.experimental = !!p.capabilities?.experimentalApi;
       for (const m of p.capabilities?.optOutNotificationMethods ?? []) this.optOut.add(m);
+      // Every chat's summary as it changes, subscribed or not; an upgrade client has no chat list.
+      if (!this.upgradeOnly) this.unwatchSummaries = this.mgr.watchSummaries((summary) => this.notify('thread/summaryChanged', { summary }));
       this.log(`client ${this.id} initialized: ${p.clientInfo.name} ${p.clientInfo.version}`);
       return {
         serverInfo: { name: 'tether', version: TETHER_VERSION },
@@ -203,15 +223,14 @@ export class ClientSession implements Subscriber {
       return { current: i.output_style ?? 'default', available: i.available_output_styles ?? [] };
     },
 
-    'project/list': async (p) => ({ projects: await this.mgr.projects(p.limit) }),
-
     'thread/list': async (p) => ({ threads: await this.mgr.list(p) }),
 
     'thread/start': async (p) => {
       const t = await this.mgr.start(p, this.env);
       this.subscribe(t, 0);
-      if (p.input?.length) t.send(p.input);
-      return { thread: t.threadInfo() };
+      // Sent to this client as it is emitted, so the prompt's item is on the wire before the result.
+      const sent = p.input?.length ? t.send(p.input) : undefined;
+      return { thread: t.threadInfo(), ...(sent ? { messageId: sent.messageId, turnId: sent.turnId } : {}) };
     },
 
     'thread/resume': async (p) => {
@@ -220,7 +239,7 @@ export class ClientSession implements Subscriber {
         const h = await this.mgr.read(t.id, t.cwd, { limit: p.limit });
         const historySeq = h.historySeq ?? t.threadInfo().lastSeq;
         this.subscribe(t, historySeq);
-        return { thread: t.threadInfo(), items: h.items, turns: h.turns, historySeq, hasMore: h.hasMore };
+        return { thread: t.threadInfo(), items: h.items, turns: h.turns, historySeq, hasMore: h.hasMore, tasks: h.tasks };
       }
       this.subscribe(t, p.afterSeq ?? t.threadInfo().lastSeq);
       return { thread: t.threadInfo() };
@@ -234,8 +253,11 @@ export class ClientSession implements Subscriber {
       // Not loaded here: follow its transcript, so a session another client runs streams too.
       const t = this.mgr.loaded(p.threadId) ?? (await this.mgr.follow(p.threadId));
       if (!t) throw new RpcError(ErrorCodes.threadNotLoaded, `thread ${p.threadId} is not loaded`);
-      const r = this.subscribe(t, p.afterSeq);
-      return { thread: t.threadInfo(), ...r };
+      const tasks = await this.mgr.tasksOf(t);
+      // After the await: the thread may have been loaded meanwhile, so attach to what it is now.
+      const now = this.mgr.loaded(p.threadId) ?? this.mgr.following(p.threadId) ?? t;
+      const r = this.subscribe(now, p.afterSeq);
+      return { thread: now.threadInfo(), ...r, tasks };
     },
 
     'thread/unsubscribe': (p) => {
@@ -297,7 +319,6 @@ export class ClientSession implements Subscriber {
     'task/stop': async (p) => (await this.mgr.get(p.threadId).query.stopTask(p.taskId), {}),
     'task/background': async (p) => ({ backgrounded: await this.mgr.get(p.threadId).query.backgroundTasks(p.toolUseId) }),
 
-    'workflow/read': async (p) => ({ workflow: await this.mgr.readWorkflow(p.threadId, p.runId) }),
     'workflow/agentItems': async (p) => ({ items: await this.mgr.workflowAgentItems(p.threadId, p.runId, p.agentId) }),
 
     'mcp/status': async (p) => ({
@@ -326,7 +347,7 @@ export class ClientSession implements Subscriber {
     'fs/read': (p) => fsApi.read(p.path, p.maxBytes),
     'fs/search': (p) => fsApi.search(p.cwd, p.query, p.limit),
     'git/status': (p) => fsApi.gitStatus(p.cwd),
-    'git/diff': (p) => fsApi.gitDiff(p.cwd, p.path, p.staged),
+    'git/changes': (p) => fsApi.gitChanges(p.cwd),
     'thread/sideQuestion': async (p) => ({ answer: await askSideQuestion(this.mgr.get(p.threadId).query, p.question) }),
     'git/removeWorktree': async (p) => {
       await fsApi.removeWorktree(p.path, { force: p.force ?? false, discardCommits: p.discardCommits ?? false });

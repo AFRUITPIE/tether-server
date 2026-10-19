@@ -14,22 +14,30 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
 import { type ClaudeBinary, resolveClaude } from '../claude.ts';
-import { PermissionMode, type Item, type Params, type Result, type ScheduledTask, type ThreadSummary, type Turn } from '../protocol/index.ts';
+import { PermissionMode, type Item, type Params, type Result, type ScheduledTask, type TaskState, type ThreadSummary, type Turn } from '../protocol/index.ts';
 import type { Scheduler } from './Scheduler.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { createWorktree, removeWorktree, worktreeName } from '../server/fsApi.ts';
-import { Itemizer } from './itemizer.ts';
-import { FollowedThread, ingestHistory, TranscriptExtras, transcriptCwd, transcriptSettings, type SessionSettings } from './FollowedThread.ts';
+import { FollowedThread } from './FollowedThread.ts';
 import { LiveThread, TETHER_VERSION, type LiveThreadOptions } from './LiveThread.ts';
-import { readSessionHistory } from './history.ts';
 import { PushQueue } from './pushQueue.ts';
-import { isSafeId, readAgentItems, readRunJournal, readRunRecord, sessionDirSync, workflowAgentLocator } from './workflows.ts';
-import type { WorkflowSnapshot } from '../protocol/index.ts';
+import { readTranscript, sessionDir, transcriptCwd, transcriptFile, transcriptSettings, type SessionSettings } from './transcript.ts';
+import { isSafeId, readAgentItems, RECENT_RUN_MS } from './workflows.ts';
+import { mergeTasks } from './tasks.ts';
+import type { TaskStore } from './taskStore.ts';
+import { stat } from 'node:fs/promises';
 
 const IDLE_EVICT_MS = Number(process.env.TETHER_IDLE_EVICT_MS ?? 30 * 60_000);
 /** How long a scheduled run waits, with nobody watching, for a person to answer before it's denied. */
 const SCHEDULED_REQUEST_TIMEOUT_MS = Number(process.env.TETHER_SCHEDULED_REQUEST_TIMEOUT_MS ?? 10 * 60_000);
 const CATALOG_TTL_MS = 5 * 60_000;
+/**
+ * How long a followed chat no client watches is kept after it was last read: a client that reads
+ * one without subscribing (or never comes back) would otherwise leave its whole transcript held.
+ */
+const FOLLOWER_IDLE_MS = 5 * 60_000;
+/** How long a chat's summary waits for more changes before it's told. */
+const SUMMARY_COALESCE_MS = 100;
 
 type Catalog = { q: Query; input: PushQueue<SDKUserMessage>; init: Promise<SDKControlInitializeResponse>; lastUsed: number };
 
@@ -53,10 +61,15 @@ export class ThreadManager {
     this.lastSeqs.set(t.id, Math.max(this.lastSeqs.get(t.id) ?? 0, t.threadInfo().lastSeq));
   }
 
+  /** Where chats' tasks are kept (the daemon's home); none in tests that don't ask for it. */
+  readonly taskStore?: TaskStore;
+
   constructor(
     readonly claude: ClaudeBinary,
     private log: (msg: string) => void = () => {},
+    opts: { taskStore?: TaskStore } = {},
   ) {
+    this.taskStore = opts.taskStore;
     this.sweeper = setInterval(() => this.sweep(), 60_000);
     this.sweeper.unref?.();
   }
@@ -144,6 +157,8 @@ export class ThreadManager {
       mode: 'new',
       log: this.log,
       ...extra,
+      onTasks: (tasks) => this.taskStore?.put(threadId, tasks),
+      onSummaryChange: () => this.summaryChanged(threadId),
       onExit: (lt) => this.onExit(lt),
     });
     this.threads.set(threadId, t);
@@ -220,6 +235,8 @@ export class ThreadManager {
         ...settings,
         title: info.customTitle ?? info.summary,
         log: this.log,
+        onTasks: (tasks) => this.taskStore?.put(p.threadId, tasks),
+        onSummaryChange: () => this.summaryChanged(p.threadId),
         onExit: (lt) => this.onExit(lt),
       });
       this.threads.set(p.threadId, t);
@@ -232,6 +249,11 @@ export class ThreadManager {
       }
       this.log(`thread ${p.threadId} resumed in ${cwd}`);
       if (p.generateTitle) void t.nameChat();
+      // Its schedules and goals are the whole chat's, not only what this process says.
+      void this.storedBeforeLoad(t).then(
+        (stored) => t.seedHistory(stored.items),
+        () => {},
+      );
       return t;
     })();
     this.starting.set(p.threadId, promise);
@@ -255,6 +277,62 @@ export class ThreadManager {
     this.retire(t);
     if (this.threads.get(t.id) === t) this.threads.delete(t.id);
     this.log(`thread ${t.id} exited`);
+    // No longer loaded: listed as notLoaded now.
+    this.summaryChanged(t.id);
+  }
+
+  // ---------- chat list ----------
+
+  private summaryListeners = new Set<(summary: ThreadSummary) => void>();
+  /** Each chat's summary as last told, as JSON, so a change is told once. */
+  private toldSummaries = new Map<string, string>();
+  private summaryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** Tells `listener` every chat's summary as it changes (`thread/summaryChanged`), until the returned function is called. */
+  watchSummaries(listener: (summary: ThreadSummary) => void): () => void {
+    this.summaryListeners.add(listener);
+    return () => this.summaryListeners.delete(listener);
+  }
+
+  /**
+   * What the chat list shows of a chat may have changed: worked out a moment later (changes come
+   * in bursts: a turn's status and its background count), and told only if it did change.
+   */
+  summaryChanged(threadId: string) {
+    if (this.summaryTimers.has(threadId) || this.summaryListeners.size === 0) return;
+    const timer = setTimeout(async () => {
+      this.summaryTimers.delete(threadId);
+      const summary = await this.summaryOf(threadId).catch(() => undefined);
+      if (!summary) return;
+      // Only what a list shows: when it was written changes with every message.
+      const { updatedAt: _u, ...shown } = summary;
+      const json = JSON.stringify(shown);
+      if (this.toldSummaries.get(threadId) === json) return;
+      this.toldSummaries.set(threadId, json);
+      for (const l of this.summaryListeners) l(summary);
+    }, SUMMARY_COALESCE_MS);
+    timer.unref?.();
+    this.summaryTimers.set(threadId, timer);
+  }
+
+  /** A chat's summary as `thread/list` gives it; for a chat whose file isn't written yet, what its live thread knows. */
+  async summaryOf(threadId: string): Promise<ThreadSummary | undefined> {
+    const live = this.loaded(threadId);
+    const info = await sessionInfo(threadId, live?.cwd).catch(() => undefined);
+    if (info) {
+      const s = this.summary(info);
+      // Named here a moment before its file says so.
+      return live?.title && !info.customTitle && info.summary === info.firstPrompt ? { ...s, title: live.title } : s;
+    }
+    if (!live) return undefined;
+    return {
+      threadId,
+      title: live.title ?? '',
+      cwd: live.cwd,
+      updatedAt: live.lastActivityAt,
+      status: live.status,
+      backgroundTasks: live.backgroundTaskCount,
+    };
   }
 
   get busy(): boolean {
@@ -300,6 +378,12 @@ export class ThreadManager {
         this.close(t.id);
       }
     }
+    for (const [id, f] of this.followed) {
+      if (f.subscriberCount === 0 && now - f.lastUsedAt > FOLLOWER_IDLE_MS) {
+        this.log(`no longer following ${id}`);
+        this.unfollow(id);
+      }
+    }
     for (const [key, c] of this.catalogs) {
       if (now - c.lastUsed > CATALOG_TTL_MS) {
         c.input.end();
@@ -310,6 +394,9 @@ export class ThreadManager {
   }
 
   shutdown() {
+    for (const t of this.summaryTimers.values()) clearTimeout(t);
+    this.summaryTimers.clear();
+    this.taskStore?.flush();
     for (const t of this.threads.values()) if (t.waitingUnattended) t.abandonUnattended('Tether stopped');
     this.scheduler?.stop();
     clearInterval(this.sweeper);
@@ -317,6 +404,7 @@ export class ThreadManager {
     for (const c of this.catalogs.values()) c.q.close();
     this.threads.clear();
     this.catalogs.clear();
+    this.taskStore?.flush();
   }
 
   /**
@@ -451,57 +539,119 @@ export class ThreadManager {
     };
   }
 
-  async projects(limit?: number) {
-    const sessions = await Promise.all((await listSessions({ limit: 2000 })).map(withCwd));
-    const byCwd = new Map<string, { cwd: string; lastActivity: number; threadCount: number }>();
-    for (const s of sessions) {
-      if (!s.cwd) continue;
-      const p = byCwd.get(s.cwd) ?? { cwd: s.cwd, lastActivity: 0, threadCount: 0 };
-      p.threadCount++;
-      p.lastActivity = Math.max(p.lastActivity, s.lastModified);
-      byCwd.set(s.cwd, p);
-    }
-    return [...byCwd.values()].sort((a, b) => b.lastActivity - a.lastActivity).slice(0, limit ?? 200);
-  }
-
   /** Transcript → items. A live thread answers from its own itemizer so in-flight state is included. */
   async read(
     threadId: string,
     cwd?: string,
     page?: { limit?: number; before?: string },
-  ): Promise<{ items: Item[]; turns: Turn[]; summary?: ThreadSummary; historySeq?: number; hasMore?: boolean }> {
+  ): Promise<{ items: Item[]; turns: Turn[]; tasks: TaskState[]; summary?: ThreadSummary; historySeq?: number; hasMore?: boolean }> {
     const info = await sessionInfo(threadId, cwd);
-    const live = this.loaded(threadId);
     const summary = info ? this.summary(info) : undefined;
-    if (!live) {
-      // Follow on read, not subscribe: the seq handed back has to come from the follower that
-      // will replay to the client after it.
-      const follower = this.following(threadId) ?? (await this.follow(threadId, cwd));
-      if (follower) {
-        const snap = follower.history();
+    // Follow on read, not subscribe: the seq handed back has to come from the follower that will
+    // replay to the client after it.
+    const chat = (await this.chat(threadId, cwd, true))();
+    const { items, turns } = chat.view();
+    return {
+      ...copied(pageOf(items, page), turns, chat.changing),
+      tasks: chat.tasks,
+      ...(chat.historySeq !== undefined ? { historySeq: chat.historySeq } : {}),
+      ...(summary ? { summary } : {}),
+    };
+  }
+
+  /**
+   * A thread's tasks for a client to start from (`thread/subscribe`), as `read` gives them: the
+   * live thread's or follower's, over what was kept and what its transcript says.
+   */
+  async tasksOf(t: { id: string }): Promise<TaskState[]> {
+    return (await this.chat(t.id, undefined, false))().tasks;
+  }
+
+  /**
+   * A chat as `read` hands it out, once what it needs is read: the live thread's items over what
+   * was on disk when it loaded, else the follower's, else the transcript's. What it returns takes
+   * the items, tasks and seq together, in one step, so replay after `historySeq` never duplicates;
+   * `changing` says which items the thread may still change (and so are copied).
+   */
+  private async chat(threadId: string, cwd: string | undefined, follow: boolean): Promise<() => ChatState> {
+    const live = this.loaded(threadId);
+    if (live) {
+      // A transcript that can't be read leaves the live thread's own (for tasks; a read says why).
+      const stored = await this.storedBeforeLoad(live, cwd).catch((e) => (follow ? Promise.reject(e) : { items: [], turns: [], tasks: [] }));
+      return () => {
+        const snap = live.history();
+        // What was on disk is never changed; only what the live thread holds is.
+        let changing: Set<Item | Turn> | undefined;
         return {
-          ...pageOf(snap.items, page),
-          turns: snap.turns,
-          historySeq: snap.seq,
-          ...(summary ? { summary } : {}),
+          view: () => mergeHistory(stored, snap),
+          changing: (x) => (changing ??= new Set<Item | Turn>([...snap.items, ...snap.turns])).has(x),
+          historySeq: live.threadInfo().lastSeq,
+          tasks: this.tasksWith(threadId, stored.tasks, { live }),
         };
-      }
-      const storedOnly = await this.readStored(threadId, cwd);
-      return { ...pageOf(storedOnly.items, page), turns: storedOnly.turns, ...(summary ? { summary } : {}) };
+      };
     }
-    const stored = await this.storedBeforeLoad(live, cwd);
-    // Snapshot and seq are taken together so replay after historySeq never duplicates.
-    const liveSnap = live.history();
-    const historySeq = live.threadInfo().lastSeq;
-    const { items, turns } = mergeHistory(stored, liveSnap);
-    return { ...pageOf(items, page), turns, historySeq, ...(summary ? { summary } : {}) };
+    const follower = this.following(threadId) ?? (follow ? await this.follow(threadId, cwd) : undefined);
+    const stale = await this.transcriptIsStale(threadId);
+    if (follower)
+      return () => {
+        const snap = follower.history();
+        return { view: () => snap, changing: () => true, historySeq: snap.seq, tasks: this.tasksWith(threadId, follower.tasks(), { stale }) };
+      };
+    const stored = await this.readStored(threadId, cwd);
+    return () => ({ view: () => stored, changing: () => false, tasks: this.tasksWith(threadId, stored.tasks, { stale }) });
+  }
+
+  /**
+   * A chat's tasks: what its transcript says (`derived`), then what this daemon kept of them (it
+   * saw their events live, which no transcript holds), then the live thread's own. A task kept as
+   * going whose process isn't running here any more went with it: stopped, unless the transcript
+   * says how it ended. A derived task going in a chat no one has written to for a few minutes
+   * (`stale`), or from before a live thread's process, is stopped too, except a workflow's, whose
+   * files say how it stands. Schedules and goals are
+   * the transcript's word.
+   */
+  private tasksWith(threadId: string, derived: TaskState[], opts: { live?: LiveThread; stale?: boolean }): TaskState[] {
+    const going = (t: TaskState) => (t.status === 'running' || t.status === 'waiting') && t.kind !== 'schedule' && t.kind !== 'goal';
+    const stop = (t: TaskState): TaskState => {
+      if (!going(t)) return t;
+      const { backgrounded: _b, canBackground: _c, ...rest } = t;
+      return { ...rest, status: 'stopped' };
+    };
+    const liveTasks = opts.live?.tasks() ?? [];
+    const liveIds = new Set(liveTasks.map((t) => t.id));
+    const byId = new Map(derived.map((t) => [t.id, t]));
+    // A workflow's files say how it stands (a stale journal is `waiting`), so it isn't taken as stopped.
+    const ownWord = (t: TaskState) => !opts.live && (t.kind === 'workflow' || t.kind === 'workflowAgent');
+    const fromDisk = derived.map((t) => ((opts.live || opts.stale) && !ownWord(t) ? stop(t) : t));
+    const kept = (this.taskStore?.get(threadId) ?? []).map((t) => {
+      if (!going(t) || liveIds.has(t.id)) return t;
+      // Kept as going, but its process has ended: as the transcript says it ended, else stopped.
+      const d = byId.get(t.id);
+      if (d && !going(d)) {
+        const { backgrounded: _b, canBackground: _c, ...rest } = t;
+        return { ...rest, status: d.status, ...(d.endedAt !== undefined ? { endedAt: d.endedAt } : {}), ...(d.summary ? { summary: d.summary } : {}) };
+      }
+      return stop(t);
+    });
+    return mergeTasks(fromDisk, kept, liveTasks);
+  }
+
+  /** Whether nothing has been written to the chat's transcript for a few minutes, as a session nobody runs. */
+  private async transcriptIsStale(threadId: string): Promise<boolean> {
+    const path = transcriptFile(threadId);
+    if (!path) return true;
+    try {
+      return (await stat(path)).mtimeMs < Date.now() - RECENT_RUN_MS;
+    } catch {
+      return true;
+    }
   }
 
   /**
    * A live thread's transcript as it was on disk when first read. Everything written since comes
    * from the thread itself, so this is parsed once rather than once per page.
    */
-  private storedSnapshots = new WeakMap<LiveThread, Promise<{ items: Item[]; turns: Turn[] }>>();
+  private storedSnapshots = new WeakMap<LiveThread, Promise<{ items: Item[]; turns: Turn[]; tasks: TaskState[] }>>();
 
   private storedBeforeLoad(live: LiveThread, cwd?: string) {
     let snap = this.storedSnapshots.get(live);
@@ -535,45 +685,19 @@ export class ThreadManager {
     },
   };
 
+  /** A chat's transcript as items, from its start, across compactions; its last turn taken as over. */
   private async readStored(threadId: string, cwd?: string) {
-    const dir = sessionDirSync(threadId);
-    // From the chat's start, across compactions.
-    const { messages: msgs } = await readSessionHistory(threadId, cwd, dir ? `${dir}.jsonl` : undefined);
-    const iz = new Itemizer(Date.now, true);
-    iz.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(threadId));
-    const queued = new TranscriptExtras();
-    if (dir) await queued.readFile(`${dir}.jsonl`);
-    ingestHistory(iz, msgs, queued);
-    iz.closeTurn('completed');
-    return iz.snapshot();
+    const { itemizer } = await readTranscript(threadId, cwd);
+    itemizer.closeTurn('completed');
+    return { ...itemizer.snapshot(), tasks: itemizer.tasks() };
   }
 
   // ---------- dynamic workflows ----------
 
-  /**
-   * A workflow run of the thread: the live thread's own snapshot while it has one (with the run
-   * record's result or error once there is one), else the CLI's run record, else its journal,
-   * whose status is unknown.
-   */
-  async readWorkflow(threadId: string, runId: string): Promise<WorkflowSnapshot | null> {
-    if (!isSafeId(threadId) || !isSafeId(runId)) throw new RpcError(ErrorCodes.invalidParams, 'invalid thread or run id');
-    const live = this.loaded(threadId)?.workflowByRun(runId);
-    const dir = sessionDirSync(threadId);
-    const record = dir ? await readRunRecord(dir, runId) : undefined;
-    if (live)
-      return {
-        ...live,
-        ...(record?.result && !live.result ? { result: record.result } : {}),
-        ...(record?.error && !live.error ? { error: record.error } : {}),
-      };
-    if (record) return record;
-    return (dir ? await readRunJournal(dir, runId) : undefined) ?? null;
-  }
-
   async workflowAgentItems(threadId: string, runId: string, agentId: string): Promise<Item[]> {
     if (!isSafeId(threadId) || !isSafeId(runId) || !isSafeId(agentId))
       throw new RpcError(ErrorCodes.invalidParams, 'invalid thread, run or agent id');
-    const dir = sessionDirSync(threadId);
+    const dir = sessionDir(threadId);
     return dir ? readAgentItems(dir, runId, agentId) : [];
   }
 
@@ -582,58 +706,54 @@ export class ThreadManager {
     return r.sessionId;
   }
 
-  rename(threadId: string, title: string) {
-    return renameSession(threadId, title);
+  async rename(threadId: string, title: string) {
+    await renameSession(threadId, title);
+    this.summaryChanged(threadId);
   }
 
-  tag(threadId: string, tag: string | null) {
-    return tagSession(threadId, tag);
+  async tag(threadId: string, tag: string | null) {
+    await tagSession(threadId, tag);
+    this.summaryChanged(threadId);
   }
 
   async delete(threadId: string) {
     this.close(threadId);
     await deleteSession(threadId);
+    this.taskStore?.delete(threadId);
   }
 }
 
 type Snapshot = { items: Item[]; turns: Turn[] };
 
+/** A chat as `thread/read` and `thread/subscribe` take it (`ThreadManager.chat`). */
+type ChatState = { view: () => Snapshot; changing: (x: Item | Turn) => boolean; historySeq?: number; tasks: TaskState[] };
+
 /**
  * A live thread's transcript: what was on disk when it loaded, then what it has done since. Where
  * both have an item the live one wins, since the stored copy can predate its tool result. An item
  * only the live thread has goes after the one it followed there, not at the end: the transcript on
- * disk leaves some out (a skill's instructions, which Claude Code writes as a meta message right
- * after the Skill call), and appended they came after the turn's reply, where the app couldn't tell
- * them from a message. A stored turn no item belongs to any more is dropped: the transcript splits a
+ * disk can leave one out (a message getSessionMessages drops), and appended it came after the
+ * turn's reply, where the app couldn't tell it from a message. A stored turn no item belongs to any more is dropped: the transcript splits a
  * message sent mid-turn into a turn of its own, where the live thread (and so the item) keeps it in
  * the turn it steered.
  */
 export function mergeHistory(stored: Snapshot, live: Snapshot): Snapshot {
   const liveById = new Map(live.items.map((i) => [i.id, i]));
   const storedIds = new Set(stored.items.map((i) => i.id));
-  // The live-only items that follow each item (null: the first).
-  const following = new Map<string | null, Item[]>();
-  let previous: string | null = null;
+  // Each run of live-only items, by the stored item it followed in the live thread (null: none).
+  const runs = new Map<string | null, Item[]>();
+  let after: string | null = null;
   for (const item of live.items) {
-    if (!storedIds.has(item.id)) following.set(previous, [...(following.get(previous) ?? []), item]);
-    previous = item.id;
-  }
-  const items: Item[] = [];
-  const pending: Item[] = [...(following.get(null) ?? [])].reverse();
-  const place = () => {
-    while (pending.length) {
-      const item = pending.pop()!;
-      items.push(item);
-      pending.push(...[...(following.get(item.id) ?? [])].reverse());
+    if (storedIds.has(item.id)) {
+      after = item.id;
+      continue;
     }
-  };
-  place();
-  for (const s of stored.items) {
-    const item = liveById.get(s.id) ?? s;
-    items.push(item);
-    pending.push(...[...(following.get(item.id) ?? [])].reverse());
-    place();
+    const run = runs.get(after);
+    if (run) run.push(item);
+    else runs.set(after, [item]);
   }
+  const items = [...(runs.get(null) ?? [])];
+  for (const s of stored.items) items.push(liveById.get(s.id) ?? s, ...(runs.get(s.id) ?? []));
   const used = new Set(items.map((i) => i.turnId));
   const liveTurns = new Set(live.turns.map((t) => t.id));
   const turns = [...stored.turns.filter((t) => !liveTurns.has(t.id) && used.has(t.id)), ...live.turns];
@@ -641,14 +761,32 @@ export function mergeHistory(stored: Snapshot, live: Snapshot): Snapshot {
 }
 
 /**
+ * A page and the turns as they are now, copied: a live thread or a follower goes on changing its
+ * items (a streamed reply grows in place) while the result waits to be written, and what's written
+ * has to be what `historySeq` says. Only the page is copied, not the whole chat.
+ */
+function copied(
+  page: { items: Item[]; hasMore: boolean },
+  turns: Turn[],
+  changing: (x: Item | Turn) => boolean = () => true,
+): { items: Item[]; turns: Turn[]; hasMore: boolean } {
+  const copy = <T extends Item | Turn>(x: T): T => (changing(x) ? structuredClone(x) : x);
+  return { items: page.items.map(copy), turns: turns.map(copy), hasMore: page.hasMore };
+}
+
+/**
  * The requested window of a transcript, from the end. Pages are over items, not messages on
  * disk: itemizing a slice of messages alone would lose the turn each item belongs to.
+ *
+ * A `before` the transcript doesn't hold (a chat rewound, or an id the client made up) is an error:
+ * answered with the latest page instead, a client prepending it found every item already held,
+ * added nothing, and asked again for the same page forever.
  */
-function pageOf(items: Item[], page?: { limit?: number; before?: string }): { items: Item[]; hasMore: boolean } {
+export function pageOf(items: Item[], page?: { limit?: number; before?: string }): { items: Item[]; hasMore: boolean } {
   let end = items.length;
   if (page?.before) {
-    const i = items.findIndex((x) => x.id === page.before);
-    if (i >= 0) end = i;
+    end = items.findIndex((x) => x.id === page.before);
+    if (end < 0) throw new RpcError(ErrorCodes.invalidParams, `no item ${page.before} in this thread's history`);
   }
   const start = page?.limit ? Math.max(0, end - page.limit) : 0;
   return { items: items.slice(start, end), hasMore: start > 0 };

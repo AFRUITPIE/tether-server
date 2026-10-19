@@ -16,7 +16,8 @@ import {
   ThreadSummary,
   UserInput,
 } from './common.ts';
-import { Item, Turn, WorkflowSnapshot } from './items.ts';
+import { DiffHunk, Item, Turn } from './items.ts';
+import { TaskState } from './tasks.ts';
 
 const Empty = z.object({});
 /** The scopes `claude plugin` takes. Inlined, so each method's params keep a nested `Scope` in Swift. */
@@ -28,7 +29,7 @@ export const Methods = {
   initialize: {
     params: z.object({
       clientInfo: z.object({ name: z.string(), title: z.string().optional(), version: z.string() }),
-      /** The client's protocol. Clients that predate it send none and are served as protocol 1. */
+      /** The client's protocol. A client that sends none is taken to speak protocol 1, and refused. */
       protocolVersion: z.number().int().optional(),
       capabilities: z
         .object({
@@ -44,7 +45,7 @@ export const Methods = {
       protocolVersion: z.number().int(),
       /**
        * The oldest client protocol this server serves; an older client is refused with
-       * `incompatibleProtocol`. Absent from servers that predate it, which serve protocol 1.
+       * `incompatibleProtocol`.
        */
       minClientProtocol: z.number().int().optional(),
       host: z.object({
@@ -120,13 +121,6 @@ export const Methods = {
     result: z.object({ current: z.string(), available: z.array(z.string()) }),
   },
 
-  'project/list': {
-    params: z.object({ limit: z.number().int().optional() }),
-    result: z.object({
-      projects: z.array(z.object({ cwd: z.string(), lastActivity: z.number(), threadCount: z.number().int() })),
-    }),
-  },
-
   'thread/list': {
     params: z.object({
       cwd: z.string().optional(),
@@ -177,7 +171,12 @@ export const Methods = {
        */
       generateTitle: z.boolean().optional(),
     }),
-    result: z.object({ thread: ThreadInfo }),
+    /**
+     * With `input`: the id of the prompt's `userMessage` item and of the turn it starts. The prompt's
+     * item (`item/started`, `item/completed`) and its `turn/started` are on the chat's stream before
+     * this result: a client that has the result has the item.
+     */
+    result: z.object({ thread: ThreadInfo, messageId: z.string().optional(), turnId: z.string().optional() }),
   },
 
   'thread/resume': {
@@ -208,6 +207,8 @@ export const Methods = {
       historySeq: z.number().int().optional(),
       /** Whether older items exist before those returned. */
       hasMore: z.boolean().optional(),
+      /** With `includeHistory`: every task of the chat, as `thread/read`'s. */
+      tasks: z.array(TaskState).optional(),
     }),
   },
 
@@ -238,12 +239,20 @@ export const Methods = {
       historySeq: z.number().int().optional(),
       /** Whether older items exist before the first one returned. */
       hasMore: z.boolean().optional(),
+      /**
+       * Every task of the chat, whatever page of items this is, finished ones included: what this
+       * daemon saw of them live (kept with the chat in its home, so a reload or a restart still has
+       * them), what the transcript and the session's workflow files say, and the chat's schedules
+       * and goals. As of `historySeq`: `task/updated` after it are newer.
+       */
+      tasks: z.array(TaskState),
     }),
   },
 
   'thread/subscribe': {
     params: z.object({ threadId: z.string(), afterSeq: z.number().int().optional() }),
-    result: z.object({ thread: ThreadInfo, replayed: z.number().int(), gap: z.boolean() }),
+    /** `tasks`: every task of the chat as it stands now, newer than anything replayed before this result. */
+    result: z.object({ thread: ThreadInfo, replayed: z.number().int(), gap: z.boolean(), tasks: z.array(TaskState) }),
   },
   'thread/unsubscribe': { params: ThreadRef, result: Empty },
   'thread/loaded': { params: Empty, result: z.object({ threads: z.array(ThreadInfo) }) },
@@ -291,14 +300,6 @@ export const Methods = {
     result: z.object({ backgrounded: z.boolean() }),
   },
 
-  /**
-   * A dynamic workflow run of the thread, by its run id: the live thread's own while it runs here,
-   * else the CLI's run record, else what its journal says of a run still going. Null when none is found.
-   */
-  'workflow/read': {
-    params: z.object({ threadId: z.string(), runId: z.string() }),
-    result: z.object({ workflow: WorkflowSnapshot.nullable() }),
-  },
   /** One workflow agent's transcript, itemized as history is. Empty while it hasn't written one. */
   'workflow/agentItems': {
     params: z.object({ threadId: z.string(), runId: z.string(), agentId: z.string() }),
@@ -341,9 +342,40 @@ export const Methods = {
       files: z.array(z.object({ path: z.string(), status: z.string() })),
     }),
   },
-  'git/diff': {
-    params: z.object({ cwd: z.string(), path: z.string().optional(), staged: z.boolean().optional() }),
-    result: z.object({ diff: z.string() }),
+  /**
+   * Everything in `cwd`'s repository that differs from its last commit: staged and unstaged changes
+   * together (`git diff HEAD`, renames found; against the empty tree before the first commit), and
+   * files git doesn't track yet, their whole content as added (at most 200, read eight at a time,
+   * the rest counted in `omittedFiles`; each read up to 4 MB). Paths are relative to the
+   * repository's `root`, sorted. Each file is bounded as an edit is: 5,000 lines kept, the rest
+   * counted (`truncatedLines`), lines cut at 1,000 characters. `isRepo` false: not in a repository.
+   */
+  'git/changes': {
+    params: z.object({ cwd: z.string() }),
+    result: z.object({
+      isRepo: z.boolean(),
+      /** The repository's top folder, which the paths are relative to. */
+      root: z.string().optional(),
+      branch: z.string().optional(),
+      files: z.array(
+        z
+          .object({
+            path: z.string(),
+            /** A renamed file's path before. */
+            oldPath: z.string().optional(),
+            status: z.enum(['added', 'modified', 'deleted', 'renamed', 'untracked']),
+            /** Binary: no lines to show. */
+            binary: z.boolean().optional(),
+            hunks: z.array(DiffHunk),
+            added: z.number().int(),
+            removed: z.number().int(),
+            truncatedLines: z.number().int(),
+          })
+          .meta({ id: 'WorkingFileChange' }),
+      ),
+      /** Untracked files past the 200 read: counted, not listed. */
+      omittedFiles: z.number().int(),
+    }),
   },
 
   /**

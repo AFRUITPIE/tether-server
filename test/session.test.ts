@@ -6,6 +6,7 @@ import { PassThrough } from 'node:stream';
 import { PROTOCOL_VERSION } from '../src/protocol/index.ts';
 import { Connection, ErrorCodes } from '../src/rpc/connection.ts';
 import { ClientSession } from '../src/server/session.ts';
+import { LiveThread } from '../src/threads/LiveThread.ts';
 import { ThreadManager } from '../src/threads/ThreadManager.ts';
 
 const claude = { path: '/usr/bin/false', version: '0' } as any;
@@ -108,7 +109,7 @@ describe('a single-client server', () => {
   });
 
   test('says which kind of server it is', async () => {
-    const r = await connect().call('initialize', { clientInfo });
+    const r = await connect().call('initialize', { clientInfo, protocolVersion: PROTOCOL_VERSION });
     expect(r.host.mode).toBe('stdio');
     expect(r.host.pid).toBe(process.pid);
     expect(r.claude).toEqual(claude);
@@ -129,5 +130,29 @@ describe('capabilities', () => {
     // A request after them: its answer arrives after anything they wrote.
     await call('host/info');
     expect(notified.map((n) => n.method)).toEqual(['turn/started']);
+  });
+});
+
+describe('thread/start', () => {
+  test("its result names the prompt's item, which the client already has", async () => {
+    const toServer = new PassThrough();
+    const toClient = new PassThrough();
+    const mgr = new ThreadManager(claude);
+    // A thread that never runs Claude Code: only what starting one sends matters here.
+    (mgr as any).start = async () => new LiveThread({ threadId: 'new-thread', cwd: '/tmp', claude, env: {}, mode: 'new' });
+    new ClientSession(new Connection(toServer, toClient, 'server'), mgr, 'stdio').start();
+    const client = new Connection(toClient, toServer, 'client');
+    const notified: { method: string; params: any }[] = [];
+    client.start({ onRequest: async () => ({}), onNotification: (method, params) => void notified.push({ method, params }), onClose: () => {} });
+    await client.request('initialize', { clientInfo, protocolVersion: PROTOCOL_VERSION }, 'c1');
+    const r = await client.request<any>('thread/start', { cwd: '/tmp', input: [{ type: 'text', text: 'hello' }] }, 'c2');
+    expect(typeof r.messageId).toBe('string');
+    const started = notified.find((n) => n.method === 'item/started' && n.params.item.id === r.messageId);
+    expect(started?.params.item).toMatchObject({ type: 'userMessage', turnId: r.turnId, content: [{ type: 'text', text: 'hello' }] });
+    expect(notified.some((n) => n.method === 'turn/started' && n.params.turn.id === r.turnId)).toBe(true);
+    // Without a prompt there is nothing to name.
+    const empty = await client.request<any>('thread/start', { cwd: '/tmp' }, 'c3');
+    expect(empty.messageId).toBeUndefined();
+    mgr.shutdown();
   });
 });

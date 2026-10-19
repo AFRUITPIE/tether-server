@@ -3,11 +3,13 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Item, ToolCallItem } from '../src/protocol/index.ts';
-import { FollowedThread, recordedCwd, recordedSettings } from '../src/threads/FollowedThread.ts';
+import { FollowedThread } from '../src/threads/FollowedThread.ts';
+import { recordedCwd, recordedSettings } from '../src/threads/transcript.ts';
 import { Itemizer, parseTaskNotification } from '../src/threads/itemizer.ts';
 import { LiveThread } from '../src/threads/LiveThread.ts';
-import { replayGap } from '../src/threads/seq.ts';
-import { mergeHistory, resumeSettings, ThreadManager } from '../src/threads/ThreadManager.ts';
+import { replayGap } from '../src/threads/events.ts';
+import { mergeHistory, pageOf, resumeSettings, ThreadManager } from '../src/threads/ThreadManager.ts';
+import { ErrorCodes } from '../src/rpc/connection.ts';
 
 const claude = { path: '/usr/bin/false', version: '0' } as any;
 const liveThread = (threadId = 'thread-1') => new LiveThread({ threadId, cwd: '/tmp', claude, env: {}, mode: 'new' });
@@ -41,6 +43,20 @@ describe('event numbering across streams', () => {
     const earlier = Date.now() * 1000 + 5_000_000;
     const t = new LiveThread({ threadId: 'thread-1', cwd: '/tmp', claude, env: {}, mode: 'resume', seqAfter: earlier });
     expect(t.threadInfo().lastSeq).toBe(earlier + 1);
+  });
+
+  test('a full replay buffer still replays the latest events, and says when older ones are gone', () => {
+    const t = liveThread();
+    const first = t.threadInfo().lastSeq + 1;
+    for (let i = 0; i < 30_000; i++) t.emit('thread/stderr', { text: `line ${i}` });
+    const last = t.threadInfo().lastSeq;
+    const sent: number[] = [];
+    const client = { id: 'c', notify: (_: string, p: any) => sent.push(p.seq), request: () => new Promise(() => {}), cancelRequest() {} };
+    expect(t.subscribe(client, last - 100)).toEqual({ replayed: 100, gap: false });
+    expect(sent).toEqual(Array.from({ length: 100 }, (_, i) => last - 99 + i));
+    // At least the 20,000 latest are kept; the first are long gone.
+    expect(t.subscribe(client, last - 20_000).gap).toBe(false);
+    expect(t.subscribe(client, first).gap).toBe(true);
   });
 
   test('replayGap', () => {
@@ -158,7 +174,8 @@ describe('background subagents', () => {
       summary: 'Agent "Sleep then reply" completed',
       uuid: 'n1',
     });
-    expect(event.some((e) => e.method === 'task/event')).toBe(true);
+    const agent = event.flatMap((e) => (e.method === 'task/updated' ? [e.body.task] : [])).find((t) => t.id === 'agent1');
+    expect(agent).toMatchObject({ kind: 'agent', taskId: 't1', status: 'done', summary: 'Agent "Sleep then reply" completed' });
     const notices = [...iz.items.values()].filter((i) => i.type === 'notice');
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({ kind: 'taskNotification', text: 'Agent "Sleep then reply" completed' });
@@ -175,7 +192,9 @@ describe('background subagents', () => {
     const iz = new Itemizer();
     backgroundAgentTurn(iz);
     const out = iz.ingest({ type: 'system', subtype: 'task_notification', task_id: 'inner', tool_use_id: 'bash1', status: 'completed', summary: 'sleep 20', uuid: 'n0' });
-    expect(out.map((e) => e.method)).toContain('task/event');
+    const inner = out.flatMap((e) => (e.method === 'task/updated' ? [e.body.task] : [])).find((t) => t.taskId === 'inner');
+    // Under the subagent whose call it is.
+    expect(inner).toMatchObject({ id: 'bash1', parentId: 'agent1', status: 'done' });
     expect([...iz.items.values()].some((i) => i.type === 'notice')).toBe(false);
   });
 
@@ -285,6 +304,57 @@ describe('merging stored and live history', () => {
     expect(mergeHistory(stored, live).items.map((i) => i.id)).toEqual(['prompt', 'skill', 'instructions', 'thinking', 'reply', 'next']);
     // A chat with nothing on disk yet is the live thread's, in its order.
     expect(mergeHistory({ items: [], turns: [] } as any, live).items.map((i) => i.id)).toEqual(live.items.map((i: Item) => i.id));
+  });
+});
+
+describe('paging history back', () => {
+  const items = ['a', 'b', 'c', 'd', 'e'].map(
+    (id) => ({ type: 'userMessage', id, turnId: id, parentToolUseId: null, createdAt: 0, content: [] }) as Item,
+  );
+  const ids = (p: { items: Item[] }) => p.items.map((i) => i.id);
+
+  test('a page ends just before the item asked for, and says whether more come before it', () => {
+    expect(pageOf(items, { limit: 2 })).toMatchObject({ hasMore: true });
+    expect(ids(pageOf(items, { limit: 2 }))).toEqual(['d', 'e']);
+    expect(ids(pageOf(items, { limit: 2, before: 'd' }))).toEqual(['b', 'c']);
+    expect(pageOf(items, { limit: 2, before: 'b' })).toEqual({ items: [items[0]!], hasMore: false });
+    expect(pageOf(items, { limit: 2, before: 'a' })).toEqual({ items: [], hasMore: false });
+  });
+
+  test('an item the transcript doesn\'t hold is an error, never the latest page again', () => {
+    // Answered with the end, a client prepending it found it all held and asked again forever.
+    expect(() => pageOf(items, { limit: 2, before: 'gone' })).toThrow(expect.objectContaining({ code: ErrorCodes.invalidParams }));
+  });
+});
+
+describe('reading a live thread', () => {
+  test('the page handed out is as of historySeq, though the reply goes on streaming into it', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'tether-live-read-'));
+    const saved = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = home;
+    const mgr = new ThreadManager(claude);
+    try {
+      const id = '5f0c8a52-3f7e-4c1e-9d55-0b7a2f6f1c21';
+      const t = new LiveThread({ threadId: id, cwd: '/tmp', claude, env: {}, mode: 'new' });
+      mgr.threads.set(id, t);
+      const on = (m: object) => (t as any).onMessage(m);
+      t.send([{ type: 'text', text: 'hi' }]);
+      on({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_1' } } });
+      on({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } });
+      const delta = (text: string) => on({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } });
+      delta('Hello');
+      const read = await mgr.read(id, '/tmp', { limit: 10 });
+      delta(', world');
+      const reply = read.items.find((i) => i.type === 'agentMessage') as any;
+      expect(reply.text).toBe('Hello');
+      expect(read.historySeq).toBeLessThan(t.threadInfo().lastSeq);
+      expect((t.history().items.find((i) => i.type === 'agentMessage') as any).text).toBe('Hello, world');
+      t.close();
+    } finally {
+      mgr.shutdown();
+      if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = saved;
+    }
   });
 });
 

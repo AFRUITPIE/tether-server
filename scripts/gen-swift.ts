@@ -264,11 +264,13 @@ for (const [method, m] of Object.entries(schemaDoc.methods as Record<string, { p
 out.push('/// Client → server requests.', 'public enum Methods {', ...methodDecls, '}', '');
 
 // ---- notifications ----
-const notifCases: { method: string; caseName: string; type: string }[] = [];
+const notifCases: { method: string; caseName: string; type: string; threadScoped: boolean }[] = [];
 for (const [method, s] of Object.entries(schemaDoc.notifications as Record<string, S>)) {
   const type = `${pascal(method)}Notification`;
   emitTop(type, s);
-  notifCases.push({ method, caseName: ident(camel(method)), type });
+  // A host-wide notification (`thread/summaryChanged`) has no thread stream: no threadId, no seq.
+  const props = (s as any).properties ?? {};
+  notifCases.push({ method, caseName: ident(camel(method)), type, threadScoped: 'threadId' in props && 'seq' in props });
 }
 out.push('/// Server → client notifications, decoded by method name.');
 out.push('public enum ServerNotification: Sendable, Hashable {');
@@ -284,16 +286,18 @@ out.push('        default: self = .unknown(method: method, params: try decoder.d
 out.push('        }');
 out.push('    }');
 out.push('');
-out.push('    /// Thread this notification belongs to, and its per-thread sequence number.');
+out.push('    /// Thread this notification belongs to, and its per-thread sequence number; nil for a host-wide one.');
 out.push('    public var threadId: String? {');
 out.push('        switch self {');
-for (const c of notifCases) out.push(`        case .${stripTicks(c.caseName)}(let n): return n.threadId`);
+for (const c of notifCases)
+  out.push(c.threadScoped ? `        case .${stripTicks(c.caseName)}(let n): return n.threadId` : `        case .${stripTicks(c.caseName)}: return nil`);
 out.push('        case .unknown(_, let p): return p["threadId"]?.stringValue');
 out.push('        }');
 out.push('    }');
 out.push('    public var seq: Int? {');
 out.push('        switch self {');
-for (const c of notifCases) out.push(`        case .${stripTicks(c.caseName)}(let n): return n.seq`);
+for (const c of notifCases)
+  out.push(c.threadScoped ? `        case .${stripTicks(c.caseName)}(let n): return n.seq` : `        case .${stripTicks(c.caseName)}: return nil`);
 out.push('        case .unknown(_, let p): return p["seq"]?.intValue');
 out.push('        }');
 out.push('    }');

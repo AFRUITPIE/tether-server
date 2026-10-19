@@ -4,7 +4,9 @@ import { open, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import type { Result } from '../protocol/index.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
+import { addedHunk, bounded, parseUnifiedDiff } from './diff.ts';
 
 const run = promisify(execFile);
 
@@ -120,14 +122,83 @@ export async function gitStatus(cwd: string) {
   }
 }
 
-export async function gitDiff(cwd: string, path?: string, staged?: boolean) {
-  const args = ['diff', '--no-color', ...(staged ? ['--cached'] : []), ...(path ? ['--', path] : [])];
+/** Untracked files `git/changes` reads, at most; the rest are counted. */
+export const MAX_UNTRACKED_FILES = 200;
+/** How much of an untracked file is read. */
+const MAX_UNTRACKED_BYTES = 4 * 1024 * 1024;
+/** git's empty tree, to diff a repository that has no commit yet against. */
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+type WorkingFileChange = Result<'git/changes'>['files'][number];
+
+/**
+ * What differs from the last commit in `cwd`'s repository (`git/changes`): staged and unstaged
+ * changes in one diff against HEAD, and untracked files read whole, each bounded as an edit is.
+ */
+export async function gitChanges(cwd: string): Promise<Result<'git/changes'>> {
+  const dir = expand(cwd);
+  let root: string;
   try {
-    const { stdout } = await run('git', args, { cwd: expand(cwd), maxBuffer: 64 << 20 });
-    return { diff: stdout };
-  } catch (e) {
-    throw new RpcError(ErrorCodes.invalidParams, (e as Error).message);
+    root = (await git(['rev-parse', '--show-toplevel'], dir)).stdout.trim();
+  } catch {
+    return { isRepo: false, files: [], omittedFiles: 0 };
   }
+  const { branch } = await gitStatus(root);
+  const base = await git(['rev-parse', '--verify', '--quiet', 'HEAD'], root).then(
+    () => 'HEAD',
+    () => EMPTY_TREE,
+  );
+  const [diff, others] = await Promise.all([
+    run('git', ['-c', 'core.quotePath=false', 'diff', base, '--no-color', '--no-ext-diff', '-M', '--src-prefix=a/', '--dst-prefix=b/'], { cwd: root, maxBuffer: 256 << 20 }),
+    git(['ls-files', '--others', '--exclude-standard', '-z'], root),
+  ]);
+  const files: WorkingFileChange[] = parseUnifiedDiff(diff.stdout).map((f) => {
+    const b = bounded(f.hunks);
+    return {
+      path: f.path,
+      ...(f.oldPath ? { oldPath: f.oldPath } : {}),
+      status: f.status,
+      ...(f.binary ? { binary: true } : {}),
+      hunks: b.hunks,
+      added: b.added,
+      removed: b.removed,
+      truncatedLines: b.truncatedLines,
+    };
+  });
+  // A folder listed with a slash is a repository of its own inside this one: not a file to read.
+  const untracked = others.stdout.split('\0').filter((p) => p && !p.endsWith('/'));
+  const read = untracked.slice(0, MAX_UNTRACKED_FILES);
+  let next = 0;
+  const readNext = async (): Promise<void> => {
+    const i = next++;
+    if (i >= read.length) return;
+    files.push(await untrackedFile(root, read[i]!));
+    return readNext();
+  };
+  await Promise.all(Array.from({ length: 8 }, readNext));
+  files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return { isRepo: true, root, ...(branch ? { branch } : {}), files, omittedFiles: Math.max(0, untracked.length - read.length) };
+}
+
+/** A file git doesn't track: its content, all added, or binary. */
+async function untrackedFile(root: string, path: string): Promise<WorkingFileChange> {
+  const empty: WorkingFileChange = { path, status: 'untracked', hunks: [], added: 0, removed: 0, truncatedLines: 0 };
+  let buf: Buffer;
+  try {
+    const fh = await open(join(root, path), 'r');
+    try {
+      const size = Math.min((await fh.stat()).size, MAX_UNTRACKED_BYTES);
+      buf = Buffer.alloc(size);
+      await fh.read(buf, 0, size, 0);
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return empty;
+  }
+  if (buf.subarray(0, 8000).includes(0)) return { ...empty, binary: true };
+  const b = bounded(addedHunk(buf.toString('utf8')));
+  return { ...empty, hunks: b.hunks, added: b.added, truncatedLines: b.truncatedLines };
 }
 
 /**

@@ -16,8 +16,10 @@ import { z } from 'zod';
 import type { ClaudeBinary } from '../claude.ts';
 import type {
   EffortLevel,
+  Item,
   PermissionMode,
   SessionCron,
+  TaskState,
   ThinkingSetting,
   ThreadInfo,
   ThreadStatus,
@@ -26,11 +28,10 @@ import type {
 import type { NotificationBody, NotificationName } from '../protocol/notifications.ts';
 import type { ServerRequestName, ServerRequestParams, ServerRequestResult } from '../protocol/serverRequests.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
-import { Itemizer, type Emission } from './itemizer.ts';
-import { TranscriptExtras } from './FollowedThread.ts';
-import { runResultReader, sessionDirSync, workflowAgentLocator, workflowCallLocator } from './workflows.ts';
+import type { Emission, Itemizer } from './itemizer.ts';
+import { oneAtATime, sessionItemizer, TranscriptExtras, transcriptFile } from './transcript.ts';
 import { PushQueue } from './pushQueue.ts';
-import { replayGap, seqOrigin } from './seq.ts';
+import { EventStream, type Subscriber } from './events.ts';
 import pkg from '../../package.json' with { type: 'json' };
 
 /** Set by `scripts/compile.ts`: the package version, or a `-dev.<time>` stamp for a local build. */
@@ -40,16 +41,6 @@ export const TETHER_VERSION: string = typeof TETHER_BUILD_VERSION === 'string' ?
  *  itself only when the running version differs, so that string has to move when Tether changes
  *  even if the SDK hasn't. */
 export const AGENT_SDK_VERSION: string = pkg.dependencies['@anthropic-ai/claude-agent-sdk'];
-
-/** A connected client that has subscribed to a thread. */
-export interface Subscriber {
-  readonly id: string;
-  notify(method: string, params: unknown): void;
-  request(method: string, params: unknown, id: string): Promise<unknown>;
-  cancelRequest(id: string): void;
-}
-
-type BufferedEvent = { seq: number; method: string; params: Record<string, unknown> };
 
 type PendingRequest = {
   requestId: string;
@@ -112,6 +103,10 @@ export type LiveThreadOptions = {
   sessionTools?: SessionTools;
   /** Set for a scheduled run, which nobody is there to answer. */
   unattended?: Unattended;
+  /** Told each task's state as it changes, to be kept with the chat (`TaskStore`). */
+  onTasks?: (tasks: TaskState[]) => void;
+  /** Told when what the chat list shows of it may have changed: its status, background count or title. */
+  onSummaryChange?: () => void;
   stderr?: (text: string) => void;
   /** The daemon's log. */
   log?: (msg: string) => void;
@@ -161,10 +156,8 @@ export class LiveThread {
 
   private q!: Query;
   private input = new PushQueue<SDKUserMessage>();
-  private itemizer = new Itemizer();
-  private seq: number;
-  private buffer: BufferedEvent[] = [];
-  private subscribers = new Set<Subscriber>();
+  private readonly itemizer: Itemizer;
+  private readonly events: EventStream;
   private pending = new Map<string, PendingRequest>();
   private info: Omit<ThreadInfo, 'threadId' | 'status' | 'lastSeq' | 'cwd'> = {};
   private exited = false;
@@ -178,9 +171,12 @@ export class LiveThread {
    */
   private readonly extras = new TranscriptExtras();
   private extrasPath?: string;
-  private extrasReading = false;
-  private extrasAgain = false;
   private extrasTimers = new Set<ReturnType<typeof setTimeout>>();
+
+  /** The title the chat has here, which a new chat's file may not hold yet. */
+  get title(): string | undefined {
+    return this.info.title;
+  }
 
   /** The `claude` this thread runs, for a catalog that could share it. */
   get claudePath(): string {
@@ -192,20 +188,25 @@ export class LiveThread {
     this.cwd = opts.cwd;
     this.sessionToolsEnabled = !!opts.sessionTools;
     this.generateTitle = !!opts.generateTitle;
-    this.seq = seqOrigin(opts.seqAfter);
+    this.events = new EventStream(opts.threadId, MAX_BUFFERED_EVENTS, opts.seqAfter);
     if (opts.model) this.info.model = opts.model;
     if (opts.effort) this.info.effort = opts.effort;
     if (opts.permissionMode) this.info.permissionMode = opts.permissionMode;
     if (opts.title) this.info.title = opts.title;
-    // Found on disk only for an agent the CLI hasn't reported yet; the session's folder may not exist until then.
-    this.itemizer.locateWorkflowAgent = workflowAgentLocator(() => sessionDirSync(this.id));
-    this.itemizer.locateWorkflowCall = workflowCallLocator(() => sessionDirSync(this.id));
-    this.itemizer.readRunResult = runResultReader(() => sessionDirSync(this.id));
+    this.itemizer = sessionItemizer(opts.threadId, false);
   }
 
-  /** A dynamic workflow this thread is running or ran while loaded, by its run id. */
-  workflowByRun(runId: string) {
-    return this.itemizer.workflowByRun(runId);
+  /** The tasks this process has run or seen, and the chat's schedules and goals, as they stand. */
+  tasks(): TaskState[] {
+    return this.itemizer.tasks();
+  }
+
+  /**
+   * The chat's items from before this process (its transcript as it was on disk), so its schedules
+   * and goals are worked out from all of the chat.
+   */
+  seedHistory(items: Item[]) {
+    this.emitAll(this.itemizer.seed(items));
   }
 
   // ---------- lifecycle ----------
@@ -213,13 +214,11 @@ export class LiveThread {
   async start(): Promise<void> {
     const o = this.opts;
     // A resumed session's file already holds what history read; only what's written from now is new.
-    const dir = sessionDirSync(this.id);
-    if (dir) {
-      this.extrasPath = `${dir}.jsonl`;
-      await this.extras.skipTo(this.extrasPath);
-    }
+    this.extrasPath = transcriptFile(this.id);
+    if (this.extrasPath) await this.extras.skipTo(this.extrasPath);
     // Session-only: a new process has none until it schedules some.
     this.info.sessionCrons = [];
+    this.emitAll(this.itemizer.noteSessionCrons([]));
     const options: Options = {
       pathToClaudeCodeExecutable: o.claude.path,
       cwd: o.cwd,
@@ -310,7 +309,7 @@ export class LiveThread {
 
   /** An unattended thread waiting on a person, with no client subscribed to be that person. */
   get waitingUnattended() {
-    return !!this.opts.unattended && this.pending.size > 0 && this.subscribers.size === 0;
+    return !!this.opts.unattended && this.pending.size > 0 && this.events.subscribers.size === 0;
   }
 
   /** Records on an unattended thread that it was stopped while it waited on a person. */
@@ -345,7 +344,6 @@ export class LiveThread {
       // The CLI's background tasks die with it, and a new process starts with none.
       this.backgroundTasks.clear();
       this.emitAll(this.itemizer.abandonAll());
-      this.emit('task/backgroundChanged', { tasks: [] });
       // So do its scheduled jobs: they're session-only.
       this.noteSessionCrons([]);
       for (const p of this.pending.values()) {
@@ -455,30 +453,15 @@ export class LiveThread {
     this.extrasTimers.add(t);
   }
 
-  private async readExtras(): Promise<void> {
-    if (this.extrasReading) {
-      this.extrasAgain = true;
-      return;
-    }
-    this.extrasReading = true;
-    try {
-      do {
-        this.extrasAgain = false;
-        // A new session's file appears with its first message; all of it is this process's.
-        if (!this.extrasPath) {
-          const dir = sessionDirSync(this.id);
-          if (!dir) return;
-          this.extrasPath = `${dir}.jsonl`;
-        }
-        await this.extras.readFile(this.extrasPath);
-        // A workflow's queued notification is said by its task event live.
-        for (const r of this.extras.take())
-          if (r.attachment?.type !== 'queued_command') this.emitAll(this.itemizer.ingestExtra(r));
-      } while (this.extrasAgain);
-    } finally {
-      this.extrasReading = false;
-    }
-  }
+  /** Takes in what the transcript gained since the last read; a read asked for meanwhile runs once after. */
+  private readonly readExtras = oneAtATime(async () => {
+    // A new session's file appears with its first message; all of it is this process's.
+    this.extrasPath ??= transcriptFile(this.id);
+    if (!this.extrasPath) return;
+    await this.extras.readFile(this.extrasPath);
+    // A workflow's queued notification is said by its task event live.
+    for (const r of this.extras.take()) if (r.attachment?.type !== 'queued_command') this.emitAll(this.itemizer.ingestExtra(r));
+  });
 
   /** The jobs that will wake the session, as a Stop hook was told; sent when they change. */
   private noteSessionCrons(raw: unknown) {
@@ -486,6 +469,7 @@ export class LiveThread {
     if (!crons || JSON.stringify(crons) === JSON.stringify(this.info.sessionCrons)) return;
     this.info.sessionCrons = crons;
     this.emit('thread/updated', { thread: this.threadInfo() });
+    this.emitAll(this.itemizer.noteSessionCrons(crons));
   }
 
   /**
@@ -512,6 +496,7 @@ export class LiveThread {
       clearTimeout(this.titleCheck);
       this.info.title = title;
       this.emit('thread/updated', { thread: this.threadInfo() });
+      this.opts.onSummaryChange?.();
     }
   }
 
@@ -531,6 +516,7 @@ export class LiveThread {
       if (title && title !== this.info.title) {
         this.info.title = title;
         this.emit('thread/updated', { thread: this.threadInfo() });
+        this.opts.onSummaryChange?.();
       } else {
         this.lookForTitle(rest);
       }
@@ -540,10 +526,8 @@ export class LiveThread {
   // ---------- events / replay ----------
 
   emit<N extends NotificationName>(method: N, body: NotificationBody<N>) {
-    const params = { threadId: this.id, seq: ++this.seq, ...body } as Record<string, unknown>;
-    this.buffer.push({ seq: this.seq, method, params });
-    if (this.buffer.length > MAX_BUFFERED_EVENTS) this.buffer.splice(0, this.buffer.length - MAX_BUFFERED_EVENTS);
-    for (const s of this.subscribers) s.notify(method, params);
+    this.events.emit(method, body);
+    if (method === 'task/updated') this.opts.onTasks?.([(body as NotificationBody<'task/updated'>).task]);
   }
 
   private emitAll(out: Emission[]) {
@@ -562,36 +546,33 @@ export class LiveThread {
       activity: this.activity,
       backgroundTasks: this.backgroundTasks.size,
     });
+    // The chat list shows the status and the background count, not the activity.
+    const shown = `${this.status}/${this.backgroundTasks.size}`;
+    if (shown !== this.shownStatus) {
+      this.shownStatus = shown;
+      this.opts.onSummaryChange?.();
+    }
   }
 
+  private shownStatus?: string;
+
   threadInfo(): ThreadInfo {
-    return { threadId: this.id, status: this.status, cwd: this.cwd, lastSeq: this.seq, ...this.info };
+    return { threadId: this.id, status: this.status, cwd: this.cwd, lastSeq: this.events.lastSeq, ...this.info };
   }
 
   /** Attach a client. Replays buffered events after `afterSeq` and re-sends pending requests. */
   subscribe(sub: Subscriber, afterSeq?: number): { replayed: number; gap: boolean } {
-    let replayed = 0;
-    let gap = false;
-    if (afterSeq !== undefined) {
-      gap = replayGap(afterSeq, this.buffer[0]?.seq, this.seq);
-      for (const e of this.buffer) {
-        if (e.seq > afterSeq) {
-          sub.notify(e.method, e.params);
-          replayed++;
-        }
-      }
-    }
-    this.subscribers.add(sub);
+    const r = this.events.subscribe(sub, afterSeq);
     for (const p of this.pending.values()) this.sendPendingTo(p, sub);
-    return { replayed, gap };
+    return r;
   }
 
   unsubscribe(sub: Subscriber) {
-    this.subscribers.delete(sub);
+    this.events.subscribers.delete(sub);
   }
 
   get subscriberCount() {
-    return this.subscribers.size;
+    return this.events.subscribers.size;
   }
 
   history() {
@@ -697,7 +678,7 @@ export class LiveThread {
       this.setStatus('requiresAction');
       signal?.addEventListener('abort', () => this.resolvePending(p, null, 'cancelled'), { once: true });
       if (this.opts.unattended) this.armDeadline(p, this.opts.unattended);
-      for (const s of this.subscribers) this.sendPendingTo(p, s);
+      for (const s of this.events.subscribers) this.sendPendingTo(p, s);
     });
   }
 
@@ -706,7 +687,7 @@ export class LiveThread {
     p.timer = setTimeout(() => {
       if (!this.pending.has(p.requestId)) return;
       // Someone is looking at it: theirs to answer, however long they take.
-      if (this.subscribers.size > 0) return this.armDeadline(p, u);
+      if (this.events.subscribers.size > 0) return this.armDeadline(p, u);
       u.onUnanswered(`No one answered its request for ${describeRequest(p)} within ${duration(u.requestTimeoutMs)}, so it was denied.`);
       const denial =
         p.method === 'permission/request'

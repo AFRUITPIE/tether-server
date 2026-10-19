@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Tether protocol",
-  "protocolVersion": 1,
-  "minClientProtocol": 1,
+  "protocolVersion": 2,
+  "minClientProtocol": 2,
   "methods": {
     "initialize": {
       "params": {
@@ -414,53 +414,6 @@
         "additionalProperties": false
       }
     },
-    "project/list": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "limit": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991
-          }
-        },
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "projects": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "cwd": {
-                  "type": "string"
-                },
-                "lastActivity": {
-                  "type": "number"
-                },
-                "threadCount": {
-                  "type": "integer",
-                  "minimum": -9007199254740991,
-                  "maximum": 9007199254740991
-                }
-              },
-              "required": [
-                "cwd",
-                "lastActivity",
-                "threadCount"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": [
-          "projects"
-        ],
-        "additionalProperties": false
-      }
-    },
     "thread/list": {
       "params": {
         "type": "object",
@@ -604,6 +557,12 @@
         "properties": {
           "thread": {
             "$ref": "#/$defs/ThreadInfo"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": "string"
           }
         },
         "required": [
@@ -687,6 +646,12 @@
           },
           "hasMore": {
             "type": "boolean"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/TaskState"
+            }
           }
         },
         "required": [
@@ -779,11 +744,18 @@
           },
           "hasMore": {
             "type": "boolean"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/TaskState"
+            }
           }
         },
         "required": [
           "items",
-          "turns"
+          "turns",
+          "tasks"
         ],
         "additionalProperties": false
       }
@@ -819,12 +791,19 @@
           },
           "gap": {
             "type": "boolean"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/TaskState"
+            }
           }
         },
         "required": [
           "thread",
           "replayed",
-          "gap"
+          "gap",
+          "tasks"
         ],
         "additionalProperties": false
       }
@@ -1307,43 +1286,6 @@
         "additionalProperties": false
       }
     },
-    "workflow/read": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "threadId": {
-            "type": "string"
-          },
-          "runId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "threadId",
-          "runId"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "workflow": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/WorkflowSnapshot"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "workflow"
-        ],
-        "additionalProperties": false
-      }
-    },
     "workflow/agentItems": {
       "params": {
         "type": "object",
@@ -1783,18 +1725,12 @@
         "additionalProperties": false
       }
     },
-    "git/diff": {
+    "git/changes": {
       "params": {
         "type": "object",
         "properties": {
           "cwd": {
             "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "staged": {
-            "type": "boolean"
           }
         },
         "required": [
@@ -1805,12 +1741,31 @@
       "result": {
         "type": "object",
         "properties": {
-          "diff": {
+          "isRepo": {
+            "type": "boolean"
+          },
+          "root": {
             "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/WorkingFileChange"
+            }
+          },
+          "omittedFiles": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
         "required": [
-          "diff"
+          "isRepo",
+          "files",
+          "omittedFiles"
         ],
         "additionalProperties": false
       }
@@ -2326,6 +2281,28 @@
       ],
       "additionalProperties": false
     },
+    "turn/updated": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "turn": {
+          "$ref": "#/$defs/Turn"
+        }
+      },
+      "required": [
+        "threadId",
+        "seq",
+        "turn"
+      ],
+      "additionalProperties": false
+    },
     "item/started": {
       "type": "object",
       "properties": {
@@ -2499,7 +2476,7 @@
       ],
       "additionalProperties": false
     },
-    "task/event": {
+    "task/updated": {
       "type": "object",
       "properties": {
         "threadId": {
@@ -2510,71 +2487,14 @@
           "minimum": -9007199254740991,
           "maximum": 9007199254740991
         },
-        "event": {
-          "type": "string"
-        },
-        "taskId": {
-          "type": "string"
-        },
-        "toolUseId": {
-          "type": "string"
-        },
-        "description": {
-          "type": "string"
-        },
-        "status": {
-          "type": "string"
-        },
-        "summary": {
-          "type": "string"
-        },
-        "error": {
-          "type": "string"
-        },
-        "workflow": {
-          "$ref": "#/$defs/WorkflowSnapshot"
-        },
-        "ownedBySubagent": {
-          "type": "boolean"
-        },
-        "workflowToolUseId": {
-          "type": "string"
-        },
-        "workflowAgentId": {
-          "type": "string"
-        },
-        "data": {
-          "$ref": "#/$defs/JsonValue"
+        "task": {
+          "$ref": "#/$defs/TaskState"
         }
       },
       "required": [
         "threadId",
         "seq",
-        "event",
-        "taskId",
-        "data"
-      ],
-      "additionalProperties": false
-    },
-    "task/backgroundChanged": {
-      "type": "object",
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
-        },
-        "tasks": {
-          "$ref": "#/$defs/JsonValue"
-        }
-      },
-      "required": [
-        "threadId",
-        "seq",
-        "tasks"
+        "task"
       ],
       "additionalProperties": false
     },
@@ -2899,6 +2819,18 @@
         "threadId",
         "seq",
         "text"
+      ],
+      "additionalProperties": false
+    },
+    "thread/summaryChanged": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "$ref": "#/$defs/ThreadSummary"
+        }
+      },
+      "required": [
+        "summary"
       ],
       "additionalProperties": false
     }
@@ -3864,6 +3796,9 @@
             "origin": {
               "type": "string"
             },
+            "fromLoop": {
+              "type": "boolean"
+            },
             "originName": {
               "type": "string"
             },
@@ -4022,6 +3957,12 @@
             },
             "summary": {
               "type": "string"
+            },
+            "skillInstructions": {
+              "type": "string"
+            },
+            "edit": {
+              "$ref": "#/$defs/FileEdit"
             }
           },
           "required": [
@@ -4224,6 +4165,87 @@
         "interrupted"
       ]
     },
+    "FileEdit": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "hunks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiffHunk"
+          }
+        },
+        "added": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "removed": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "truncatedLines": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "created": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "hunks",
+        "added",
+        "removed"
+      ],
+      "additionalProperties": false
+    },
+    "DiffHunk": {
+      "type": "object",
+      "properties": {
+        "oldStart": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "oldLines": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "newStart": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "newLines": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "header": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "oldStart",
+        "oldLines",
+        "newStart",
+        "newLines",
+        "lines"
+      ],
+      "additionalProperties": false
+    },
     "GoalNotice": {
       "type": "object",
       "properties": {
@@ -4276,6 +4298,9 @@
         },
         "result": {
           "$ref": "#/$defs/TurnResult"
+        },
+        "edits": {
+          "$ref": "#/$defs/TurnEdits"
         }
       },
       "required": [
@@ -4417,7 +4442,149 @@
       ],
       "additionalProperties": false
     },
-    "WorkflowSnapshot": {
+    "TurnEdits": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "added": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "removed": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "files",
+        "added",
+        "removed"
+      ],
+      "additionalProperties": false
+    },
+    "TaskState": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "parentId": {
+          "type": "string"
+        },
+        "toolUseId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/TaskKind"
+        },
+        "taskType": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/TaskStatus"
+        },
+        "startedAt": {
+          "description": "ms since epoch",
+          "type": "number"
+        },
+        "endedAt": {
+          "description": "ms since epoch",
+          "type": "number"
+        },
+        "backgrounded": {
+          "type": "boolean"
+        },
+        "canBackground": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        },
+        "outputFile": {
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/TaskUsage"
+        },
+        "workflow": {
+          "$ref": "#/$defs/WorkflowTaskInfo"
+        },
+        "workflowAgent": {
+          "$ref": "#/$defs/WorkflowAgentTaskInfo"
+        },
+        "schedule": {
+          "$ref": "#/$defs/ScheduleTaskInfo"
+        },
+        "goal": {
+          "$ref": "#/$defs/GoalTaskInfo"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "TaskKind": {
+      "type": "string",
+      "enum": [
+        "agent",
+        "command",
+        "monitor",
+        "mcpTool",
+        "workflow",
+        "workflowAgent",
+        "schedule",
+        "goal",
+        "other"
+      ]
+    },
+    "TaskStatus": {
+      "type": "string",
+      "enum": [
+        "waiting",
+        "running",
+        "done",
+        "failed",
+        "stopped"
+      ]
+    },
+    "TaskUsage": {
+      "type": "object",
+      "properties": {
+        "durationMs": {
+          "type": "number"
+        },
+        "totalTokens": {
+          "type": "number"
+        },
+        "toolUses": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkflowTaskInfo": {
       "type": "object",
       "properties": {
         "runId": {
@@ -4429,133 +4596,224 @@
         "description": {
           "type": "string"
         },
-        "status": {
-          "type": "string"
+        "phases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaskPhase"
+          }
         },
         "activity": {
           "type": "string"
         },
-        "phases": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/WorkflowPhase"
-          }
-        },
-        "agents": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/WorkflowAgent"
-          }
-        },
-        "totalTokens": {
-          "type": "number"
-        },
-        "toolUses": {
-          "type": "number"
-        },
-        "durationMs": {
-          "type": "number"
-        },
         "result": {
-          "type": "string"
-        },
-        "error": {
           "type": "string"
         }
       },
       "required": [
-        "phases",
-        "agents"
+        "phases"
       ],
       "additionalProperties": false
     },
-    "WorkflowPhase": {
+    "TaskPhase": {
       "type": "object",
       "properties": {
         "index": {
-          "type": "number"
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
         },
         "title": {
           "type": "string"
         },
-        "detail": {
-          "type": "string"
+        "status": {
+          "$ref": "#/$defs/TaskStatus"
         }
       },
       "required": [
         "index",
-        "title"
+        "title",
+        "status"
       ],
       "additionalProperties": false
     },
-    "WorkflowAgent": {
+    "WorkflowAgentTaskInfo": {
       "type": "object",
       "properties": {
-        "index": {
-          "type": "number"
+        "runId": {
+          "type": "string"
         },
-        "label": {
+        "index": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "agentId": {
+          "type": "string"
+        },
+        "phase": {
           "type": "string"
         },
         "phaseIndex": {
-          "type": "number"
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
         },
-        "phaseTitle": {
-          "type": "string"
-        },
-        "agentId": {
+        "prompt": {
           "type": "string"
         },
         "model": {
           "type": "string"
         },
-        "state": {
-          "type": "string"
-        },
-        "skipped": {
-          "type": "boolean"
-        },
-        "cached": {
-          "type": "boolean"
-        },
-        "blocked": {
-          "type": "boolean"
-        },
-        "queuedAt": {
-          "type": "number"
-        },
-        "startedAt": {
-          "type": "number"
-        },
-        "durationMs": {
-          "type": "number"
-        },
-        "tokens": {
-          "type": "number"
-        },
-        "toolCalls": {
-          "type": "number"
-        },
         "lastToolName": {
-          "type": "string"
-        },
-        "lastToolSummary": {
-          "type": "string"
-        },
-        "promptPreview": {
-          "type": "string"
-        },
-        "resultPreview": {
-          "type": "string"
-        },
-        "error": {
           "type": "string"
         }
       },
       "required": [
-        "index",
-        "label",
-        "state"
+        "index"
+      ],
+      "additionalProperties": false
+    },
+    "ScheduleTaskInfo": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        },
+        "cron": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "recurring": {
+          "type": "boolean"
+        },
+        "durable": {
+          "type": "boolean"
+        },
+        "wakeup": {
+          "type": "boolean"
+        },
+        "fromLoop": {
+          "type": "boolean"
+        },
+        "firedCount": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "lastFiredAt": {
+          "type": "number"
+        },
+        "nextFireAt": {
+          "type": "number"
+        },
+        "ended": {
+          "type": "string",
+          "enum": [
+            "fired",
+            "deleted",
+            "sessionEnded"
+          ]
+        }
+      },
+      "required": [
+        "prompt",
+        "recurring",
+        "durable",
+        "wakeup",
+        "fromLoop",
+        "firedCount"
+      ],
+      "additionalProperties": false
+    },
+    "GoalTaskInfo": {
+      "type": "object",
+      "properties": {
+        "condition": {
+          "type": "string"
+        },
+        "checks": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "lastCheck": {
+          "type": "object",
+          "properties": {
+            "met": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "met"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "condition",
+        "checks"
+      ],
+      "additionalProperties": false
+    },
+    "WorkingFileChange": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "oldPath": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "added",
+            "modified",
+            "deleted",
+            "renamed",
+            "untracked"
+          ]
+        },
+        "binary": {
+          "type": "boolean"
+        },
+        "hunks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiffHunk"
+          }
+        },
+        "added": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "removed": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "truncatedLines": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "path",
+        "status",
+        "hunks",
+        "added",
+        "removed",
+        "truncatedLines"
       ],
       "additionalProperties": false
     },
