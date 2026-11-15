@@ -26,7 +26,6 @@ private func fixtureLines(_ name: String) throws -> [JSONValue] {
             let n = try ServerNotification(method: method, params: params)
             switch n {
             case .unknown: Issue.record("unknown notification \(method)")
-            case .threadRawEvent: break // intentionally untyped
             case .itemStarted(let e): check(e.item)
             case .itemCompleted(let e): check(e.item)
             case .itemUpdated(let e): check(e.item)

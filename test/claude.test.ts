@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveClaude } from '../src/claude.ts';
+import { claudeStderrLines, MAX_STDERR_LINE } from '../src/threads/LiveThread.ts';
 
 /** A stand-in `claude` in a folder of its own that says which version it is, after `banner`. */
 function standIn(version: string, banner = ''): { dir: string; path: string } {
@@ -58,5 +59,14 @@ describe('resolveClaude', () => {
     writeFileSync(wrapper, '#!/bin/sh\necho "9.9.10 (Claude Code)"\n');
     chmodSync(wrapper, 0o755);
     expect(await resolveClaude({ HOME: home, TETHER_CLAUDE_PATH: '~/claude' })).toEqual({ path: wrapper, version: '9.9.10' });
+  });
+});
+
+describe("Claude Code's stderr", () => {
+  test('becomes daemon log lines naming the thread, without blank lines, each cut to a bound', () => {
+    expect(claudeStderrLines('t1', 'warning: one\r\n\n  \nwarning: two\n')).toEqual(['claude t1: warning: one', 'claude t1: warning: two']);
+    expect(claudeStderrLines('t1', '\n')).toEqual([]);
+    const [long] = claudeStderrLines('t1', 'x'.repeat(MAX_STDERR_LINE + 500));
+    expect(long).toBe(`claude t1: ${'x'.repeat(MAX_STDERR_LINE)}… (500 more chars)`);
   });
 });

@@ -6,7 +6,6 @@ import type { Subscriber, WatchableThread } from '../threads/events.ts';
 import { TETHER_VERSION } from '../threads/LiveThread.ts';
 import type { ThreadManager } from '../threads/ThreadManager.ts';
 import * as fsApi from './fsApi.ts';
-import * as plugins from './plugins.ts';
 
 type Handler<M extends MethodName> = (p: Params<M>) => Promise<Result<M>> | Result<M>;
 
@@ -54,8 +53,6 @@ export class ClientSession implements Subscriber {
   /** Initialized as `tether connect`'s upgrade client with a protocol this server doesn't serve. */
   private upgradeOnly = false;
   private env: Record<string, string> = {};
-  private optOut = new Set<string>();
-  private experimental = false;
   private subscriptions = new Map<string, WatchableThread>();
   /** Stops telling this client of chats' summaries. */
   private unwatchSummaries?: () => void;
@@ -66,12 +63,6 @@ export class ClientSession implements Subscriber {
     private mode: 'stdio' | 'daemon',
     private log: (m: string) => void = () => {},
   ) {}
-
-  /** Scheduled tasks live in the daemon; a single-client server has none to offer. */
-  private scheduler() {
-    if (!this.mgr.scheduler) throw new RpcError(ErrorCodes.invalidRequest, 'scheduled tasks need the Tether daemon');
-    return this.mgr.scheduler;
-  }
 
   start() {
     this.conn.start({
@@ -93,7 +84,7 @@ export class ClientSession implements Subscriber {
 
   // Subscriber
   notify(method: string, params: unknown) {
-    if (!this.optOut.has(method)) this.conn.notify(method, params);
+    this.conn.notify(method, params);
   }
   request(method: string, params: unknown, id: string) {
     return this.conn.request(method, params, id);
@@ -130,10 +121,6 @@ export class ClientSession implements Subscriber {
     return handler(parsed.data);
   }
 
-  private experimentalOnly() {
-    if (!this.experimental) throw new RpcError(ErrorCodes.invalidRequest, 'requires experimentalApi capability');
-  }
-
   private handlers: { [M in MethodName]?: Handler<M> } = {
     initialize: async (p) => {
       if (this.initialized) throw new RpcError(ErrorCodes.alreadyInitialized, 'Already initialized');
@@ -149,10 +136,6 @@ export class ClientSession implements Subscriber {
       }
       this.initialized = true;
       this.env = p.env ?? {};
-      // Scheduled runs have no client, so they take the environment the last one asked for.
-      if (p.env) this.mgr.noteClientEnv(p.env);
-      this.experimental = !!p.capabilities?.experimentalApi;
-      for (const m of p.capabilities?.optOutNotificationMethods ?? []) this.optOut.add(m);
       // Every chat's summary as it changes, subscribed or not; an upgrade client has no chat list.
       if (!this.upgradeOnly) this.unwatchSummaries = this.mgr.watchSummaries((summary) => this.notify('thread/summaryChanged', { summary }));
       this.log(`client ${this.id} initialized: ${p.clientInfo.name} ${p.clientInfo.version}`);
@@ -165,12 +148,6 @@ export class ClientSession implements Subscriber {
       };
     },
 
-    'host/info': async () => ({
-      loadedThreads: this.mgr.threads.size,
-      uptimeSeconds: (Date.now() - this.mgr.startedAt) / 1000,
-      claude: await this.mgr.claudeFor(this.env),
-    }),
-
     'host/requestShutdown': (p) => {
       this.log(`shutdown requested: ${p.reason ?? 'no reason'}`);
       if (this.mode !== 'daemon') return { accepted: false };
@@ -180,12 +157,6 @@ export class ClientSession implements Subscriber {
     'account/read': async (p) => {
       const { q } = await this.mgr.catalog(p.cwd, this.env);
       return { account: await q.accountInfo() };
-    },
-
-    'account/usage': async (p) => {
-      this.experimentalOnly();
-      const { q } = await this.mgr.catalog(p.cwd, this.env);
-      return { usage: await q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }) };
     },
 
     'model/list': async (p) => {
@@ -207,20 +178,6 @@ export class ClientSession implements Subscriber {
           ...(terminal.has(c.name) ? { terminalOnly: true } : {}),
         })),
       };
-    },
-
-    'agent/list': async (p) => {
-      const q = p.threadId ? this.mgr.get(p.threadId).query : (await this.mgr.catalog(p.cwd, this.env)).q;
-      const agents = await q.supportedAgents();
-      return {
-        agents: agents.map((a: any) => ({ name: a.name, description: a.description ?? '', ...(a.model ? { model: a.model } : {}) })),
-      };
-    },
-
-    'outputStyle/list': async (p) => {
-      const { init } = await this.mgr.catalog(p.cwd, this.env);
-      const i = init as any;
-      return { current: i.output_style ?? 'default', available: i.available_output_styles ?? [] };
     },
 
     'thread/list': async (p) => ({ threads: await this.mgr.list(p) }),
@@ -268,13 +225,6 @@ export class ClientSession implements Subscriber {
       return {};
     },
 
-    'thread/loaded': () => ({ threads: [...this.mgr.threads.values()].filter((t) => !t.isExited).map((t) => t.threadInfo()) }),
-
-    'thread/close': (p) => {
-      this.mgr.close(p.threadId);
-      return {};
-    },
-
     'thread/rename': async (p) => {
       await this.mgr.rename(p.threadId, p.title);
       return {};
@@ -291,9 +241,7 @@ export class ClientSession implements Subscriber {
     'thread/setModel': async (p) => (await this.mgr.get(p.threadId).setModel(p.model), {}),
     'thread/setEffort': async (p) => (await this.mgr.get(p.threadId).setEffort(p.effort), {}),
     'thread/setFastMode': async (p) => (await this.mgr.get(p.threadId).setFastMode(p.enabled), {}),
-    'thread/setThinking': async (p) => (await this.mgr.get(p.threadId).setThinking(p.thinking), {}),
     'thread/setPermissionMode': async (p) => (await this.mgr.get(p.threadId).setPermissionMode(p.mode), {}),
-    'thread/applySettings': async (p) => (await this.mgr.get(p.threadId).query.applyFlagSettings(p.settings as any), {}),
 
     'thread/contextUsage': async (p) => ({
       usage: await this.mgr.get(p.threadId).query.getContextUsage({ detail: p.detail ?? 'summary' }),
@@ -332,19 +280,8 @@ export class ClientSession implements Subscriber {
     }),
     'mcp/reconnect': async (p) => (await this.mgr.get(p.threadId).query.reconnectMcpServer(p.name), {}),
     'mcp/toggle': async (p) => (await this.mgr.get(p.threadId).query.toggleMcpServer(p.name, p.enabled), {}),
-    'mcp/setServers': async (p) => ({ result: await this.mgr.get(p.threadId).query.setMcpServers(p.servers as any) }),
-
-    'plugins/reload': async (p) => ({ result: await this.mgr.get(p.threadId).query.reloadPlugins() }),
-    'skills/reload': async (p) => ({ result: await this.mgr.get(p.threadId).query.reloadSkills() }),
-    'outputStyles/reload': async (p) => ({ result: await this.mgr.get(p.threadId).query.reloadOutputStyles() }),
-
-    'settings/resolve': async (p) => {
-      const { resolveSettings } = await import('@anthropic-ai/claude-agent-sdk');
-      return { settings: await resolveSettings({ cwd: p.cwd } as any) };
-    },
 
     'fs/list': (p) => fsApi.list(p.path, p.showHidden),
-    'fs/read': (p) => fsApi.read(p.path, p.maxBytes),
     'fs/search': (p) => fsApi.search(p.cwd, p.query, p.limit),
     'git/status': (p) => fsApi.gitStatus(p.cwd),
     'git/changes': (p) => fsApi.gitChanges(p.cwd),
@@ -353,27 +290,5 @@ export class ClientSession implements Subscriber {
       await fsApi.removeWorktree(p.path, { force: p.force ?? false, discardCommits: p.discardCommits ?? false });
       return {};
     },
-
-    'plugin/list': async (p) => plugins.listPlugins((await this.mgr.runnable(this.env)).path, p.cwd, this.env),
-    'plugin/install': async (p) => {
-      await plugins.installPlugin((await this.mgr.runnable(this.env)).path, p.pluginId, p.scope, p.cwd, this.env);
-      return {};
-    },
-    'plugin/uninstall': async (p) => {
-      await plugins.uninstallPlugin((await this.mgr.runnable(this.env)).path, p.pluginId, p.scope, p.cwd, this.env);
-      return {};
-    },
-    'plugin/setEnabled': async (p) => {
-      await plugins.setPluginEnabled((await this.mgr.runnable(this.env)).path, p.pluginId, p.enabled, p.scope, p.cwd, this.env);
-      return {};
-    },
-
-    'schedule/list': () => ({ tasks: this.scheduler().list() }),
-    'schedule/save': (p) => ({ task: this.scheduler().save(p) }),
-    'schedule/delete': (p) => {
-      this.scheduler().delete(p.id);
-      return {};
-    },
-    'schedule/run': async (p) => ({ threadId: await this.scheduler().run(p.id) }),
   };
 }

@@ -37,12 +37,6 @@
             "properties": {
               "experimentalApi": {
                 "type": "boolean"
-              },
-              "optOutNotificationMethods": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
               }
             },
             "additionalProperties": false
@@ -149,48 +143,6 @@
         "additionalProperties": false
       }
     },
-    "host/info": {
-      "params": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "loadedThreads": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991
-          },
-          "uptimeSeconds": {
-            "type": "number"
-          },
-          "claude": {
-            "type": "object",
-            "properties": {
-              "path": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "path",
-              "version"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "loadedThreads",
-          "uptimeSeconds",
-          "claude"
-        ],
-        "additionalProperties": false
-      }
-    },
     "host/requestShutdown": {
       "params": {
         "type": "object",
@@ -233,29 +185,6 @@
         },
         "required": [
           "account"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "account/usage": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "cwd": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "usage": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        },
-        "required": [
-          "usage"
         ],
         "additionalProperties": false
       }
@@ -351,65 +280,6 @@
         },
         "required": [
           "commands"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "agent/list": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "cwd": {
-            "type": "string"
-          },
-          "threadId": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "agents": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/AgentInfo"
-            }
-          }
-        },
-        "required": [
-          "agents"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "outputStyle/list": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "cwd": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "current": {
-            "type": "string"
-          },
-          "available": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "current",
-          "available"
         ],
         "additionalProperties": false
       }
@@ -827,47 +697,6 @@
         "additionalProperties": false
       }
     },
-    "thread/loaded": {
-      "params": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "threads": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/ThreadInfo"
-            }
-          }
-        },
-        "required": [
-          "threads"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "thread/close": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "threadId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "threadId"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      }
-    },
     "thread/rename": {
       "params": {
         "type": "object",
@@ -1015,29 +844,6 @@
         "additionalProperties": false
       }
     },
-    "thread/setThinking": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "threadId": {
-            "type": "string"
-          },
-          "thinking": {
-            "$ref": "#/$defs/ThinkingSetting"
-          }
-        },
-        "required": [
-          "threadId",
-          "thinking"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      }
-    },
     "thread/setPermissionMode": {
       "params": {
         "type": "object",
@@ -1052,35 +858,6 @@
         "required": [
           "threadId",
           "mode"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      }
-    },
-    "thread/applySettings": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "threadId": {
-            "type": "string"
-          },
-          "settings": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {
-              "$ref": "#/$defs/JsonValue"
-            }
-          }
-        },
-        "required": [
-          "threadId",
-          "settings"
         ],
         "additionalProperties": false
       },
@@ -1402,146 +1179,6 @@
         "additionalProperties": false
       }
     },
-    "mcp/setServers": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "threadId": {
-            "type": "string"
-          },
-          "servers": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {
-              "$ref": "#/$defs/JsonValue"
-            }
-          }
-        },
-        "required": [
-          "threadId",
-          "servers"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "result": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "plugins/reload": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "threadId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "threadId"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "result": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "skills/reload": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "threadId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "threadId"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "result": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "outputStyles/reload": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "threadId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "threadId"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "result": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "settings/resolve": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "cwd": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "cwd"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "settings": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        },
-        "required": [
-          "settings"
-        ],
-        "additionalProperties": false
-      }
-    },
     "fs/list": {
       "params": {
         "type": "object",
@@ -1591,49 +1228,6 @@
         },
         "required": [
           "entries"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "fs/read": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string"
-          },
-          "maxBytes": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991
-          }
-        },
-        "required": [
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "content": {
-            "type": "string"
-          },
-          "encoding": {
-            "type": "string",
-            "enum": [
-              "utf-8",
-              "base64"
-            ]
-          },
-          "truncated": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "content",
-          "encoding",
-          "truncated"
         ],
         "additionalProperties": false
       }
@@ -1827,269 +1421,6 @@
         "properties": {},
         "additionalProperties": false
       }
-    },
-    "plugin/list": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "cwd": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "installed": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/JsonValue"
-            }
-          },
-          "available": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/JsonValue"
-            }
-          }
-        },
-        "required": [
-          "installed",
-          "available"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "plugin/install": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "pluginId": {
-            "type": "string"
-          },
-          "scope": {
-            "type": "string",
-            "enum": [
-              "user",
-              "project",
-              "local"
-            ]
-          },
-          "cwd": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "pluginId",
-          "scope"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      }
-    },
-    "plugin/uninstall": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "pluginId": {
-            "type": "string"
-          },
-          "scope": {
-            "type": "string",
-            "enum": [
-              "user",
-              "project",
-              "local"
-            ]
-          },
-          "cwd": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "pluginId"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      }
-    },
-    "plugin/setEnabled": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "pluginId": {
-            "type": "string"
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "scope": {
-            "type": "string",
-            "enum": [
-              "user",
-              "project",
-              "local"
-            ]
-          },
-          "cwd": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "pluginId",
-          "enabled"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      }
-    },
-    "schedule/list": {
-      "params": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "tasks": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/ScheduledTask"
-            }
-          }
-        },
-        "required": [
-          "tasks"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "schedule/save": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "prompt": {
-            "type": "string"
-          },
-          "cwd": {
-            "type": "string"
-          },
-          "model": {
-            "type": "string"
-          },
-          "permissionMode": {
-            "$ref": "#/$defs/PermissionMode"
-          },
-          "cadence": {
-            "$ref": "#/$defs/ScheduleCadence"
-          },
-          "hour": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 23
-          },
-          "minute": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 59
-          },
-          "weekday": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 7
-          },
-          "enabled": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "name",
-          "prompt",
-          "cwd",
-          "cadence",
-          "hour",
-          "minute",
-          "enabled"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "task": {
-            "$ref": "#/$defs/ScheduledTask"
-          }
-        },
-        "required": [
-          "task"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "schedule/delete": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      }
-    },
-    "schedule/run": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ],
-        "additionalProperties": false
-      },
-      "result": {
-        "type": "object",
-        "properties": {
-          "threadId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "threadId"
-        ],
-        "additionalProperties": false
-      }
     }
   },
   "notifications": {
@@ -2196,44 +1527,6 @@
       "required": [
         "threadId",
         "seq"
-      ],
-      "additionalProperties": false
-    },
-    "thread/tokenUsage/updated": {
-      "type": "object",
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
-        },
-        "inputTokens": {
-          "type": "number"
-        },
-        "outputTokens": {
-          "type": "number"
-        },
-        "cacheReadInputTokens": {
-          "type": "number"
-        },
-        "cacheCreationInputTokens": {
-          "type": "number"
-        },
-        "totalCostUsd": {
-          "type": "number"
-        }
-      },
-      "required": [
-        "threadId",
-        "seq",
-        "inputTokens",
-        "outputTokens",
-        "cacheReadInputTokens",
-        "cacheCreationInputTokens",
-        "totalCostUsd"
       ],
       "additionalProperties": false
     },
@@ -2395,58 +1688,6 @@
       ],
       "additionalProperties": false
     },
-    "item/reasoning/delta": {
-      "type": "object",
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
-        },
-        "itemId": {
-          "type": "string"
-        },
-        "delta": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "threadId",
-        "seq",
-        "itemId",
-        "delta"
-      ],
-      "additionalProperties": false
-    },
-    "item/toolCall/inputDelta": {
-      "type": "object",
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
-        },
-        "itemId": {
-          "type": "string"
-        },
-        "partialJson": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "threadId",
-        "seq",
-        "itemId",
-        "partialJson"
-      ],
-      "additionalProperties": false
-    },
     "item/toolCall/progress": {
       "type": "object",
       "properties": {
@@ -2498,35 +1739,6 @@
       ],
       "additionalProperties": false
     },
-    "thread/queuedInput": {
-      "type": "object",
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
-        },
-        "messageId": {
-          "type": "string"
-        },
-        "content": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/UserInput"
-          }
-        }
-      },
-      "required": [
-        "threadId",
-        "seq",
-        "messageId",
-        "content"
-      ],
-      "additionalProperties": false
-    },
     "thread/promptSuggestion": {
       "type": "object",
       "properties": {
@@ -2575,24 +1787,6 @@
         "seq",
         "title",
         "prompt"
-      ],
-      "additionalProperties": false
-    },
-    "thread/commandsChanged": {
-      "type": "object",
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
-        }
-      },
-      "required": [
-        "threadId",
-        "seq"
       ],
       "additionalProperties": false
     },
@@ -2690,86 +1884,6 @@
       ],
       "additionalProperties": false
     },
-    "thread/notification": {
-      "type": "object",
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
-        },
-        "message": {
-          "type": "string"
-        },
-        "priority": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "threadId",
-        "seq",
-        "message"
-      ],
-      "additionalProperties": false
-    },
-    "thread/hook": {
-      "type": "object",
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
-        },
-        "event": {
-          "type": "string"
-        },
-        "data": {
-          "$ref": "#/$defs/JsonValue"
-        }
-      },
-      "required": [
-        "threadId",
-        "seq",
-        "event",
-        "data"
-      ],
-      "additionalProperties": false
-    },
-    "thread/rawEvent": {
-      "type": "object",
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
-        },
-        "sdkType": {
-          "type": "string"
-        },
-        "sdkSubtype": {
-          "type": "string"
-        },
-        "message": {
-          "$ref": "#/$defs/JsonValue"
-        }
-      },
-      "required": [
-        "threadId",
-        "seq",
-        "sdkType",
-        "message"
-      ],
-      "additionalProperties": false
-    },
     "serverRequest/resolved": {
       "type": "object",
       "properties": {
@@ -2797,28 +1911,6 @@
         "seq",
         "requestId",
         "reason"
-      ],
-      "additionalProperties": false
-    },
-    "thread/stderr": {
-      "type": "object",
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
-        },
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "threadId",
-        "seq",
-        "text"
       ],
       "additionalProperties": false
     },
@@ -3285,7 +2377,6 @@
       },
       "additionalProperties": false
     },
-    "JsonValue": {},
     "ModelInfo": {
       "type": "object",
       "properties": {
@@ -3362,25 +2453,6 @@
         },
         "terminalOnly": {
           "type": "boolean"
-        }
-      },
-      "required": [
-        "name",
-        "description"
-      ],
-      "additionalProperties": false
-    },
-    "AgentInfo": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "description": {
-          "type": "string"
-        },
-        "model": {
-          "type": "string"
         }
       },
       "required": [
@@ -3497,6 +2569,7 @@
         }
       ]
     },
+    "JsonValue": {},
     "UserInput": {
       "oneOf": [
         {
@@ -4816,85 +3889,6 @@
         "truncatedLines"
       ],
       "additionalProperties": false
-    },
-    "ScheduledTask": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "prompt": {
-          "type": "string"
-        },
-        "cwd": {
-          "type": "string"
-        },
-        "model": {
-          "type": "string"
-        },
-        "permissionMode": {
-          "$ref": "#/$defs/PermissionMode"
-        },
-        "cadence": {
-          "$ref": "#/$defs/ScheduleCadence"
-        },
-        "hour": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 23
-        },
-        "minute": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 59
-        },
-        "weekday": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 7
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "lastRunAt": {
-          "description": "ms since epoch",
-          "type": "number"
-        },
-        "lastThreadId": {
-          "type": "string"
-        },
-        "nextRunAt": {
-          "description": "ms since epoch; absent for manual or disabled",
-          "type": "number"
-        },
-        "lastError": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "prompt",
-        "cwd",
-        "cadence",
-        "hour",
-        "minute",
-        "enabled"
-      ],
-      "additionalProperties": false
-    },
-    "ScheduleCadence": {
-      "type": "string",
-      "enum": [
-        "manual",
-        "hourly",
-        "daily",
-        "weekdays",
-        "weekly"
-      ]
     },
     "PermissionScope": {
       "type": "string",

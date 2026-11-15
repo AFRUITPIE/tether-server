@@ -184,38 +184,6 @@ public struct SlashCommand: Codable, Sendable, Hashable {
     }
 }
 
-public struct AgentInfo: Codable, Sendable, Hashable {
-    public var name: String
-    public var description: String
-    public var model: String?
-
-    public init(name: String, description: String, model: String? = nil) {
-        self.name = name
-        self.description = description
-        self.model = model
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case name = "name"
-        case description = "description"
-        case model = "model"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.name = try c.decode(String.self, forKey: .name)
-        self.description = try c.decode(String.self, forKey: .description)
-        self.model = try c.decodeIfPresent(String.self, forKey: .model)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(name, forKey: .name)
-        try c.encode(description, forKey: .description)
-        try c.encodeIfPresent(model, forKey: .model)
-    }
-}
-
 public struct ThreadSummary: Codable, Sendable, Hashable {
     public var threadId: String
     public var title: String
@@ -2331,114 +2299,6 @@ public struct WorkingFileChange: Codable, Sendable, Hashable {
     }
 }
 
-public struct ScheduledTask: Codable, Sendable, Hashable {
-    public var id: String
-    public var name: String
-    public var prompt: String
-    public var cwd: String
-    public var model: String?
-    public var permissionMode: PermissionMode?
-    public var cadence: ScheduleCadence
-    public var hour: Int
-    public var minute: Int
-    public var weekday: Int?
-    public var enabled: Bool
-    /// ms since epoch
-    public var lastRunAt: Double?
-    public var lastThreadId: String?
-    /// ms since epoch; absent for manual or disabled
-    public var nextRunAt: Double?
-    public var lastError: String?
-
-    public init(id: String, name: String, prompt: String, cwd: String, model: String? = nil, permissionMode: PermissionMode? = nil, cadence: ScheduleCadence, hour: Int, minute: Int, weekday: Int? = nil, enabled: Bool, lastRunAt: Double? = nil, lastThreadId: String? = nil, nextRunAt: Double? = nil, lastError: String? = nil) {
-        self.id = id
-        self.name = name
-        self.prompt = prompt
-        self.cwd = cwd
-        self.model = model
-        self.permissionMode = permissionMode
-        self.cadence = cadence
-        self.hour = hour
-        self.minute = minute
-        self.weekday = weekday
-        self.enabled = enabled
-        self.lastRunAt = lastRunAt
-        self.lastThreadId = lastThreadId
-        self.nextRunAt = nextRunAt
-        self.lastError = lastError
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id = "id"
-        case name = "name"
-        case prompt = "prompt"
-        case cwd = "cwd"
-        case model = "model"
-        case permissionMode = "permissionMode"
-        case cadence = "cadence"
-        case hour = "hour"
-        case minute = "minute"
-        case weekday = "weekday"
-        case enabled = "enabled"
-        case lastRunAt = "lastRunAt"
-        case lastThreadId = "lastThreadId"
-        case nextRunAt = "nextRunAt"
-        case lastError = "lastError"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try c.decode(String.self, forKey: .id)
-        self.name = try c.decode(String.self, forKey: .name)
-        self.prompt = try c.decode(String.self, forKey: .prompt)
-        self.cwd = try c.decode(String.self, forKey: .cwd)
-        self.model = try c.decodeIfPresent(String.self, forKey: .model)
-        self.permissionMode = try c.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
-        self.cadence = try c.decode(ScheduleCadence.self, forKey: .cadence)
-        self.hour = try c.decode(Int.self, forKey: .hour)
-        self.minute = try c.decode(Int.self, forKey: .minute)
-        self.weekday = try c.decodeIfPresent(Int.self, forKey: .weekday)
-        self.enabled = try c.decode(Bool.self, forKey: .enabled)
-        self.lastRunAt = try c.decodeIfPresent(Double.self, forKey: .lastRunAt)
-        self.lastThreadId = try c.decodeIfPresent(String.self, forKey: .lastThreadId)
-        self.nextRunAt = try c.decodeIfPresent(Double.self, forKey: .nextRunAt)
-        self.lastError = try c.decodeIfPresent(String.self, forKey: .lastError)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id, forKey: .id)
-        try c.encode(name, forKey: .name)
-        try c.encode(prompt, forKey: .prompt)
-        try c.encode(cwd, forKey: .cwd)
-        try c.encodeIfPresent(model, forKey: .model)
-        try c.encodeIfPresent(permissionMode, forKey: .permissionMode)
-        try c.encode(cadence, forKey: .cadence)
-        try c.encode(hour, forKey: .hour)
-        try c.encode(minute, forKey: .minute)
-        try c.encodeIfPresent(weekday, forKey: .weekday)
-        try c.encode(enabled, forKey: .enabled)
-        try c.encodeIfPresent(lastRunAt, forKey: .lastRunAt)
-        try c.encodeIfPresent(lastThreadId, forKey: .lastThreadId)
-        try c.encodeIfPresent(nextRunAt, forKey: .nextRunAt)
-        try c.encodeIfPresent(lastError, forKey: .lastError)
-    }
-}
-
-public struct ScheduleCadence: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
-    public let rawValue: String
-    public init(rawValue: String) { self.rawValue = rawValue }
-    public init(stringLiteral value: String) { self.rawValue = value }
-    public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
-    public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
-    public static let manual = ScheduleCadence(rawValue: "manual")
-    public static let hourly = ScheduleCadence(rawValue: "hourly")
-    public static let daily = ScheduleCadence(rawValue: "daily")
-    public static let weekdays = ScheduleCadence(rawValue: "weekdays")
-    public static let weekly = ScheduleCadence(rawValue: "weekly")
-    public static let allCases: [ScheduleCadence] = [.manual, .hourly, .daily, .weekdays, .weekly]
-}
-
 public struct PermissionScope: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
@@ -2522,28 +2382,23 @@ public struct InitializeParams: Codable, Sendable, Hashable {
     }
     public struct Capabilities: Codable, Sendable, Hashable {
         public var experimentalApi: Bool?
-        public var optOutNotificationMethods: [String]?
 
-        public init(experimentalApi: Bool? = nil, optOutNotificationMethods: [String]? = nil) {
+        public init(experimentalApi: Bool? = nil) {
             self.experimentalApi = experimentalApi
-            self.optOutNotificationMethods = optOutNotificationMethods
         }
 
         private enum CodingKeys: String, CodingKey {
             case experimentalApi = "experimentalApi"
-            case optOutNotificationMethods = "optOutNotificationMethods"
         }
 
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             self.experimentalApi = try c.decodeIfPresent(Bool.self, forKey: .experimentalApi)
-            self.optOutNotificationMethods = try c.decodeIfPresent([String].self, forKey: .optOutNotificationMethods)
         }
 
         public func encode(to encoder: any Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encodeIfPresent(experimentalApi, forKey: .experimentalApi)
-            try c.encodeIfPresent(optOutNotificationMethods, forKey: .optOutNotificationMethods)
         }
     }
 }
@@ -2700,73 +2555,6 @@ public struct InitializeResult: Codable, Sendable, Hashable {
     }
 }
 
-public struct HostInfoParams: Codable, Sendable, Hashable {
-
-    public init() {
-    }
-    public init(from decoder: any Decoder) throws {}
-    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
-}
-
-public struct HostInfoResult: Codable, Sendable, Hashable {
-    public var loadedThreads: Int
-    public var uptimeSeconds: Double
-    public var claude: Claude
-
-    public init(loadedThreads: Int, uptimeSeconds: Double, claude: Claude) {
-        self.loadedThreads = loadedThreads
-        self.uptimeSeconds = uptimeSeconds
-        self.claude = claude
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case loadedThreads = "loadedThreads"
-        case uptimeSeconds = "uptimeSeconds"
-        case claude = "claude"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.loadedThreads = try c.decode(Int.self, forKey: .loadedThreads)
-        self.uptimeSeconds = try c.decode(Double.self, forKey: .uptimeSeconds)
-        self.claude = try c.decode(Claude.self, forKey: .claude)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(loadedThreads, forKey: .loadedThreads)
-        try c.encode(uptimeSeconds, forKey: .uptimeSeconds)
-        try c.encode(claude, forKey: .claude)
-    }
-
-    public struct Claude: Codable, Sendable, Hashable {
-        public var path: String
-        public var version: String
-
-        public init(path: String, version: String) {
-            self.path = path
-            self.version = version
-        }
-
-        private enum CodingKeys: String, CodingKey {
-            case path = "path"
-            case version = "version"
-        }
-
-        public init(from decoder: any Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            self.path = try c.decode(String.self, forKey: .path)
-            self.version = try c.decode(String.self, forKey: .version)
-        }
-
-        public func encode(to encoder: any Encoder) throws {
-            var c = encoder.container(keyedBy: CodingKeys.self)
-            try c.encode(path, forKey: .path)
-            try c.encode(version, forKey: .version)
-        }
-    }
-}
-
 public struct HostRequestShutdownParams: Codable, Sendable, Hashable {
     public var reason: String?
 
@@ -2852,50 +2640,6 @@ public struct AccountReadResult: Codable, Sendable, Hashable {
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(account, forKey: .account)
-    }
-}
-
-public struct AccountUsageParams: Codable, Sendable, Hashable {
-    public var cwd: String?
-
-    public init(cwd: String? = nil) {
-        self.cwd = cwd
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case cwd = "cwd"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encodeIfPresent(cwd, forKey: .cwd)
-    }
-}
-
-public struct AccountUsageResult: Codable, Sendable, Hashable {
-    public var usage: JSONValue
-
-    public init(usage: JSONValue) {
-        self.usage = usage
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case usage = "usage"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.usage = try c.decode(JSONValue.self, forKey: .usage)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(usage, forKey: .usage)
     }
 }
 
@@ -3048,104 +2792,6 @@ public struct CommandListResult: Codable, Sendable, Hashable {
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(commands, forKey: .commands)
-    }
-}
-
-public struct AgentListParams: Codable, Sendable, Hashable {
-    public var cwd: String?
-    public var threadId: String?
-
-    public init(cwd: String? = nil, threadId: String? = nil) {
-        self.cwd = cwd
-        self.threadId = threadId
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case cwd = "cwd"
-        case threadId = "threadId"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
-        self.threadId = try c.decodeIfPresent(String.self, forKey: .threadId)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encodeIfPresent(cwd, forKey: .cwd)
-        try c.encodeIfPresent(threadId, forKey: .threadId)
-    }
-}
-
-public struct AgentListResult: Codable, Sendable, Hashable {
-    public var agents: [AgentInfo]
-
-    public init(agents: [AgentInfo]) {
-        self.agents = agents
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case agents = "agents"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.agents = try c.decode([AgentInfo].self, forKey: .agents)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(agents, forKey: .agents)
-    }
-}
-
-public struct OutputStyleListParams: Codable, Sendable, Hashable {
-    public var cwd: String?
-
-    public init(cwd: String? = nil) {
-        self.cwd = cwd
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case cwd = "cwd"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encodeIfPresent(cwd, forKey: .cwd)
-    }
-}
-
-public struct OutputStyleListResult: Codable, Sendable, Hashable {
-    public var current: String
-    public var available: [String]
-
-    public init(current: String, available: [String]) {
-        self.current = current
-        self.available = available
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case current = "current"
-        case available = "available"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.current = try c.decode(String.self, forKey: .current)
-        self.available = try c.decode([String].self, forKey: .available)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(current, forKey: .current)
-        try c.encode(available, forKey: .available)
     }
 }
 
@@ -3728,66 +3374,6 @@ public struct ThreadUnsubscribeResult: Codable, Sendable, Hashable {
     public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
 }
 
-public struct ThreadLoadedParams: Codable, Sendable, Hashable {
-
-    public init() {
-    }
-    public init(from decoder: any Decoder) throws {}
-    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
-}
-
-public struct ThreadLoadedResult: Codable, Sendable, Hashable {
-    public var threads: [ThreadInfo]
-
-    public init(threads: [ThreadInfo]) {
-        self.threads = threads
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threads = "threads"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threads = try c.decode([ThreadInfo].self, forKey: .threads)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threads, forKey: .threads)
-    }
-}
-
-public struct ThreadCloseParams: Codable, Sendable, Hashable {
-    public var threadId: String
-
-    public init(threadId: String) {
-        self.threadId = threadId
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-    }
-}
-
-public struct ThreadCloseResult: Codable, Sendable, Hashable {
-
-    public init() {
-    }
-    public init(from decoder: any Decoder) throws {}
-    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
-}
-
 public struct ThreadRenameParams: Codable, Sendable, Hashable {
     public var threadId: String
     public var title: String
@@ -3993,41 +3579,6 @@ public struct ThreadSetFastModeResult: Codable, Sendable, Hashable {
     public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
 }
 
-public struct ThreadSetThinkingParams: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var thinking: ThinkingSetting
-
-    public init(threadId: String, thinking: ThinkingSetting) {
-        self.threadId = threadId
-        self.thinking = thinking
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case thinking = "thinking"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.thinking = try c.decode(ThinkingSetting.self, forKey: .thinking)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(thinking, forKey: .thinking)
-    }
-}
-
-public struct ThreadSetThinkingResult: Codable, Sendable, Hashable {
-
-    public init() {
-    }
-    public init(from decoder: any Decoder) throws {}
-    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
-}
-
 public struct ThreadSetPermissionModeParams: Codable, Sendable, Hashable {
     public var threadId: String
     public var mode: PermissionMode
@@ -4056,41 +3607,6 @@ public struct ThreadSetPermissionModeParams: Codable, Sendable, Hashable {
 }
 
 public struct ThreadSetPermissionModeResult: Codable, Sendable, Hashable {
-
-    public init() {
-    }
-    public init(from decoder: any Decoder) throws {}
-    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
-}
-
-public struct ThreadApplySettingsParams: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var settings: [String: JSONValue]
-
-    public init(threadId: String, settings: [String: JSONValue]) {
-        self.threadId = threadId
-        self.settings = settings
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case settings = "settings"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.settings = try c.decode([String: JSONValue].self, forKey: .settings)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(settings, forKey: .settings)
-    }
-}
-
-public struct ThreadApplySettingsResult: Codable, Sendable, Hashable {
 
     public init() {
     }
@@ -4594,231 +4110,6 @@ public struct McpToggleResult: Codable, Sendable, Hashable {
     public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
 }
 
-public struct McpSetServersParams: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var servers: [String: JSONValue]
-
-    public init(threadId: String, servers: [String: JSONValue]) {
-        self.threadId = threadId
-        self.servers = servers
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case servers = "servers"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.servers = try c.decode([String: JSONValue].self, forKey: .servers)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(servers, forKey: .servers)
-    }
-}
-
-public struct McpSetServersResult: Codable, Sendable, Hashable {
-    public var result: JSONValue
-
-    public init(result: JSONValue) {
-        self.result = result
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case result = "result"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.result = try c.decode(JSONValue.self, forKey: .result)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(result, forKey: .result)
-    }
-}
-
-public struct PluginsReloadParams: Codable, Sendable, Hashable {
-    public var threadId: String
-
-    public init(threadId: String) {
-        self.threadId = threadId
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-    }
-}
-
-public struct PluginsReloadResult: Codable, Sendable, Hashable {
-    public var result: JSONValue
-
-    public init(result: JSONValue) {
-        self.result = result
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case result = "result"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.result = try c.decode(JSONValue.self, forKey: .result)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(result, forKey: .result)
-    }
-}
-
-public struct SkillsReloadParams: Codable, Sendable, Hashable {
-    public var threadId: String
-
-    public init(threadId: String) {
-        self.threadId = threadId
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-    }
-}
-
-public struct SkillsReloadResult: Codable, Sendable, Hashable {
-    public var result: JSONValue
-
-    public init(result: JSONValue) {
-        self.result = result
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case result = "result"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.result = try c.decode(JSONValue.self, forKey: .result)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(result, forKey: .result)
-    }
-}
-
-public struct OutputStylesReloadParams: Codable, Sendable, Hashable {
-    public var threadId: String
-
-    public init(threadId: String) {
-        self.threadId = threadId
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-    }
-}
-
-public struct OutputStylesReloadResult: Codable, Sendable, Hashable {
-    public var result: JSONValue
-
-    public init(result: JSONValue) {
-        self.result = result
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case result = "result"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.result = try c.decode(JSONValue.self, forKey: .result)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(result, forKey: .result)
-    }
-}
-
-public struct SettingsResolveParams: Codable, Sendable, Hashable {
-    public var cwd: String
-
-    public init(cwd: String) {
-        self.cwd = cwd
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case cwd = "cwd"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.cwd = try c.decode(String.self, forKey: .cwd)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(cwd, forKey: .cwd)
-    }
-}
-
-public struct SettingsResolveResult: Codable, Sendable, Hashable {
-    public var settings: JSONValue
-
-    public init(settings: JSONValue) {
-        self.settings = settings
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case settings = "settings"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.settings = try c.decode(JSONValue.self, forKey: .settings)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(settings, forKey: .settings)
-    }
-}
-
 public struct FsListParams: Codable, Sendable, Hashable {
     public var path: String
     public var showHidden: Bool?
@@ -4902,76 +4193,6 @@ public struct FsListResult: Codable, Sendable, Hashable {
             try c.encode(isDirectory, forKey: .isDirectory)
             try c.encode(size, forKey: .size)
         }
-    }
-}
-
-public struct FsReadParams: Codable, Sendable, Hashable {
-    public var path: String
-    public var maxBytes: Int?
-
-    public init(path: String, maxBytes: Int? = nil) {
-        self.path = path
-        self.maxBytes = maxBytes
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case path = "path"
-        case maxBytes = "maxBytes"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.path = try c.decode(String.self, forKey: .path)
-        self.maxBytes = try c.decodeIfPresent(Int.self, forKey: .maxBytes)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(path, forKey: .path)
-        try c.encodeIfPresent(maxBytes, forKey: .maxBytes)
-    }
-}
-
-public struct FsReadResult: Codable, Sendable, Hashable {
-    public var content: String
-    public var encoding: Encoding
-    public var truncated: Bool
-
-    public init(content: String, encoding: Encoding, truncated: Bool) {
-        self.content = content
-        self.encoding = encoding
-        self.truncated = truncated
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case content = "content"
-        case encoding = "encoding"
-        case truncated = "truncated"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.content = try c.decode(String.self, forKey: .content)
-        self.encoding = try c.decode(Encoding.self, forKey: .encoding)
-        self.truncated = try c.decode(Bool.self, forKey: .truncated)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(content, forKey: .content)
-        try c.encode(encoding, forKey: .encoding)
-        try c.encode(truncated, forKey: .truncated)
-    }
-
-    public struct Encoding: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
-        public let rawValue: String
-        public init(rawValue: String) { self.rawValue = rawValue }
-        public init(stringLiteral value: String) { self.rawValue = value }
-        public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
-        public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
-        public static let utf8 = Encoding(rawValue: "utf-8")
-        public static let base64 = Encoding(rawValue: "base64")
-        public static let allCases: [Encoding] = [.utf8, .base64]
     }
 }
 
@@ -5263,425 +4484,12 @@ public struct GitRemoveWorktreeResult: Codable, Sendable, Hashable {
     public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
 }
 
-public struct PluginListParams: Codable, Sendable, Hashable {
-    public var cwd: String?
-
-    public init(cwd: String? = nil) {
-        self.cwd = cwd
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case cwd = "cwd"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encodeIfPresent(cwd, forKey: .cwd)
-    }
-}
-
-public struct PluginListResult: Codable, Sendable, Hashable {
-    public var installed: [JSONValue]
-    public var available: [JSONValue]
-
-    public init(installed: [JSONValue], available: [JSONValue]) {
-        self.installed = installed
-        self.available = available
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case installed = "installed"
-        case available = "available"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.installed = try c.decode([JSONValue].self, forKey: .installed)
-        self.available = try c.decode([JSONValue].self, forKey: .available)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(installed, forKey: .installed)
-        try c.encode(available, forKey: .available)
-    }
-}
-
-public struct PluginInstallParams: Codable, Sendable, Hashable {
-    public var pluginId: String
-    public var scope: Scope
-    public var cwd: String?
-
-    public init(pluginId: String, scope: Scope, cwd: String? = nil) {
-        self.pluginId = pluginId
-        self.scope = scope
-        self.cwd = cwd
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case pluginId = "pluginId"
-        case scope = "scope"
-        case cwd = "cwd"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.pluginId = try c.decode(String.self, forKey: .pluginId)
-        self.scope = try c.decode(Scope.self, forKey: .scope)
-        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(pluginId, forKey: .pluginId)
-        try c.encode(scope, forKey: .scope)
-        try c.encodeIfPresent(cwd, forKey: .cwd)
-    }
-
-    public struct Scope: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
-        public let rawValue: String
-        public init(rawValue: String) { self.rawValue = rawValue }
-        public init(stringLiteral value: String) { self.rawValue = value }
-        public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
-        public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
-        public static let user = Scope(rawValue: "user")
-        public static let project = Scope(rawValue: "project")
-        public static let local = Scope(rawValue: "local")
-        public static let allCases: [Scope] = [.user, .project, .local]
-    }
-}
-
-public struct PluginInstallResult: Codable, Sendable, Hashable {
-
-    public init() {
-    }
-    public init(from decoder: any Decoder) throws {}
-    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
-}
-
-public struct PluginUninstallParams: Codable, Sendable, Hashable {
-    public var pluginId: String
-    public var scope: Scope?
-    public var cwd: String?
-
-    public init(pluginId: String, scope: Scope? = nil, cwd: String? = nil) {
-        self.pluginId = pluginId
-        self.scope = scope
-        self.cwd = cwd
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case pluginId = "pluginId"
-        case scope = "scope"
-        case cwd = "cwd"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.pluginId = try c.decode(String.self, forKey: .pluginId)
-        self.scope = try c.decodeIfPresent(Scope.self, forKey: .scope)
-        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(pluginId, forKey: .pluginId)
-        try c.encodeIfPresent(scope, forKey: .scope)
-        try c.encodeIfPresent(cwd, forKey: .cwd)
-    }
-
-    public struct Scope: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
-        public let rawValue: String
-        public init(rawValue: String) { self.rawValue = rawValue }
-        public init(stringLiteral value: String) { self.rawValue = value }
-        public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
-        public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
-        public static let user = Scope(rawValue: "user")
-        public static let project = Scope(rawValue: "project")
-        public static let local = Scope(rawValue: "local")
-        public static let allCases: [Scope] = [.user, .project, .local]
-    }
-}
-
-public struct PluginUninstallResult: Codable, Sendable, Hashable {
-
-    public init() {
-    }
-    public init(from decoder: any Decoder) throws {}
-    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
-}
-
-public struct PluginSetEnabledParams: Codable, Sendable, Hashable {
-    public var pluginId: String
-    public var enabled: Bool
-    public var scope: Scope?
-    public var cwd: String?
-
-    public init(pluginId: String, enabled: Bool, scope: Scope? = nil, cwd: String? = nil) {
-        self.pluginId = pluginId
-        self.enabled = enabled
-        self.scope = scope
-        self.cwd = cwd
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case pluginId = "pluginId"
-        case enabled = "enabled"
-        case scope = "scope"
-        case cwd = "cwd"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.pluginId = try c.decode(String.self, forKey: .pluginId)
-        self.enabled = try c.decode(Bool.self, forKey: .enabled)
-        self.scope = try c.decodeIfPresent(Scope.self, forKey: .scope)
-        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(pluginId, forKey: .pluginId)
-        try c.encode(enabled, forKey: .enabled)
-        try c.encodeIfPresent(scope, forKey: .scope)
-        try c.encodeIfPresent(cwd, forKey: .cwd)
-    }
-
-    public struct Scope: RawRepresentable, Codable, Sendable, Hashable, CaseIterable, ExpressibleByStringLiteral {
-        public let rawValue: String
-        public init(rawValue: String) { self.rawValue = rawValue }
-        public init(stringLiteral value: String) { self.rawValue = value }
-        public init(from decoder: any Decoder) throws { self.rawValue = try decoder.singleValueContainer().decode(String.self) }
-        public func encode(to encoder: any Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
-        public static let user = Scope(rawValue: "user")
-        public static let project = Scope(rawValue: "project")
-        public static let local = Scope(rawValue: "local")
-        public static let allCases: [Scope] = [.user, .project, .local]
-    }
-}
-
-public struct PluginSetEnabledResult: Codable, Sendable, Hashable {
-
-    public init() {
-    }
-    public init(from decoder: any Decoder) throws {}
-    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
-}
-
-public struct ScheduleListParams: Codable, Sendable, Hashable {
-
-    public init() {
-    }
-    public init(from decoder: any Decoder) throws {}
-    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
-}
-
-public struct ScheduleListResult: Codable, Sendable, Hashable {
-    public var tasks: [ScheduledTask]
-
-    public init(tasks: [ScheduledTask]) {
-        self.tasks = tasks
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case tasks = "tasks"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.tasks = try c.decode([ScheduledTask].self, forKey: .tasks)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(tasks, forKey: .tasks)
-    }
-}
-
-public struct ScheduleSaveParams: Codable, Sendable, Hashable {
-    public var id: String?
-    public var name: String
-    public var prompt: String
-    public var cwd: String
-    public var model: String?
-    public var permissionMode: PermissionMode?
-    public var cadence: ScheduleCadence
-    public var hour: Int
-    public var minute: Int
-    public var weekday: Int?
-    public var enabled: Bool
-
-    public init(id: String? = nil, name: String, prompt: String, cwd: String, model: String? = nil, permissionMode: PermissionMode? = nil, cadence: ScheduleCadence, hour: Int, minute: Int, weekday: Int? = nil, enabled: Bool) {
-        self.id = id
-        self.name = name
-        self.prompt = prompt
-        self.cwd = cwd
-        self.model = model
-        self.permissionMode = permissionMode
-        self.cadence = cadence
-        self.hour = hour
-        self.minute = minute
-        self.weekday = weekday
-        self.enabled = enabled
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id = "id"
-        case name = "name"
-        case prompt = "prompt"
-        case cwd = "cwd"
-        case model = "model"
-        case permissionMode = "permissionMode"
-        case cadence = "cadence"
-        case hour = "hour"
-        case minute = "minute"
-        case weekday = "weekday"
-        case enabled = "enabled"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try c.decodeIfPresent(String.self, forKey: .id)
-        self.name = try c.decode(String.self, forKey: .name)
-        self.prompt = try c.decode(String.self, forKey: .prompt)
-        self.cwd = try c.decode(String.self, forKey: .cwd)
-        self.model = try c.decodeIfPresent(String.self, forKey: .model)
-        self.permissionMode = try c.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
-        self.cadence = try c.decode(ScheduleCadence.self, forKey: .cadence)
-        self.hour = try c.decode(Int.self, forKey: .hour)
-        self.minute = try c.decode(Int.self, forKey: .minute)
-        self.weekday = try c.decodeIfPresent(Int.self, forKey: .weekday)
-        self.enabled = try c.decode(Bool.self, forKey: .enabled)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encodeIfPresent(id, forKey: .id)
-        try c.encode(name, forKey: .name)
-        try c.encode(prompt, forKey: .prompt)
-        try c.encode(cwd, forKey: .cwd)
-        try c.encodeIfPresent(model, forKey: .model)
-        try c.encodeIfPresent(permissionMode, forKey: .permissionMode)
-        try c.encode(cadence, forKey: .cadence)
-        try c.encode(hour, forKey: .hour)
-        try c.encode(minute, forKey: .minute)
-        try c.encodeIfPresent(weekday, forKey: .weekday)
-        try c.encode(enabled, forKey: .enabled)
-    }
-}
-
-public struct ScheduleSaveResult: Codable, Sendable, Hashable {
-    public var task: ScheduledTask
-
-    public init(task: ScheduledTask) {
-        self.task = task
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case task = "task"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.task = try c.decode(ScheduledTask.self, forKey: .task)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(task, forKey: .task)
-    }
-}
-
-public struct ScheduleDeleteParams: Codable, Sendable, Hashable {
-    public var id: String
-
-    public init(id: String) {
-        self.id = id
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id = "id"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try c.decode(String.self, forKey: .id)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id, forKey: .id)
-    }
-}
-
-public struct ScheduleDeleteResult: Codable, Sendable, Hashable {
-
-    public init() {
-    }
-    public init(from decoder: any Decoder) throws {}
-    public func encode(to encoder: any Encoder) throws { _ = encoder.container(keyedBy: AnyKey.self) }
-}
-
-public struct ScheduleRunParams: Codable, Sendable, Hashable {
-    public var id: String
-
-    public init(id: String) {
-        self.id = id
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id = "id"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try c.decode(String.self, forKey: .id)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id, forKey: .id)
-    }
-}
-
-public struct ScheduleRunResult: Codable, Sendable, Hashable {
-    public var threadId: String
-
-    public init(threadId: String) {
-        self.threadId = threadId
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-    }
-}
-
 /// Client → server requests.
 public enum Methods {
     public enum Initialize: TetherMethod {
         public static let name = "initialize"
         public typealias Params = InitializeParams
         public typealias Result = InitializeResult
-    }
-    public enum HostInfo: TetherMethod {
-        public static let name = "host/info"
-        public typealias Params = HostInfoParams
-        public typealias Result = HostInfoResult
     }
     public enum HostRequestShutdown: TetherMethod {
         public static let name = "host/requestShutdown"
@@ -5692,11 +4500,6 @@ public enum Methods {
         public static let name = "account/read"
         public typealias Params = AccountReadParams
         public typealias Result = AccountReadResult
-    }
-    public enum AccountUsage: TetherMethod {
-        public static let name = "account/usage"
-        public typealias Params = AccountUsageParams
-        public typealias Result = AccountUsageResult
     }
     public enum ModelList: TetherMethod {
         public static let name = "model/list"
@@ -5712,16 +4515,6 @@ public enum Methods {
         public static let name = "command/list"
         public typealias Params = CommandListParams
         public typealias Result = CommandListResult
-    }
-    public enum AgentList: TetherMethod {
-        public static let name = "agent/list"
-        public typealias Params = AgentListParams
-        public typealias Result = AgentListResult
-    }
-    public enum OutputStyleList: TetherMethod {
-        public static let name = "outputStyle/list"
-        public typealias Params = OutputStyleListParams
-        public typealias Result = OutputStyleListResult
     }
     public enum ThreadList: TetherMethod {
         public static let name = "thread/list"
@@ -5758,16 +4551,6 @@ public enum Methods {
         public typealias Params = ThreadUnsubscribeParams
         public typealias Result = ThreadUnsubscribeResult
     }
-    public enum ThreadLoaded: TetherMethod {
-        public static let name = "thread/loaded"
-        public typealias Params = ThreadLoadedParams
-        public typealias Result = ThreadLoadedResult
-    }
-    public enum ThreadClose: TetherMethod {
-        public static let name = "thread/close"
-        public typealias Params = ThreadCloseParams
-        public typealias Result = ThreadCloseResult
-    }
     public enum ThreadRename: TetherMethod {
         public static let name = "thread/rename"
         public typealias Params = ThreadRenameParams
@@ -5798,20 +4581,10 @@ public enum Methods {
         public typealias Params = ThreadSetFastModeParams
         public typealias Result = ThreadSetFastModeResult
     }
-    public enum ThreadSetThinking: TetherMethod {
-        public static let name = "thread/setThinking"
-        public typealias Params = ThreadSetThinkingParams
-        public typealias Result = ThreadSetThinkingResult
-    }
     public enum ThreadSetPermissionMode: TetherMethod {
         public static let name = "thread/setPermissionMode"
         public typealias Params = ThreadSetPermissionModeParams
         public typealias Result = ThreadSetPermissionModeResult
-    }
-    public enum ThreadApplySettings: TetherMethod {
-        public static let name = "thread/applySettings"
-        public typealias Params = ThreadApplySettingsParams
-        public typealias Result = ThreadApplySettingsResult
     }
     public enum ThreadContextUsage: TetherMethod {
         public static let name = "thread/contextUsage"
@@ -5863,40 +4636,10 @@ public enum Methods {
         public typealias Params = McpToggleParams
         public typealias Result = McpToggleResult
     }
-    public enum McpSetServers: TetherMethod {
-        public static let name = "mcp/setServers"
-        public typealias Params = McpSetServersParams
-        public typealias Result = McpSetServersResult
-    }
-    public enum PluginsReload: TetherMethod {
-        public static let name = "plugins/reload"
-        public typealias Params = PluginsReloadParams
-        public typealias Result = PluginsReloadResult
-    }
-    public enum SkillsReload: TetherMethod {
-        public static let name = "skills/reload"
-        public typealias Params = SkillsReloadParams
-        public typealias Result = SkillsReloadResult
-    }
-    public enum OutputStylesReload: TetherMethod {
-        public static let name = "outputStyles/reload"
-        public typealias Params = OutputStylesReloadParams
-        public typealias Result = OutputStylesReloadResult
-    }
-    public enum SettingsResolve: TetherMethod {
-        public static let name = "settings/resolve"
-        public typealias Params = SettingsResolveParams
-        public typealias Result = SettingsResolveResult
-    }
     public enum FsList: TetherMethod {
         public static let name = "fs/list"
         public typealias Params = FsListParams
         public typealias Result = FsListResult
-    }
-    public enum FsRead: TetherMethod {
-        public static let name = "fs/read"
-        public typealias Params = FsReadParams
-        public typealias Result = FsReadResult
     }
     public enum FsSearch: TetherMethod {
         public static let name = "fs/search"
@@ -5922,46 +4665,6 @@ public enum Methods {
         public static let name = "git/removeWorktree"
         public typealias Params = GitRemoveWorktreeParams
         public typealias Result = GitRemoveWorktreeResult
-    }
-    public enum PluginList: TetherMethod {
-        public static let name = "plugin/list"
-        public typealias Params = PluginListParams
-        public typealias Result = PluginListResult
-    }
-    public enum PluginInstall: TetherMethod {
-        public static let name = "plugin/install"
-        public typealias Params = PluginInstallParams
-        public typealias Result = PluginInstallResult
-    }
-    public enum PluginUninstall: TetherMethod {
-        public static let name = "plugin/uninstall"
-        public typealias Params = PluginUninstallParams
-        public typealias Result = PluginUninstallResult
-    }
-    public enum PluginSetEnabled: TetherMethod {
-        public static let name = "plugin/setEnabled"
-        public typealias Params = PluginSetEnabledParams
-        public typealias Result = PluginSetEnabledResult
-    }
-    public enum ScheduleList: TetherMethod {
-        public static let name = "schedule/list"
-        public typealias Params = ScheduleListParams
-        public typealias Result = ScheduleListResult
-    }
-    public enum ScheduleSave: TetherMethod {
-        public static let name = "schedule/save"
-        public typealias Params = ScheduleSaveParams
-        public typealias Result = ScheduleSaveResult
-    }
-    public enum ScheduleDelete: TetherMethod {
-        public static let name = "schedule/delete"
-        public typealias Params = ScheduleDeleteParams
-        public typealias Result = ScheduleDeleteResult
-    }
-    public enum ScheduleRun: TetherMethod {
-        public static let name = "schedule/run"
-        public typealias Params = ScheduleRunParams
-        public typealias Result = ScheduleRunResult
     }
 }
 
@@ -6111,58 +4814,6 @@ public struct ThreadClosedNotification: Codable, Sendable, Hashable {
         try c.encode(threadId, forKey: .threadId)
         try c.encode(seq, forKey: .seq)
         try c.encodeIfPresent(reason, forKey: .reason)
-    }
-}
-
-public struct ThreadTokenUsageUpdatedNotification: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var seq: Int
-    public var inputTokens: Double
-    public var outputTokens: Double
-    public var cacheReadInputTokens: Double
-    public var cacheCreationInputTokens: Double
-    public var totalCostUsd: Double
-
-    public init(threadId: String, seq: Int, inputTokens: Double, outputTokens: Double, cacheReadInputTokens: Double, cacheCreationInputTokens: Double, totalCostUsd: Double) {
-        self.threadId = threadId
-        self.seq = seq
-        self.inputTokens = inputTokens
-        self.outputTokens = outputTokens
-        self.cacheReadInputTokens = cacheReadInputTokens
-        self.cacheCreationInputTokens = cacheCreationInputTokens
-        self.totalCostUsd = totalCostUsd
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case seq = "seq"
-        case inputTokens = "inputTokens"
-        case outputTokens = "outputTokens"
-        case cacheReadInputTokens = "cacheReadInputTokens"
-        case cacheCreationInputTokens = "cacheCreationInputTokens"
-        case totalCostUsd = "totalCostUsd"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.seq = try c.decode(Int.self, forKey: .seq)
-        self.inputTokens = try c.decode(Double.self, forKey: .inputTokens)
-        self.outputTokens = try c.decode(Double.self, forKey: .outputTokens)
-        self.cacheReadInputTokens = try c.decode(Double.self, forKey: .cacheReadInputTokens)
-        self.cacheCreationInputTokens = try c.decode(Double.self, forKey: .cacheCreationInputTokens)
-        self.totalCostUsd = try c.decode(Double.self, forKey: .totalCostUsd)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(seq, forKey: .seq)
-        try c.encode(inputTokens, forKey: .inputTokens)
-        try c.encode(outputTokens, forKey: .outputTokens)
-        try c.encode(cacheReadInputTokens, forKey: .cacheReadInputTokens)
-        try c.encode(cacheCreationInputTokens, forKey: .cacheCreationInputTokens)
-        try c.encode(totalCostUsd, forKey: .totalCostUsd)
     }
 }
 
@@ -6395,80 +5046,6 @@ public struct ItemAgentMessageDeltaNotification: Codable, Sendable, Hashable {
     }
 }
 
-public struct ItemReasoningDeltaNotification: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var seq: Int
-    public var itemId: String
-    public var delta: String
-
-    public init(threadId: String, seq: Int, itemId: String, delta: String) {
-        self.threadId = threadId
-        self.seq = seq
-        self.itemId = itemId
-        self.delta = delta
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case seq = "seq"
-        case itemId = "itemId"
-        case delta = "delta"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.seq = try c.decode(Int.self, forKey: .seq)
-        self.itemId = try c.decode(String.self, forKey: .itemId)
-        self.delta = try c.decode(String.self, forKey: .delta)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(seq, forKey: .seq)
-        try c.encode(itemId, forKey: .itemId)
-        try c.encode(delta, forKey: .delta)
-    }
-}
-
-public struct ItemToolCallInputDeltaNotification: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var seq: Int
-    public var itemId: String
-    public var partialJson: String
-
-    public init(threadId: String, seq: Int, itemId: String, partialJson: String) {
-        self.threadId = threadId
-        self.seq = seq
-        self.itemId = itemId
-        self.partialJson = partialJson
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case seq = "seq"
-        case itemId = "itemId"
-        case partialJson = "partialJson"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.seq = try c.decode(Int.self, forKey: .seq)
-        self.itemId = try c.decode(String.self, forKey: .itemId)
-        self.partialJson = try c.decode(String.self, forKey: .partialJson)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(seq, forKey: .seq)
-        try c.encode(itemId, forKey: .itemId)
-        try c.encode(partialJson, forKey: .partialJson)
-    }
-}
-
 public struct ItemToolCallProgressNotification: Codable, Sendable, Hashable {
     public var threadId: String
     public var seq: Int
@@ -6543,43 +5120,6 @@ public struct TaskUpdatedNotification: Codable, Sendable, Hashable {
     }
 }
 
-public struct ThreadQueuedInputNotification: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var seq: Int
-    public var messageId: String
-    public var content: [UserInput]
-
-    public init(threadId: String, seq: Int, messageId: String, content: [UserInput]) {
-        self.threadId = threadId
-        self.seq = seq
-        self.messageId = messageId
-        self.content = content
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case seq = "seq"
-        case messageId = "messageId"
-        case content = "content"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.seq = try c.decode(Int.self, forKey: .seq)
-        self.messageId = try c.decode(String.self, forKey: .messageId)
-        self.content = try c.decode([UserInput].self, forKey: .content)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(seq, forKey: .seq)
-        try c.encode(messageId, forKey: .messageId)
-        try c.encode(content, forKey: .content)
-    }
-}
-
 public struct ThreadPromptSuggestionNotification: Codable, Sendable, Hashable {
     public var threadId: String
     public var seq: Int
@@ -6651,33 +5191,6 @@ public struct ThreadTaskSuggestedNotification: Codable, Sendable, Hashable {
         try c.encode(title, forKey: .title)
         try c.encode(prompt, forKey: .prompt)
         try c.encodeIfPresent(cwd, forKey: .cwd)
-    }
-}
-
-public struct ThreadCommandsChangedNotification: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var seq: Int
-
-    public init(threadId: String, seq: Int) {
-        self.threadId = threadId
-        self.seq = seq
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case seq = "seq"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.seq = try c.decode(Int.self, forKey: .seq)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(seq, forKey: .seq)
     }
 }
 
@@ -6807,122 +5320,6 @@ public struct ThreadAuthStatusNotification: Codable, Sendable, Hashable {
     }
 }
 
-public struct ThreadNotificationNotification: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var seq: Int
-    public var message: String
-    public var priority: String?
-
-    public init(threadId: String, seq: Int, message: String, priority: String? = nil) {
-        self.threadId = threadId
-        self.seq = seq
-        self.message = message
-        self.priority = priority
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case seq = "seq"
-        case message = "message"
-        case priority = "priority"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.seq = try c.decode(Int.self, forKey: .seq)
-        self.message = try c.decode(String.self, forKey: .message)
-        self.priority = try c.decodeIfPresent(String.self, forKey: .priority)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(seq, forKey: .seq)
-        try c.encode(message, forKey: .message)
-        try c.encodeIfPresent(priority, forKey: .priority)
-    }
-}
-
-public struct ThreadHookNotification: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var seq: Int
-    public var event: String
-    public var data: JSONValue
-
-    public init(threadId: String, seq: Int, event: String, data: JSONValue) {
-        self.threadId = threadId
-        self.seq = seq
-        self.event = event
-        self.data = data
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case seq = "seq"
-        case event = "event"
-        case data = "data"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.seq = try c.decode(Int.self, forKey: .seq)
-        self.event = try c.decode(String.self, forKey: .event)
-        self.data = try c.decode(JSONValue.self, forKey: .data)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(seq, forKey: .seq)
-        try c.encode(event, forKey: .event)
-        try c.encode(data, forKey: .data)
-    }
-}
-
-public struct ThreadRawEventNotification: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var seq: Int
-    public var sdkType: String
-    public var sdkSubtype: String?
-    public var message: JSONValue
-
-    public init(threadId: String, seq: Int, sdkType: String, sdkSubtype: String? = nil, message: JSONValue) {
-        self.threadId = threadId
-        self.seq = seq
-        self.sdkType = sdkType
-        self.sdkSubtype = sdkSubtype
-        self.message = message
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case seq = "seq"
-        case sdkType = "sdkType"
-        case sdkSubtype = "sdkSubtype"
-        case message = "message"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.seq = try c.decode(Int.self, forKey: .seq)
-        self.sdkType = try c.decode(String.self, forKey: .sdkType)
-        self.sdkSubtype = try c.decodeIfPresent(String.self, forKey: .sdkSubtype)
-        self.message = try c.decode(JSONValue.self, forKey: .message)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(seq, forKey: .seq)
-        try c.encode(sdkType, forKey: .sdkType)
-        try c.encodeIfPresent(sdkSubtype, forKey: .sdkSubtype)
-        try c.encode(message, forKey: .message)
-    }
-}
-
 public struct ServerRequestResolvedNotification: Codable, Sendable, Hashable {
     public var threadId: String
     public var seq: Int
@@ -6971,38 +5368,6 @@ public struct ServerRequestResolvedNotification: Codable, Sendable, Hashable {
     }
 }
 
-public struct ThreadStderrNotification: Codable, Sendable, Hashable {
-    public var threadId: String
-    public var seq: Int
-    public var text: String
-
-    public init(threadId: String, seq: Int, text: String) {
-        self.threadId = threadId
-        self.seq = seq
-        self.text = text
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case threadId = "threadId"
-        case seq = "seq"
-        case text = "text"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.threadId = try c.decode(String.self, forKey: .threadId)
-        self.seq = try c.decode(Int.self, forKey: .seq)
-        self.text = try c.decode(String.self, forKey: .text)
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(threadId, forKey: .threadId)
-        try c.encode(seq, forKey: .seq)
-        try c.encode(text, forKey: .text)
-    }
-}
-
 public struct ThreadSummaryChangedNotification: Codable, Sendable, Hashable {
     public var summary: ThreadSummary
 
@@ -7031,7 +5396,6 @@ public enum ServerNotification: Sendable, Hashable {
     case threadUpdated(ThreadUpdatedNotification)
     case threadStatusChanged(ThreadStatusChangedNotification)
     case threadClosed(ThreadClosedNotification)
-    case threadTokenUsageUpdated(ThreadTokenUsageUpdatedNotification)
     case turnStarted(TurnStartedNotification)
     case turnCompleted(TurnCompletedNotification)
     case turnUpdated(TurnUpdatedNotification)
@@ -7039,26 +5403,18 @@ public enum ServerNotification: Sendable, Hashable {
     case itemUpdated(ItemUpdatedNotification)
     case itemCompleted(ItemCompletedNotification)
     case itemAgentMessageDelta(ItemAgentMessageDeltaNotification)
-    case itemReasoningDelta(ItemReasoningDeltaNotification)
-    case itemToolCallInputDelta(ItemToolCallInputDeltaNotification)
     case itemToolCallProgress(ItemToolCallProgressNotification)
     case taskUpdated(TaskUpdatedNotification)
-    case threadQueuedInput(ThreadQueuedInputNotification)
     case threadPromptSuggestion(ThreadPromptSuggestionNotification)
     case threadTaskSuggested(ThreadTaskSuggestedNotification)
-    case threadCommandsChanged(ThreadCommandsChangedNotification)
     case threadApiRetry(ThreadApiRetryNotification)
     case threadRateLimit(ThreadRateLimitNotification)
     case threadAuthStatus(ThreadAuthStatusNotification)
-    case threadNotification(ThreadNotificationNotification)
-    case threadHook(ThreadHookNotification)
-    case threadRawEvent(ThreadRawEventNotification)
     case serverRequestResolved(ServerRequestResolvedNotification)
-    case threadStderr(ThreadStderrNotification)
     case threadSummaryChanged(ThreadSummaryChangedNotification)
     case unknown(method: String, params: JSONValue)
 
-    public static let methods: Set<String> = ["thread/started", "thread/updated", "thread/status/changed", "thread/closed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "turn/updated", "item/started", "item/updated", "item/completed", "item/agentMessage/delta", "item/reasoning/delta", "item/toolCall/inputDelta", "item/toolCall/progress", "task/updated", "thread/queuedInput", "thread/promptSuggestion", "thread/taskSuggested", "thread/commandsChanged", "thread/apiRetry", "thread/rateLimit", "thread/authStatus", "thread/notification", "thread/hook", "thread/rawEvent", "serverRequest/resolved", "thread/stderr", "thread/summaryChanged"]
+    public static let methods: Set<String> = ["thread/started", "thread/updated", "thread/status/changed", "thread/closed", "turn/started", "turn/completed", "turn/updated", "item/started", "item/updated", "item/completed", "item/agentMessage/delta", "item/toolCall/progress", "task/updated", "thread/promptSuggestion", "thread/taskSuggested", "thread/apiRetry", "thread/rateLimit", "thread/authStatus", "serverRequest/resolved", "thread/summaryChanged"]
 
     public init(method: String, params: Data, decoder: JSONDecoder = JSONDecoder()) throws {
         switch method {
@@ -7066,7 +5422,6 @@ public enum ServerNotification: Sendable, Hashable {
         case "thread/updated": self = .threadUpdated(try decoder.decode(ThreadUpdatedNotification.self, from: params))
         case "thread/status/changed": self = .threadStatusChanged(try decoder.decode(ThreadStatusChangedNotification.self, from: params))
         case "thread/closed": self = .threadClosed(try decoder.decode(ThreadClosedNotification.self, from: params))
-        case "thread/tokenUsage/updated": self = .threadTokenUsageUpdated(try decoder.decode(ThreadTokenUsageUpdatedNotification.self, from: params))
         case "turn/started": self = .turnStarted(try decoder.decode(TurnStartedNotification.self, from: params))
         case "turn/completed": self = .turnCompleted(try decoder.decode(TurnCompletedNotification.self, from: params))
         case "turn/updated": self = .turnUpdated(try decoder.decode(TurnUpdatedNotification.self, from: params))
@@ -7074,22 +5429,14 @@ public enum ServerNotification: Sendable, Hashable {
         case "item/updated": self = .itemUpdated(try decoder.decode(ItemUpdatedNotification.self, from: params))
         case "item/completed": self = .itemCompleted(try decoder.decode(ItemCompletedNotification.self, from: params))
         case "item/agentMessage/delta": self = .itemAgentMessageDelta(try decoder.decode(ItemAgentMessageDeltaNotification.self, from: params))
-        case "item/reasoning/delta": self = .itemReasoningDelta(try decoder.decode(ItemReasoningDeltaNotification.self, from: params))
-        case "item/toolCall/inputDelta": self = .itemToolCallInputDelta(try decoder.decode(ItemToolCallInputDeltaNotification.self, from: params))
         case "item/toolCall/progress": self = .itemToolCallProgress(try decoder.decode(ItemToolCallProgressNotification.self, from: params))
         case "task/updated": self = .taskUpdated(try decoder.decode(TaskUpdatedNotification.self, from: params))
-        case "thread/queuedInput": self = .threadQueuedInput(try decoder.decode(ThreadQueuedInputNotification.self, from: params))
         case "thread/promptSuggestion": self = .threadPromptSuggestion(try decoder.decode(ThreadPromptSuggestionNotification.self, from: params))
         case "thread/taskSuggested": self = .threadTaskSuggested(try decoder.decode(ThreadTaskSuggestedNotification.self, from: params))
-        case "thread/commandsChanged": self = .threadCommandsChanged(try decoder.decode(ThreadCommandsChangedNotification.self, from: params))
         case "thread/apiRetry": self = .threadApiRetry(try decoder.decode(ThreadApiRetryNotification.self, from: params))
         case "thread/rateLimit": self = .threadRateLimit(try decoder.decode(ThreadRateLimitNotification.self, from: params))
         case "thread/authStatus": self = .threadAuthStatus(try decoder.decode(ThreadAuthStatusNotification.self, from: params))
-        case "thread/notification": self = .threadNotification(try decoder.decode(ThreadNotificationNotification.self, from: params))
-        case "thread/hook": self = .threadHook(try decoder.decode(ThreadHookNotification.self, from: params))
-        case "thread/rawEvent": self = .threadRawEvent(try decoder.decode(ThreadRawEventNotification.self, from: params))
         case "serverRequest/resolved": self = .serverRequestResolved(try decoder.decode(ServerRequestResolvedNotification.self, from: params))
-        case "thread/stderr": self = .threadStderr(try decoder.decode(ThreadStderrNotification.self, from: params))
         case "thread/summaryChanged": self = .threadSummaryChanged(try decoder.decode(ThreadSummaryChangedNotification.self, from: params))
         default: self = .unknown(method: method, params: try decoder.decode(JSONValue.self, from: params))
         }
@@ -7102,7 +5449,6 @@ public enum ServerNotification: Sendable, Hashable {
         case .threadUpdated(let n): return n.threadId
         case .threadStatusChanged(let n): return n.threadId
         case .threadClosed(let n): return n.threadId
-        case .threadTokenUsageUpdated(let n): return n.threadId
         case .turnStarted(let n): return n.threadId
         case .turnCompleted(let n): return n.threadId
         case .turnUpdated(let n): return n.threadId
@@ -7110,22 +5456,14 @@ public enum ServerNotification: Sendable, Hashable {
         case .itemUpdated(let n): return n.threadId
         case .itemCompleted(let n): return n.threadId
         case .itemAgentMessageDelta(let n): return n.threadId
-        case .itemReasoningDelta(let n): return n.threadId
-        case .itemToolCallInputDelta(let n): return n.threadId
         case .itemToolCallProgress(let n): return n.threadId
         case .taskUpdated(let n): return n.threadId
-        case .threadQueuedInput(let n): return n.threadId
         case .threadPromptSuggestion(let n): return n.threadId
         case .threadTaskSuggested(let n): return n.threadId
-        case .threadCommandsChanged(let n): return n.threadId
         case .threadApiRetry(let n): return n.threadId
         case .threadRateLimit(let n): return n.threadId
         case .threadAuthStatus(let n): return n.threadId
-        case .threadNotification(let n): return n.threadId
-        case .threadHook(let n): return n.threadId
-        case .threadRawEvent(let n): return n.threadId
         case .serverRequestResolved(let n): return n.threadId
-        case .threadStderr(let n): return n.threadId
         case .threadSummaryChanged: return nil
         case .unknown(_, let p): return p["threadId"]?.stringValue
         }
@@ -7136,7 +5474,6 @@ public enum ServerNotification: Sendable, Hashable {
         case .threadUpdated(let n): return n.seq
         case .threadStatusChanged(let n): return n.seq
         case .threadClosed(let n): return n.seq
-        case .threadTokenUsageUpdated(let n): return n.seq
         case .turnStarted(let n): return n.seq
         case .turnCompleted(let n): return n.seq
         case .turnUpdated(let n): return n.seq
@@ -7144,22 +5481,14 @@ public enum ServerNotification: Sendable, Hashable {
         case .itemUpdated(let n): return n.seq
         case .itemCompleted(let n): return n.seq
         case .itemAgentMessageDelta(let n): return n.seq
-        case .itemReasoningDelta(let n): return n.seq
-        case .itemToolCallInputDelta(let n): return n.seq
         case .itemToolCallProgress(let n): return n.seq
         case .taskUpdated(let n): return n.seq
-        case .threadQueuedInput(let n): return n.seq
         case .threadPromptSuggestion(let n): return n.seq
         case .threadTaskSuggested(let n): return n.seq
-        case .threadCommandsChanged(let n): return n.seq
         case .threadApiRetry(let n): return n.seq
         case .threadRateLimit(let n): return n.seq
         case .threadAuthStatus(let n): return n.seq
-        case .threadNotification(let n): return n.seq
-        case .threadHook(let n): return n.seq
-        case .threadRawEvent(let n): return n.seq
         case .serverRequestResolved(let n): return n.seq
-        case .threadStderr(let n): return n.seq
         case .threadSummaryChanged: return nil
         case .unknown(_, let p): return p["seq"]?.intValue
         }

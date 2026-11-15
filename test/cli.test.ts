@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -133,12 +133,46 @@ describe('tether serve --stdio', () => {
     expect(init.host.mode).toBe('stdio');
     expect(init.host.pid).toBe(run.child.pid);
     expect(init.claude).toEqual({ path: box.claude, version: '9.9.9' });
-    expect((await c.request<any>('host/info', {}, 'info')).loadedThreads).toBe(0);
+    expect(await c.request<any>('thread/list', {}, 'list')).toEqual({ threads: [] });
     run.child.stdin!.end();
     expect(await run.exited).toBe(0);
     const lines = run.stdout().trim().split('\n').map((l) => JSON.parse(l));
-    expect(lines.map((l) => l.id)).toEqual(['init', 'info']);
+    expect(lines.map((l) => l.id)).toEqual(['init', 'list']);
     expect(run.stderr()).toContain('serving on stdio');
+  }, SLOW);
+
+  test("without TETHER_HOME neither reads nor writes the home's ~/.tether", async () => {
+    const box = sandbox();
+    const home = box.env.HOME!;
+    delete box.env.TETHER_HOME;
+    box.env.CLAUDE_CONFIG_DIR = join(home, '.claude');
+    // A chat with a background agent, and what a daemon kept of it in the real ~/.tether.
+    const sid = '6a1c4e2b-0000-4000-8000-000000000002';
+    const project = join(home, '.claude', 'projects', '-home-me');
+    mkdirSync(project, { recursive: true });
+    const records = [
+      { type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: 'go' } },
+      { type: 'assistant', uuid: 'a1', parentUuid: 'u1', message: { id: 'msg1', role: 'assistant', model: 'claude-test', content: [{ type: 'tool_use', id: 'agent1', name: 'Agent', input: { description: 'Look', run_in_background: true } }], stop_reason: 'tool_use' } },
+      { type: 'user', uuid: 'r1', parentUuid: 'a1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'agent1', content: 'Async agent launched successfully.\nagentId: t1' }] } },
+    ].map((r, i) => ({ ...r, sessionId: sid, cwd: '/home/me', isSidechain: false, userType: 'external', timestamp: new Date(Date.parse('2026-10-06T10:00:00Z') + i * 1000).toISOString() }));
+    writeFileSync(join(project, `${sid}.jsonl`), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    const tasks = join(home, '.tether', 'tasks');
+    mkdirSync(tasks, { recursive: true });
+    const kept = JSON.stringify({ tasks: [{ id: 'agent1', toolUseId: 'agent1', taskId: 't1', kind: 'agent', title: 'Look', status: 'running', backgrounded: true, usage: { totalTokens: 500 } }] });
+    writeFileSync(join(tasks, `${sid}.json`), kept);
+
+    const run = tether(box, 'serve', '--stdio');
+    const c = stdioClient(run.child);
+    await initialize(c);
+    const read = await c.request<any>('thread/read', { threadId: sid, cwd: '/home/me' }, 'read');
+    expect(read.tasks.map((t: any) => t.id)).toEqual(['agent1']);
+    // What only the kept file says is not merged in.
+    expect(read.tasks[0].usage).toBeUndefined();
+    run.child.stdin!.end();
+    expect(await run.exited).toBe(0);
+    expect(readdirSync(join(home, '.tether'))).toEqual(['tasks']);
+    expect(readdirSync(tasks)).toEqual([`${sid}.json`]);
+    expect(readFileSync(join(tasks, `${sid}.json`), 'utf8')).toBe(kept);
   }, SLOW);
 });
 
@@ -169,13 +203,6 @@ describe('tether daemon', () => {
     expect(await connect.exited).toBe(0);
     expect((await initialize(await socketClient(box.socket))).host.pid).toBe(daemon.child.pid);
   }, SLOW);
-
-  test('offers scheduled tasks', async () => {
-    const c = await socketClient(box.socket);
-    await initialize(c);
-    expect(await c.request<any>('schedule/list', {}, 'l')).toEqual({ tasks: [] });
-    c.close();
-  });
 
   test('a second one leaves the first serving', async () => {
     const second = tether(box, 'daemon');

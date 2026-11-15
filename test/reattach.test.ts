@@ -17,7 +17,7 @@ const liveThread = (threadId = 'thread-1') => new LiveThread({ threadId, cwd: '/
 describe('event numbering across streams', () => {
   test('a thread restarted later numbers above everything the earlier stream sent', async () => {
     const first = liveThread();
-    for (let i = 0; i < 50; i++) first.emit('thread/stderr', { text: `line ${i}` });
+    for (let i = 0; i < 50; i++) first.emit('thread/promptSuggestion', { suggestion: `line ${i}` });
     await Bun.sleep(2);
     const second = liveThread();
     expect(second.threadInfo().lastSeq).toBeGreaterThan(first.threadInfo().lastSeq);
@@ -31,7 +31,7 @@ describe('event numbering across streams', () => {
 
   test('a client holding an older stream’s seq is told there is a gap', () => {
     const t = liveThread();
-    t.emit('thread/stderr', { text: 'x' });
+    t.emit('thread/promptSuggestion', { suggestion: 'x' });
     const sent: number[] = [];
     const client = { id: 'c', notify: (_: string, p: any) => sent.push(p.seq), request: () => new Promise(() => {}), cancelRequest() {} };
     expect(t.subscribe(client, 19)).toEqual({ replayed: 1, gap: true });
@@ -48,7 +48,7 @@ describe('event numbering across streams', () => {
   test('a full replay buffer still replays the latest events, and says when older ones are gone', () => {
     const t = liveThread();
     const first = t.threadInfo().lastSeq + 1;
-    for (let i = 0; i < 30_000; i++) t.emit('thread/stderr', { text: `line ${i}` });
+    for (let i = 0; i < 30_000; i++) t.emit('thread/promptSuggestion', { suggestion: `line ${i}` });
     const last = t.threadInfo().lastSeq;
     const sent: number[] = [];
     const client = { id: 'c', notify: (_: string, p: any) => sent.push(p.seq), request: () => new Promise(() => {}), cancelRequest() {} };

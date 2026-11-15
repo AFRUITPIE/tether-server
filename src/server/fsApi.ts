@@ -32,26 +32,6 @@ export async function list(path: string, showHidden = false) {
   return { entries };
 }
 
-export async function read(path: string, maxBytes = 1_000_000) {
-  const file = expand(path);
-  const fh = await open(file, 'r').catch((e) => {
-    throw new RpcError(ErrorCodes.invalidParams, e.message);
-  });
-  try {
-    const size = (await fh.stat()).size;
-    const buf = Buffer.alloc(Math.min(size, maxBytes));
-    await fh.read(buf, 0, buf.length, 0);
-    const binary = buf.subarray(0, 8000).includes(0);
-    return {
-      content: binary ? buf.toString('base64') : buf.toString('utf8'),
-      encoding: binary ? ('base64' as const) : ('utf-8' as const),
-      truncated: size > maxBytes,
-    };
-  } finally {
-    await fh.close();
-  }
-}
-
 /** Fuzzy path search for @-mentions. Uses git ls-files (respects .gitignore) with a readdir fallback. */
 export async function search(cwd: string, q: string, limit = 50) {
   const root = expand(cwd);

@@ -162,10 +162,6 @@ describe('/loop', async () => {
     expect(shape(read)).toEqual(shape(streamed.snapshot));
   });
 
-  test('the command lifecycle is no raw event any more', () => {
-    expect(streamed.out.some((e) => e.method === 'thread/rawEvent' && (e.body as any).sdkType === 'command_lifecycle')).toBe(false);
-  });
-
   test("the schedule's calls keep their inputs and outputs for the client", () => {
     const create = read.items.find((i) => i.type === 'toolCall' && i.name === 'CronCreate') as any;
     expect(create.kind).toBe('schedule');

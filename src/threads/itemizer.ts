@@ -376,16 +376,10 @@ export class Itemizer {
             },
           },
         ];
+      // A message Tether doesn't model is ignored, never an error.
       default:
-        return [this.raw(msg)];
+        return [];
     }
-  }
-
-  private raw(msg: AnyMsg): Emission {
-    return {
-      method: 'thread/rawEvent',
-      body: { sdkType: String(msg.type), ...(msg.subtype ? { sdkSubtype: String(msg.subtype) } : {}), message: msg },
-    };
   }
 
   private notice(msg: AnyMsg, kind: string, text: string, level?: 'info' | 'warning' | 'error'): Emission[] {
@@ -428,7 +422,7 @@ export class Itemizer {
       // prompt's own output comes as a `<local-command-stdout>` message).
       case 'local_command': {
         const goal = msg.commandRun?.command === 'goal' && typeof msg.content === 'string' ? goalFromCommandOutput(msg.content) : undefined;
-        return goal ? this.goalNotice(msg.uuid, goal) : [this.raw(msg)];
+        return goal ? this.goalNotice(msg.uuid, goal) : [];
       }
       case 'informational':
         return this.notice(msg, 'informational', msg.content ?? '', msg.level === 'warning' ? 'warning' : 'info');
@@ -436,7 +430,7 @@ export class Itemizer {
         return this.notice(msg, 'modelFallback', msg.content ?? `Switched to ${msg.fallback_model}`, 'warning');
       case 'permission_denied': {
         if (msg.tool_use_id) this.denied.set(msg.tool_use_id, msg.message ?? 'denied');
-        return [this.raw(msg)];
+        return [];
       }
       case 'api_retry':
         return [
@@ -475,16 +469,9 @@ export class Itemizer {
         if (Array.isArray(msg.tasks)) this.backgroundTaskIds = new Set(msg.tasks.map((t: AnyMsg) => String(t.task_id)));
         this.tasksDirty = true;
         return [];
-      case 'commands_changed':
-        return [{ method: 'thread/commandsChanged', body: {} }];
-      case 'notification':
-        return [{ method: 'thread/notification', body: { message: msg.text ?? '', priority: msg.priority } }];
-      case 'hook_started':
-      case 'hook_progress':
-      case 'hook_response':
-        return [{ method: 'thread/hook', body: { event: msg.subtype, data: msg } }];
+      // Including `commands_changed`, `notification` and hooks' progress: nothing in them is the chat's.
       default:
-        return [this.raw(msg)];
+        return [];
     }
   }
 
@@ -897,9 +884,6 @@ export class Itemizer {
           out.push({ method: 'item/agentMessage/delta', body: { itemId: item.id, delta: d.text } });
         } else if (d.type === 'thinking_delta' && item?.type === 'reasoning') {
           item.text += d.thinking;
-          out.push({ method: 'item/reasoning/delta', body: { itemId: item.id, delta: d.thinking } });
-        } else if (d.type === 'input_json_delta' && item?.type === 'toolCall') {
-          out.push({ method: 'item/toolCall/inputDelta', body: { itemId: item.id, partialJson: d.partial_json } });
         }
         break;
       }
@@ -1515,10 +1499,6 @@ export class Itemizer {
       out.push(...this.addCompleted(t));
     }
     out.push(...this.turnEvent('turn/completed', turn));
-    out.push({
-      method: 'thread/tokenUsage/updated',
-      body: { ...result.usage, totalCostUsd: result.totalCostUsd },
-    });
     this.lastTurnId = turn.id;
     this.turn = null;
     this.interruptRequested = false;

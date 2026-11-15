@@ -1,15 +1,12 @@
 import { z } from 'zod';
 import {
   AccountInfo,
-  AgentInfo,
   EffortLevel,
   EnvOverrides,
   JsonValue,
   McpServerStatus,
   ModelInfo,
   PermissionMode,
-  ScheduleCadence,
-  ScheduledTask,
   SlashCommand,
   ThinkingSetting,
   ThreadInfo,
@@ -20,8 +17,6 @@ import { DiffHunk, Item, Turn } from './items.ts';
 import { TaskState } from './tasks.ts';
 
 const Empty = z.object({});
-/** The scopes `claude plugin` takes. Inlined, so each method's params keep a nested `Scope` in Swift. */
-const PluginScope = z.enum(['user', 'project', 'local']);
 const ThreadRef = z.object({ threadId: z.string() });
 
 /** Client → server requests. Each entry: params and result schema. */
@@ -34,7 +29,6 @@ export const Methods = {
       capabilities: z
         .object({
           experimentalApi: z.boolean().optional(),
-          optOutNotificationMethods: z.array(z.string()).optional(),
         })
         .optional(),
       /** Env overrides applied to every thread this connection starts (e.g. AWS_PROFILE). */
@@ -60,15 +54,6 @@ export const Methods = {
     }),
   },
 
-  'host/info': {
-    params: Empty,
-    result: z.object({
-      loadedThreads: z.number().int(),
-      uptimeSeconds: z.number(),
-      claude: z.object({ path: z.string(), version: z.string() }),
-    }),
-  },
-
   /** Ask the daemon to exit (used for upgrades). Accepted only when no thread is running or waiting on input; otherwise it exits once they settle. */
   'host/requestShutdown': {
     params: z.object({ reason: z.string().optional() }),
@@ -78,11 +63,6 @@ export const Methods = {
   'account/read': {
     params: z.object({ cwd: z.string().optional() }),
     result: z.object({ account: AccountInfo }),
-  },
-
-  'account/usage': {
-    params: z.object({ cwd: z.string().optional() }),
-    result: z.object({ usage: JsonValue }),
   },
 
   'model/list': {
@@ -109,16 +89,6 @@ export const Methods = {
   'command/list': {
     params: z.object({ cwd: z.string().optional(), threadId: z.string().optional() }),
     result: z.object({ commands: z.array(SlashCommand) }),
-  },
-
-  'agent/list': {
-    params: z.object({ cwd: z.string().optional(), threadId: z.string().optional() }),
-    result: z.object({ agents: z.array(AgentInfo) }),
-  },
-
-  'outputStyle/list': {
-    params: z.object({ cwd: z.string().optional() }),
-    result: z.object({ current: z.string(), available: z.array(z.string()) }),
   },
 
   'thread/list': {
@@ -255,8 +225,6 @@ export const Methods = {
     result: z.object({ thread: ThreadInfo, replayed: z.number().int(), gap: z.boolean(), tasks: z.array(TaskState) }),
   },
   'thread/unsubscribe': { params: ThreadRef, result: Empty },
-  'thread/loaded': { params: Empty, result: z.object({ threads: z.array(ThreadInfo) }) },
-  'thread/close': { params: ThreadRef, result: Empty },
   'thread/rename': { params: z.object({ threadId: z.string(), title: z.string() }), result: Empty },
   'thread/tag': { params: z.object({ threadId: z.string(), tag: z.string().nullable() }), result: Empty },
   'thread/delete': { params: ThreadRef, result: Empty },
@@ -264,12 +232,7 @@ export const Methods = {
   'thread/setModel': { params: z.object({ threadId: z.string(), model: z.string().nullable() }), result: Empty },
   'thread/setEffort': { params: z.object({ threadId: z.string(), effort: EffortLevel.nullable() }), result: Empty },
   'thread/setFastMode': { params: z.object({ threadId: z.string(), enabled: z.boolean() }), result: Empty },
-  'thread/setThinking': { params: z.object({ threadId: z.string(), thinking: ThinkingSetting }), result: Empty },
   'thread/setPermissionMode': { params: z.object({ threadId: z.string(), mode: PermissionMode }), result: Empty },
-  'thread/applySettings': {
-    params: z.object({ threadId: z.string(), settings: z.record(z.string(), JsonValue) }),
-    result: Empty,
-  },
 
   'thread/contextUsage': {
     params: z.object({ threadId: z.string(), detail: z.enum(['summary', 'full']).optional() }),
@@ -309,26 +272,12 @@ export const Methods = {
   'mcp/status': { params: ThreadRef, result: z.object({ servers: z.array(McpServerStatus) }) },
   'mcp/reconnect': { params: z.object({ threadId: z.string(), name: z.string() }), result: Empty },
   'mcp/toggle': { params: z.object({ threadId: z.string(), name: z.string(), enabled: z.boolean() }), result: Empty },
-  'mcp/setServers': {
-    params: z.object({ threadId: z.string(), servers: z.record(z.string(), JsonValue) }),
-    result: z.object({ result: JsonValue }),
-  },
-
-  'plugins/reload': { params: ThreadRef, result: z.object({ result: JsonValue }) },
-  'skills/reload': { params: ThreadRef, result: z.object({ result: JsonValue }) },
-  'outputStyles/reload': { params: ThreadRef, result: z.object({ result: JsonValue }) },
-
-  'settings/resolve': { params: z.object({ cwd: z.string() }), result: z.object({ settings: JsonValue }) },
 
   'fs/list': {
     params: z.object({ path: z.string(), showHidden: z.boolean().optional() }),
     result: z.object({
       entries: z.array(z.object({ name: z.string(), path: z.string(), isDirectory: z.boolean(), size: z.number() })),
     }),
-  },
-  'fs/read': {
-    params: z.object({ path: z.string(), maxBytes: z.number().int().optional() }),
-    result: z.object({ content: z.string(), encoding: z.enum(['utf-8', 'base64']), truncated: z.boolean() }),
   },
   'fs/search': {
     params: z.object({ cwd: z.string(), query: z.string(), limit: z.number().int().optional() }),
@@ -405,52 +354,6 @@ export const Methods = {
     }),
     result: Empty,
   },
-
-  // ---- plugins (the host's `claude plugin`); `scope` is the settings file the plugin is in ----
-  /** Installed plugins, and those the host's marketplaces offer, as `claude plugin list --json --available` reports them. */
-  'plugin/list': {
-    params: z.object({ cwd: z.string().optional() }),
-    result: z.object({ installed: z.array(JsonValue), available: z.array(JsonValue) }),
-  },
-  'plugin/install': {
-    params: z.object({ pluginId: z.string(), scope: PluginScope, cwd: z.string().optional() }),
-    result: Empty,
-  },
-  'plugin/uninstall': {
-    params: z.object({ pluginId: z.string(), scope: PluginScope.optional(), cwd: z.string().optional() }),
-    result: Empty,
-  },
-  'plugin/setEnabled': {
-    params: z.object({ pluginId: z.string(), enabled: z.boolean(), scope: PluginScope.optional(), cwd: z.string().optional() }),
-    result: Empty,
-  },
-
-  // ---- scheduled tasks (kept and run by the daemon) ----
-  'schedule/list': { params: Empty, result: z.object({ tasks: z.array(ScheduledTask) }) },
-  /**
-   * Creates the task when `id` is absent, else replaces it whole: an optional field left out is
-   * cleared. Only what runs recorded (`lastRunAt`, `lastThreadId`, `lastError`) is kept, and
-   * `nextRunAt` is worked out afresh. An enabled task needs a prompt that isn't blank.
-   */
-  'schedule/save': {
-    params: z.object({
-      id: z.string().optional(),
-      name: z.string(),
-      prompt: z.string(),
-      cwd: z.string(),
-      model: z.string().optional(),
-      permissionMode: PermissionMode.optional(),
-      cadence: ScheduleCadence,
-      hour: z.number().int().min(0).max(23),
-      minute: z.number().int().min(0).max(59),
-      weekday: z.number().int().min(1).max(7).optional(),
-      enabled: z.boolean(),
-    }),
-    result: z.object({ task: ScheduledTask }),
-  },
-  'schedule/delete': { params: z.object({ id: z.string() }), result: Empty },
-  /** Runs the task now, whatever its schedule; the new thread's id. */
-  'schedule/run': { params: z.object({ id: z.string() }), result: z.object({ threadId: z.string() }) },
 } as const;
 
 export type MethodName = keyof typeof Methods;

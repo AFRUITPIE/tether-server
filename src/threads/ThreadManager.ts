@@ -14,12 +14,11 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
 import { type ClaudeBinary, resolveClaude } from '../claude.ts';
-import { PermissionMode, type Item, type Params, type Result, type ScheduledTask, type TaskState, type ThreadSummary, type Turn } from '../protocol/index.ts';
-import type { Scheduler } from './Scheduler.ts';
+import { PermissionMode, type Item, type Params, type Result, type TaskState, type ThreadSummary, type Turn } from '../protocol/index.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { createWorktree, removeWorktree, worktreeName } from '../server/fsApi.ts';
 import { FollowedThread } from './FollowedThread.ts';
-import { LiveThread, TETHER_VERSION, type LiveThreadOptions } from './LiveThread.ts';
+import { LiveThread, TETHER_VERSION } from './LiveThread.ts';
 import { PushQueue } from './pushQueue.ts';
 import { readTranscript, sessionDir, transcriptCwd, transcriptFile, transcriptSettings, type SessionSettings } from './transcript.ts';
 import { isSafeId, readAgentItems, RECENT_RUN_MS } from './workflows.ts';
@@ -28,8 +27,6 @@ import type { TaskStore } from './taskStore.ts';
 import { stat } from 'node:fs/promises';
 
 const IDLE_EVICT_MS = Number(process.env.TETHER_IDLE_EVICT_MS ?? 30 * 60_000);
-/** How long a scheduled run waits, with nobody watching, for a person to answer before it's denied. */
-const SCHEDULED_REQUEST_TIMEOUT_MS = Number(process.env.TETHER_SCHEDULED_REQUEST_TIMEOUT_MS ?? 10 * 60_000);
 const CATALOG_TTL_MS = 5 * 60_000;
 /**
  * How long a followed chat no client watches is kept after it was last read: a client that reads
@@ -50,7 +47,6 @@ export class ThreadManager {
   /** The model a catalog session started on, the host's own, to go back to after asking. */
   private hostModels = new WeakMap<Query, string>();
   private sweeper: ReturnType<typeof setInterval>;
-  readonly startedAt = Date.now();
   /** Set by the daemon; invoked once a requested shutdown can proceed without killing work. */
   onDrainRequest?: () => void;
   private draining = false;
@@ -120,28 +116,13 @@ export class ThreadManager {
     this.followed.delete(threadId);
   }
 
-  /**
-   * The environment the last client to connect with one asked threads to run with (say
-   * AWS_PROFILE), for scheduled runs, which have no client of their own. Kept in memory only, as it
-   * can hold credentials: a daemon starts when a client connects, and that client sends it.
-   */
-  private clientEnv: Record<string, string> = {};
-
-  noteClientEnv(env: Record<string, string>) {
-    this.clientEnv = { ...env };
-  }
-
-  async start(
-    p: Params<'thread/start'>,
-    env: Record<string, string>,
-    extra: Pick<LiveThreadOptions, 'unattended'> = {},
-  ): Promise<LiveThread> {
+  async start(p: Params<'thread/start'>, env: Record<string, string>): Promise<LiveThread> {
     const threadId = randomUUID();
     // Before the worktree, which a missing claude would otherwise leave behind.
     const claude = await this.runnable({ ...env, ...(p.env ?? {}) });
-    // Asked for no permission mode, a thread a person starts starts as an interactive session
-    // would: the SDK's own start is always `default`. A scheduled run keeps that.
-    if (!p.permissionMode && !extra.unattended) {
+    // Asked for no permission mode, a thread starts as an interactive session would: the SDK's own
+    // start is always `default`.
+    if (!p.permissionMode) {
       const d = await this.defaults(p.cwd, { ...env, ...(p.env ?? {}) }, p.model).catch(() => undefined);
       if (d) p = { ...p, permissionMode: d.permissionMode };
     }
@@ -156,7 +137,6 @@ export class ThreadManager {
       env: { ...env, ...(p.env ?? {}) },
       mode: 'new',
       log: this.log,
-      ...extra,
       onTasks: (tasks) => this.taskStore?.put(threadId, tasks),
       onSummaryChange: () => this.summaryChanged(threadId),
       onExit: (lt) => this.onExit(lt),
@@ -178,24 +158,6 @@ export class ThreadManager {
     if (p.generateTitle) void t.nameChat(p.input?.flatMap((i) => (i.type === 'text' ? [i.text] : [])).join('\n'));
     this.log(`thread ${threadId} started in ${cwd}`);
     return t;
-  }
-
-  /** The daemon's scheduled tasks; absent in `serve --stdio`, which would run them twice. */
-  scheduler?: Scheduler;
-
-  /**
-   * A scheduled task's run: a new thread in its folder, sent its prompt, with the environment
-   * clients last asked for. Nobody is there to answer it, so what it asks a person is denied after
-   * a while, and `onUnanswered` told why.
-   */
-  async startScheduled(task: ScheduledTask, onUnanswered?: (threadId: string, message: string) => void): Promise<string> {
-    const t: LiveThread = await this.start(
-      { cwd: task.cwd, title: task.name, ...(task.model ? { model: task.model } : {}), ...(task.permissionMode ? { permissionMode: task.permissionMode } : {}) },
-      this.clientEnv,
-      { unattended: { requestTimeoutMs: SCHEDULED_REQUEST_TIMEOUT_MS, onUnanswered: (message) => onUnanswered?.(t.id, message) } },
-    );
-    t.send([{ type: 'text', text: task.prompt }]);
-    return t.id;
   }
 
   /** Load a stored session into a live query (no-op if already loaded). */
@@ -338,22 +300,15 @@ export class ThreadManager {
   get busy(): boolean {
     for (const t of this.threads.values()) {
       if (t.isExited) continue;
-      // A scheduled run waiting on a person nobody's watching would only be denied in the end.
-      if (t.waitingUnattended && !t.hasBackgroundWork) continue;
       if (t.status === 'running' || t.status === 'requiresAction' || t.status === 'starting' || t.hasPendingRequests || t.hasBackgroundWork)
         return true;
     }
     return false;
   }
 
-  /**
-   * Graceful shutdown for upgrades: never kills a running or waiting turn, though a scheduled run
-   * waiting on nobody doesn't count. No scheduled task starts meanwhile; the next daemon runs what
-   * came due.
-   */
+  /** Graceful shutdown for upgrades: never kills a running or waiting turn. */
   requestShutdown(): boolean {
     this.draining = true;
-    this.scheduler?.stop();
     if (this.busy) return false;
     setTimeout(() => this.onDrainRequest?.(), 50);
     return true;
@@ -397,8 +352,6 @@ export class ThreadManager {
     for (const t of this.summaryTimers.values()) clearTimeout(t);
     this.summaryTimers.clear();
     this.taskStore?.flush();
-    for (const t of this.threads.values()) if (t.waitingUnattended) t.abandonUnattended('Tether stopped');
-    this.scheduler?.stop();
     clearInterval(this.sweeper);
     for (const t of this.threads.values()) t.close();
     for (const c of this.catalogs.values()) c.q.close();

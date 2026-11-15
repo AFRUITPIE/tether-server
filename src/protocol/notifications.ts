@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { JsonValue, ThreadInfo, ThreadStatus, ThreadSummary, UserInput } from './common.ts';
+import { JsonValue, ThreadInfo, ThreadStatus, ThreadSummary } from './common.ts';
 import { Item, Turn } from './items.ts';
 import { TaskState } from './tasks.ts';
 
@@ -18,14 +18,6 @@ export const Notifications = {
     backgroundTasks: z.number().int().optional(),
   }),
   'thread/closed': z.object({ ...T, reason: z.string().optional() }),
-  'thread/tokenUsage/updated': z.object({
-    ...T,
-    inputTokens: z.number(),
-    outputTokens: z.number(),
-    cacheReadInputTokens: z.number(),
-    cacheCreationInputTokens: z.number(),
-    totalCostUsd: z.number(),
-  }),
 
   'turn/started': z.object({ ...T, turn: Turn }),
   'turn/completed': z.object({ ...T, turn: Turn }),
@@ -36,8 +28,6 @@ export const Notifications = {
   'item/updated': z.object({ ...T, item: Item }),
   'item/completed': z.object({ ...T, item: Item }),
   'item/agentMessage/delta': z.object({ ...T, itemId: z.string(), delta: z.string() }),
-  'item/reasoning/delta': z.object({ ...T, itemId: z.string(), delta: z.string() }),
-  'item/toolCall/inputDelta': z.object({ ...T, itemId: z.string(), partialJson: z.string() }),
   'item/toolCall/progress': z.object({
     ...T,
     itemId: z.string(),
@@ -52,11 +42,9 @@ export const Notifications = {
    */
   'task/updated': z.object({ ...T, task: TaskState }),
 
-  'thread/queuedInput': z.object({ ...T, messageId: z.string(), content: z.array(UserInput) }),
   'thread/promptSuggestion': z.object({ ...T, suggestion: z.string() }),
   /** Claude suggested a separate task (session tools' suggest_task): a chip that starts it in a new thread. */
   'thread/taskSuggested': z.object({ ...T, title: z.string(), prompt: z.string(), cwd: z.string().optional() }),
-  'thread/commandsChanged': z.object({ ...T }),
 
   'thread/apiRetry': z.object({
     ...T,
@@ -73,18 +61,12 @@ export const Notifications = {
     output: z.array(z.string()),
     error: z.string().optional(),
   }),
-  'thread/notification': z.object({ ...T, message: z.string(), priority: z.string().optional() }),
-  'thread/hook': z.object({ ...T, event: z.string(), data: JsonValue }),
-  /** Any SDK message Tether does not model. Forwarded verbatim so newer CLIs never break clients. */
-  'thread/rawEvent': z.object({ ...T, sdkType: z.string(), sdkSubtype: z.string().optional(), message: JsonValue }),
 
   'serverRequest/resolved': z.object({
     ...T,
     requestId: z.string(),
     reason: z.enum(['answered', 'cancelled']),
   }),
-
-  'thread/stderr': z.object({ ...T, text: z.string() }),
 
   /**
    * Host-wide, not a thread's stream (no `threadId` envelope, no `seq`): a chat's summary changed —
