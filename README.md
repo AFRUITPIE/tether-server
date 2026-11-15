@@ -8,10 +8,10 @@ tether daemon          # the daemon: owns live Claude sessions; turns survive cl
 tether serve --stdio   # single-client, in-process mode (tests)
 ```
 
-A host runs it from npm, with Node 18 or later. The Tether app runs this, pinned to its version:
+A host runs it from npm, with Node 18 or later. The Sundown app runs this, pinned to its version:
 
 ```
-npx -y tether-server@<version> connect
+npx --yes tether-server@<version> connect
 ```
 
 `npm install -g tether-server` installs it instead. The package is one bundled file with no dependencies and no install scripts, published from this repository's workflow with npm provenance.
@@ -21,7 +21,7 @@ npx -y tether-server@<version> connect
 
 ## Protocol
 
-Version 2 (`PROTOCOL_VERSION`; clients must send `protocolVersion: 2` in `initialize`). `schema/tether.schema.json` has every method, notification and type; `AGENTS.md` ("Protocol 2") what each means. In short:
+Version 2 (`PROTOCOL_VERSION`; clients must send `protocolVersion: 2` in `initialize`). `schema/tether.schema.json` has every method, notification and type; the Zod files in `src/protocol` document what each means. In short:
 
 - Every thread-scoped notification carries `threadId` and a per-thread `seq`; a read's `historySeq` says which events its snapshot includes, and `thread/subscribe` with `afterSeq` replays the rest (`gap` when it can't).
 - Edit calls carry their `edit` (hunks, lines added and removed, bounded), and a finished turn its `edits` totals.
@@ -37,7 +37,7 @@ mise install
 mise run install
 mise run test          # unit tests (itemizer against recorded SDK fixtures)
 mise run typecheck
-mise run e2e           # real `claude`, haiku model
+mise run e2e           # real `claude`, haiku model (spends tokens)
 mise run gen           # regenerate JSON Schema + Swift
 mise run swift-test    # Swift decoding tests against recorded wire traffic
 mise run compile       # standalone binaries for darwin/linux × arm64/x64 → dist/
