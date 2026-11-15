@@ -92,8 +92,7 @@ export type LiveThreadOptions = {
   onTasks?: (tasks: TaskState[]) => void;
   /** Told when what the chat list shows of it may have changed: its status, background count or title. */
   onSummaryChange?: () => void;
-  stderr?: (text: string) => void;
-  /** The daemon's log. */
+  /** The daemon's log: its own lines, and Claude Code's stderr (`claudeStderrLines`). */
   log?: (msg: string) => void;
 };
 
@@ -106,6 +105,21 @@ const DEBUG_TASKS = !!process.env.TETHER_DEBUG_TASKS;
 const DEBUG_MESSAGES = !!process.env.TETHER_DEBUG_MESSAGES;
 
 const MAX_BUFFERED_EVENTS = 20_000;
+
+/** The longest line of Claude Code's stderr the daemon's log keeps; nothing rotates that log. */
+export const MAX_STDERR_LINE = 2000;
+
+/**
+ * Claude Code's stderr as daemon log lines: each non-blank line prefixed with the thread, and cut
+ * to `MAX_STDERR_LINE` so one chatty or binary line can't swell the log. A chunk may end mid-line;
+ * each piece is logged as it comes rather than held back.
+ */
+export function claudeStderrLines(threadId: string, data: string): string[] {
+  return data
+    .split(/\r?\n/)
+    .filter((l) => l.trim())
+    .map((l) => `claude ${threadId}: ${l.length > MAX_STDERR_LINE ? `${l.slice(0, MAX_STDERR_LINE)}… (${l.length - MAX_STDERR_LINE} more chars)` : l}`);
+}
 
 /** The in-process MCP server the session tools are served from, and the tools it registers. */
 const SESSION_TOOL_SERVER = 'tether';
@@ -224,7 +238,9 @@ export class LiveThread {
       // What will wake the session later (CronCreate, ScheduleWakeup, /loop): no control request
       // lists them, but every Stop hook is told, after each turn. It changes nothing.
       hooks: { Stop: [{ hooks: [async (input) => (this.noteSessionCrons((input as any).session_crons), {})] }] },
-      stderr: (data) => o.stderr?.(data),
+      stderr: (data) => {
+        for (const line of claudeStderrLines(o.threadId, data)) o.log?.(line);
+      },
       ...(o.mode === 'new' ? { sessionId: o.threadId } : { resume: o.threadId }),
       ...(o.resumeAt ? { resumeSessionAt: o.resumeAt } : {}),
       ...(o.model ? { model: o.model } : {}),
@@ -455,7 +471,7 @@ export class LiveThread {
     const title: string | null = await (this.q as any)
       .generateSessionTitle(prompt, { persist: true })
       .catch((e: Error) => {
-        this.opts.stderr?.(`couldn't name the chat: ${e.message}\n`);
+        this.opts.log?.(`thread ${this.id}: couldn't name the chat: ${e.message}`);
         return null;
       });
     if (title && title !== this.info.title) {

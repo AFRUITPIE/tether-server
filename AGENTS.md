@@ -11,7 +11,7 @@ the generated `TetherProtocol` Swift package published from this repo.
 ```text
 tether connect         stdio <-> daemon socket; starts the daemon, or replaces one of another version (what the app runs)
 tether daemon          the daemon, on <TETHER_HOME>/tether.sock (mode 0600; TETHER_HOME defaults to ~/.tether)
-tether serve --stdio   one client, in-process (development, tests)
+tether serve --stdio   one client, in-process (development, tests); keeps task state only under an explicit TETHER_HOME
 ```
 
 There are also `tether status` and `tether version [--json]`. The app runs `npx --yes tether-server@<version> connect`
@@ -77,13 +77,15 @@ in the host's login shell, at the version it pins, with no probe or install step
 - **Unmodeled SDK messages are ignored, never errors.** Shapes change between Claude Code versions, so read optional
   fields defensively.
 - **Ids that name paths** (session, thread, workflow run, agent) must pass `isSafeId` first.
-- **stdout carries protocol only.** Logs go to stderr; the daemon's stderr is `<TETHER_HOME>/daemon.log`.
+- **stdout carries protocol only.** Logs go to stderr; the daemon's stderr is `<TETHER_HOME>/daemon.log`, which nothing
+  rotates. Claude Code's stderr goes there too, per thread and with long lines cut.
 - **Host config stays the host's:** `settingSources: ['user','project','local']`, the `claude_code` preset prompt, and client
   env layered over the host's. Human input is sent with `origin: { kind: 'human' }`.
 - **Session tools:** only the `tether` server's own tools (`SESSION_TOOL_NAMES`), on threads that requested them, skip the
   permission prompt.
 - **Isolation:** tests must never touch the real `~/.tether`, daemon or Claude sessions. Use temp `TETHER_HOME`
-  (and `HOME`/`CLAUDE_CONFIG_DIR` for transcripts) and a stand-in `claude`. `serve --stdio` writes `<TETHER_HOME>/tasks` too.
+  (and `HOME`/`CLAUDE_CONFIG_DIR` for transcripts) and a stand-in `claude`. `serve --stdio` uses `<TETHER_HOME>/tasks`
+  only when `TETHER_HOME` is set; every E2E script sets a temp one.
 
 ## Subsystems: where to read and what will surprise you
 

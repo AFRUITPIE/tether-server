@@ -1,5 +1,5 @@
 // End-to-end smoke test against the real `claude` on PATH (uses the haiku model).
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TetherClient } from '../src/client/TetherClient.ts';
@@ -9,8 +9,13 @@ const model = { model: process.env.TETHER_E2E_MODEL ?? 'haiku', ...(process.env.
 
 const server = process.argv[2] ? process.argv.slice(2) : ['bun', 'run', join(import.meta.dir, '../src/cli.ts'), 'serve', '--stdio'];
 const cwd = mkdtempSync(join(tmpdir(), 'tether-e2e-'));
+// Its own TETHER_HOME, shared by both server processes below so the task store carries across, and
+// removed however the run ends: never the real ~/.tether.
+const home = mkdtempSync(join(tmpdir(), 'tether-home-'));
+const env = { TETHER_HOME: home };
+process.on('exit', () => rmSync(home, { recursive: true, force: true }));
 writeFileSync(join(cwd, 'hello.txt'), 'hello from tether\n');
-const c = TetherClient.spawn(server);
+const c = TetherClient.spawn(server, env);
 const events: { method: string; params: any }[] = [];
 c.on((method, params) => events.push({ method, params }));
 const ok = (cond: unknown, msg: string) => {
@@ -102,7 +107,7 @@ if (process.env.TETHER_RECORD) {
   console.log(`recorded ${c.transcript.length} wire messages to ${process.env.TETHER_RECORD}`);
 }
 c.close();
-const c2 = TetherClient.spawn(server);
+const c2 = TetherClient.spawn(server, env);
 await c2.initialize();
 const r = await c2.call('thread/resume', { threadId: thread.threadId, includeHistory: true });
 ok(r.thread.status === 'idle' && (r.items?.length ?? 0) > 0, `thread/resume in new process with ${r.items?.length} history items`);
