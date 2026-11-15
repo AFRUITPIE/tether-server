@@ -91,8 +91,9 @@ await done4;
 ok(asked, 'question/request answered');
 ok(planned, 'plan/approve answered');
 ok(existsSync(join(cwd, 'color.txt')) && /blue/i.test(readFileSync(join(cwd, 'color.txt'), 'utf8')), 'color.txt contains the answer');
-const loaded = await c.call('thread/loaded', {});
-ok(loaded.threads.find((t) => t.threadId === q.thread.threadId)?.permissionMode === 'acceptEdits', 'permission mode switched to acceptEdits after plan approval');
+// Resuming a loaded thread hands back its info and replays nothing.
+const loaded = await c.call('thread/resume', { threadId: q.thread.threadId });
+ok(loaded.thread.permissionMode === 'acceptEdits', 'permission mode switched to acceptEdits after plan approval');
 c.onServerRequest = prevHandler;
 
 // Resume in a fresh server process (simulates reconnect without daemon)

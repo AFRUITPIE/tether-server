@@ -8,7 +8,7 @@ const HELD = 32;
 
 /**
  * Each chat's tasks as this daemon last saw them, kept in its home (`<TETHER_HOME>/tasks/<thread
- * id>.json`, beside `schedules.json`): the CLI's task events and a workflow's progress reach only
+ * id>.json`): the CLI's task events and a workflow's progress reach only
  * the live stream, never the transcript, so without this a reload, a restart or a later resume
  * would know no more of a task than its call. A thread's states are merged by id as they change and
  * written a second after the last change (and at once on `flush`); a file is checked entry by entry

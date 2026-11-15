@@ -18,7 +18,7 @@ describe('itemizer: basic-tools', async () => {
     expect(turns).toHaveLength(1);
     expect(turns[0]!.status).toBe('completed');
     expect(turns[0]!.result!.totalCostUsd).toBeGreaterThan(0);
-    expect(emissions.at(-2)!.method).toBe('turn/completed');
+    expect(emissions.at(-1)!.method).toBe('turn/completed');
   });
 
   test('tool calls paired with results', () => {

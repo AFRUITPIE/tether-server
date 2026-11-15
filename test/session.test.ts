@@ -41,7 +41,7 @@ async function initialized(capabilities?: object) {
 describe('method routing', () => {
   test('nothing but initialize is served before the handshake', async () => {
     const { fails } = connect();
-    expect((await fails('host/info')).code).toBe(ErrorCodes.notInitialized);
+    expect((await fails('thread/list')).code).toBe(ErrorCodes.notInitialized);
   });
 
   test('an unknown method is not found, before or after the handshake', async () => {
@@ -56,7 +56,7 @@ describe('method routing', () => {
 
   test('parameters are checked against the method’s schema', async () => {
     const { fails } = await initialized();
-    expect((await fails('thread/close', {})).code).toBe(ErrorCodes.invalidParams);
+    expect((await fails('thread/unsubscribe', {})).code).toBe(ErrorCodes.invalidParams);
     expect((await fails('turn/interrupt', { threadId: 7 })).code).toBe(ErrorCodes.invalidParams);
     expect((await fails('initialize', { clientInfo: { name: 'no version' } })).code).toBe(ErrorCodes.invalidParams);
   });
@@ -66,14 +66,6 @@ describe('method routing', () => {
     const e = await fails('turn/interrupt', { threadId: 'nope' });
     expect(e.code).toBe(ErrorCodes.threadNotLoaded);
     expect(e.message).toContain('nope');
-  });
-
-  test('host/info reports the loaded threads and Claude Code', async () => {
-    const { call } = await initialized();
-    const r = await call('host/info');
-    expect(r.loadedThreads).toBe(0);
-    expect(r.claude).toEqual(claude);
-    expect(r.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -101,35 +93,11 @@ describe('a single-client server', () => {
     expect(await call('host/requestShutdown', { reason: 'test' })).toEqual({ accepted: false });
   });
 
-  test('has no scheduled tasks to offer', async () => {
-    const { fails } = await initialized();
-    const e = await fails('schedule/list');
-    expect(e.code).toBe(ErrorCodes.invalidRequest);
-    expect(e.message).toContain('daemon');
-  });
-
   test('says which kind of server it is', async () => {
     const r = await connect().call('initialize', { clientInfo, protocolVersion: PROTOCOL_VERSION });
     expect(r.host.mode).toBe('stdio');
     expect(r.host.pid).toBe(process.pid);
     expect(r.claude).toEqual(claude);
-  });
-});
-
-describe('capabilities', () => {
-  test('experimental methods need experimentalApi', async () => {
-    const e = await (await initialized()).fails('account/usage');
-    expect(e.code).toBe(ErrorCodes.invalidRequest);
-    expect(e.message).toContain('experimentalApi');
-  });
-
-  test('notifications a client opted out of are not sent to it', async () => {
-    const { session, call, notified } = await initialized({ optOutNotificationMethods: ['item/agentMessage/delta'] });
-    session.notify('item/agentMessage/delta', { threadId: 't', seq: 1 });
-    session.notify('turn/started', { threadId: 't', seq: 2 });
-    // A request after them: its answer arrives after anything they wrote.
-    await call('host/info');
-    expect(notified.map((n) => n.method)).toEqual(['turn/started']);
   });
 });
 

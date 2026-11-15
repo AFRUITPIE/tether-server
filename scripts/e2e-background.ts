@@ -61,9 +61,11 @@ ok(
   'no raw <task-notification> message in the transcript',
 );
 
-// 2. A thread whose query ended numbers its next stream above the old one.
+// 2. A thread whose query ended numbers its next stream above the old one. Its background command
+// has finished, so once nobody watches it the next sweep evicts it.
 const before = b.seqs.get(bg)!;
-await b.c.call('thread/close', { threadId: bg });
+await b.c.call('thread/unsubscribe', { threadId: bg });
+await Bun.sleep(65_000); // past one sweep
 const again = b.c.waitFor((m, p) => m === 'turn/completed' && p.threadId === bg);
 await b.c.call('turn/start', { threadId: bg, input: [{ type: 'text', text: 'Reply with just the word again.' }] });
 await again;
@@ -74,8 +76,8 @@ const ev = await startTurn(b.c, 'Run `sleep 80 && echo kept > kept.txt` with Bas
 b.c.close();
 await Bun.sleep(70_000); // past one sweep
 const c = await client();
-const loaded = await c.c.call('thread/loaded', {});
-ok(loaded.threads.some((t) => t.threadId === ev), 'idle thread with a running background command was not evicted');
+const kept = (await c.c.call('thread/read', { threadId: ev, limit: 1 })).summary;
+ok(kept && kept.status !== 'notLoaded', 'idle thread with a running background command was not evicted');
 for (let i = 0; i < 30 && !existsSync(join(cwd, 'kept.txt')); i++) await Bun.sleep(1000);
 ok(existsSync(join(cwd, 'kept.txt')), 'its background command finished');
 

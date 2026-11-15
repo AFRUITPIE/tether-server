@@ -9,7 +9,6 @@ import { PROTOCOL_VERSION } from '../protocol/index.ts';
 import { Connection } from '../rpc/connection.ts';
 import { ClientSession, UPGRADE_CLIENT } from '../server/session.ts';
 import { TETHER_VERSION } from '../threads/LiveThread.ts';
-import { Scheduler } from '../threads/Scheduler.ts';
 import { TaskStore } from '../threads/taskStore.ts';
 import { ThreadManager } from '../threads/ThreadManager.ts';
 
@@ -32,7 +31,6 @@ export async function runDaemon() {
   const claude = await resolveClaude();
   const mgr = new ThreadManager(claude, log, { taskStore: new TaskStore(TASKS_DIR) });
   const clients = new Set<ClientSession>();
-  mgr.scheduler = new Scheduler(mgr, join(TETHER_HOME, 'schedules.json'), log);
 
   if (await isSocketLive()) {
     log('another daemon is already listening; exiting');
@@ -52,8 +50,6 @@ export async function runDaemon() {
     const meta: DaemonMeta = { pid: process.pid, version: TETHER_VERSION, startedAt: Date.now() };
     writeFileSync(PID_PATH, JSON.stringify(meta));
     log(`daemon ${TETHER_VERSION} listening on ${SOCKET_PATH}; claude ${claude.version} at ${claude.path}`);
-    // Only the daemon that owns the socket runs schedules, so none runs twice.
-    mgr.scheduler?.start();
   });
 
   const shutdown = (why: string) => {

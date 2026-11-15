@@ -37,8 +37,8 @@ await Bun.sleep(1000);
 // Client B reconnects, catches up, receives the parked request, approves it.
 const b = TetherClient.spawn(cmd, env);
 await b.initialize();
-const loaded = await b.call('thread/loaded', {});
-const lt = loaded.threads.find((t) => t.threadId === thread.threadId);
+// Read, not subscribed: the parked request must reach B only once it subscribes.
+const lt = (await b.call('thread/read', { threadId: thread.threadId, limit: 1 })).summary;
 ok(lt?.status === 'requiresAction', `thread still loaded in daemon, status=${lt?.status}`);
 const bEvents: any[] = [];
 b.on((m, p) => bEvents.push({ m, p }));

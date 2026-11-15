@@ -133,11 +133,11 @@ describe('tether serve --stdio', () => {
     expect(init.host.mode).toBe('stdio');
     expect(init.host.pid).toBe(run.child.pid);
     expect(init.claude).toEqual({ path: box.claude, version: '9.9.9' });
-    expect((await c.request<any>('host/info', {}, 'info')).loadedThreads).toBe(0);
+    expect(await c.request<any>('thread/list', {}, 'list')).toEqual({ threads: [] });
     run.child.stdin!.end();
     expect(await run.exited).toBe(0);
     const lines = run.stdout().trim().split('\n').map((l) => JSON.parse(l));
-    expect(lines.map((l) => l.id)).toEqual(['init', 'info']);
+    expect(lines.map((l) => l.id)).toEqual(['init', 'list']);
     expect(run.stderr()).toContain('serving on stdio');
   }, SLOW);
 });
@@ -169,13 +169,6 @@ describe('tether daemon', () => {
     expect(await connect.exited).toBe(0);
     expect((await initialize(await socketClient(box.socket))).host.pid).toBe(daemon.child.pid);
   }, SLOW);
-
-  test('offers scheduled tasks', async () => {
-    const c = await socketClient(box.socket);
-    await initialize(c);
-    expect(await c.request<any>('schedule/list', {}, 'l')).toEqual({ tasks: [] });
-    c.close();
-  });
 
   test('a second one leaves the first serving', async () => {
     const second = tether(box, 'daemon');
